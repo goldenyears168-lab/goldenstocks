@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jackm4.goldenstocks.watchlist-books-collect</string>
+	<!-- 固定觀察清單（高波動 45，含台達電）五檔委託簿收集器 · 走 TWSE MIS 公開 API，
+	     **不佔富邦 ws 連線額度**。唯讀、無送單路徑。研究層 job，刻意不在
+	     scripts/install-launchd.sh 的 LABELS 陣列裡（比照 limitup-books-collect），
+	     安裝方式見 .command 檔頭。session gate 在程式內（平日 09:00–13:35）。 -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{WATCHLIST_BOOKS_COLLECT_LAUNCHER}}</string>
+	</array>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/watchlist-books-collect.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/watchlist-books-collect.err.log</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>

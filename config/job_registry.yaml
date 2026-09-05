@@ -405,6 +405,13 @@ jobs:
     schedule: "KeepAlive 常駐 · 平日 08:55–13:35 自行判窗，窗外 sleep"
     description: "現股漲停候選的五檔委託簿收集 · 唯讀 · 2026-09-02 建立。**走 TWSE MIS 公開 API，不佔富邦 ws 連線額度** —— mini 已有 5 條富邦 ws（tmf-channel-poll／momentum-rotation-poll／futopt-books-collect／futopt-books-collect-stocks／futopt-fill-listener），2026-09-01 09:51 第 6 條撞 Maximum number of connections reached、指數組日盤掉 52%，故本收集器刻意走另一條路。動機：漲停鎖不鎖得住取決於漲停價上「買方排隊量的補進速度」，逐筆成交只看得到隊列被吃掉多少、看不到補進多少；成交側那一半已實測判別力不足（consume AUC 0.34，IS/OOS 一致）。三層輪詢：掃描層每 300s 把 1971 檔宇宙輪一遍、漲幅 >=+6% 進候選名單（只加不減，上限 180）；候選層每 5s 取五檔；同儕層每 15s 取五檔（候選的統計同儕，上限 250，候選永遠優先佔位）。兩層的丟棄數都會 log、不靜默截斷。POLL_SEC=5 是保守值（MIS 是快照服務、公認約 5 秒更新），收集器自己統計重複快照率、每 10 分鐘印一次，第一天收完可用證據調。相同揭示時間+累積量+五檔的快照會去重不寫。請求間隔 0.35s 禮貌節流。輸出 ${GOLDENSTOCKS_DATA_DIR}/cache/limitup_books/limitup_books_YYYY-MM-DD.jsonl（含 lu_bid_qty＝漲停價買方排隊量、tier=cand/peer）。同儕表 _peer_map.json 由 build_peer_map.py 建（近 60 日日報酬相關最高 5 檔、要求相關 >0.3，2275 檔、最高相關中位 0.66），launcher 每 7 天自動重建。⚠️ 建同儕表時 close<=0 會讓 log 產生 -inf、NaN 污染整個相關矩陣（2026-09-03 踩過，已加 assert）。市場別對照表 _market_map.json 首次執行自動探測（2329 檔中 1971 檔在 MIS 上，其餘多為興櫃、本無漲跌停）。刻意不在 install-launchd.sh 的 LABELS 陣列，安裝方式見 scripts/launchd/limitup-books-collect.command 檔頭"
 
+  - label: watchlist-books-collect
+    category: collect
+    order_capable: false
+    status: enabled
+    schedule: "KeepAlive 常駐 · 平日 08:55–13:35 自行判窗，窗外 sleep"
+    description: "固定觀察清單（高波動 45＝_live_calib.json 的 universe，含台達電 2308）五檔委託簿收集 · 唯讀 · 2026-09-05 建立。與 limitup-books-collect 同一套 TWSE MIS 五檔抓法（import 重用 fetch/parse_depth/market_map），**不佔富邦 ws 連線額度**；差別＝不掃漲停候選、改收一份固定清單，每天記錄各檔在各價位的買/賣掛單量（牆），供「大戶的牆在哪、撐不撐得住」研究——成交側只看得到隊列被吃多少、看不到補進多少，牆只有委託簿看得到（台達電 09-04 收盤快照即證：成交沒發生在 1800，但買五檔在 1800 掛 203 張最厚）。45 檔一次請求即收完（BATCH=45），WL_POLL_SEC 5 秒可達。相同揭示時間+累積量+五檔去重不寫。清單來源：WL_SYMS 覆寫 / WL_FILE / 預設 _live_calib.json。輸出 ${GOLDENSTOCKS_DATA_DIR}/cache/watchlist_books/watchlist_books_YYYY-MM-DD.jsonl（tier=watch）。⚠️ MIS 是 ~5 秒快照，看得到分鐘級的牆厚不厚、撐不撐得住，看不到 5 秒內補牆速度（要更細得走富邦 ws books、佔額度）。刻意不在 install-launchd.sh 的 LABELS 陣列，安裝方式見 scripts/launchd/watchlist-books-collect.command 檔頭"
+
   - label: pivot-wall-daily
     category: collect
     order_capable: false
