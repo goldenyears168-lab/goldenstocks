@@ -19,8 +19,10 @@
 from __future__ import annotations
 
 import json
+import os
 import math
 import signal
+from pathlib import Path
 import sys
 import threading
 import time
@@ -36,7 +38,13 @@ from order.fubon_session import connect_fubon  # noqa: E402
 from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
 
 _TZ = ZoneInfo("Asia/Taipei")
-CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
+# 宇宙檔可由 BIGLOT_CALIB 覆寫（2026-09-05 起 launcher 指到 v3 相容檔 _live_calib_v3.json；
+# 舊 _live_calib.json 的 vol20 欄位混了兩種量、且對 8 檔標的用到已萎縮的舊期貨契約）。
+# 指定的檔不存在時 fail-safe 回退到舊檔，不讓收集中斷。
+_CALIB_DIR = DATA_DIR / "cache" / "pit_universe_tick"
+CALIB = Path(os.environ.get("BIGLOT_CALIB") or (_CALIB_DIR / "_live_calib.json"))
+if not CALIB.exists():
+    CALIB = _CALIB_DIR / "_live_calib.json"
 BIG_AMT = 5_000_000        # 大戶門檻：單筆成交金額（元）
 RETAIL_LOTS = 1            # 散戶門檻：單筆張數（固定金額門檻對高價股失效，1 張是唯一不受股價影響的定義）
 # 排除族群。證據（全部在同一把尺：13:30收盤競價進 → 隔日09:00開盤競價出、45檔期貨宇宙、

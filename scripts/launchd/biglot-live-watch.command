@@ -2,7 +2,8 @@
 # 大戶盤中佈局監看 · 一次性（09:00 啟動、13:32 自動退出）· **唯讀，無任何送單路徑**。
 # 09:00 起累積逐筆，12:00 / 13:00 / 13:30 各寄一封前十名，收盤後再寄一封。
 # 判準與參數見 scripts/research/biglot_live_watch.py 檔頭；宇宙與門檻在
-# ${GOLDENSTOCKS_DATA_DIR}/data/cache/pit_universe_tick/_live_calib.json（可離線重建）。
+# ${GOLDENSTOCKS_DATA_DIR}/data/cache/pit_universe_tick/_live_calib_v3.json
+# （產生器 scripts/research/build_hivol_futures_universe.py，可重現）。
 # 必須從 09:00 起算：全場 IC +0.151，只取 12:00-13:00 會掉到 +0.068 且對全場零增量。
 # 獨立 Fubon 行情 websocket，訂閱 45×1 頻道（遠低於 108 撞牆教訓）。
 #
@@ -51,6 +52,11 @@ _load_env_file "${STATE}/.env" "project .env"
 if [[ "${RUN_BIGLOT_LIVE_WATCH:-1}" == "0" ]]; then
   echo "biglot-live-watch skipped: RUN_BIGLOT_LIVE_WATCH=0"; exit 0
 fi
+
+# 2026-09-05：訂閱宇宙改用 v3（期交所官方契約對照 + 還原後波動排序）。
+# 舊 _live_calib.json 的 vol20 混了兩種量、且對 8 檔標的用到已萎縮的舊期貨契約。
+# 檔案不存在時 biglot_live_watch.py 會自動回退舊檔（fail-safe，不擋收集）。
+export BIGLOT_CALIB="${STATE}/data/cache/pit_universe_tick/_live_calib_v3.json"
 
 PYTHON="${ROOT}/.venv-fubon/bin/python"
 if [[ ! -x "${PYTHON}" ]]; then echo "✗ missing .venv-fubon python: ${PYTHON}"; exit 1; fi

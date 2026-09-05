@@ -662,6 +662,34 @@ jobs:
       scripts/launchd/chip-lot-probe.command 檔頭。開關：.env RUN_CHIP_LOT_PROBE（預設 1）。
       2026-08-28 smoke 驗證：第三條連線登入/快照/訂閱 ack 全通過。
 
+  - label: biglot-bucket-eod
+    category: collect
+    order_capable: false
+    status: enabled
+    schedule: "weekdays 15:40 / 20:10（兩次為降低單次失敗造成永久缺口）"
+    description: >-
+      收盤後把當天「大戶未平倉損益 × 等量成交格」落成 CSV，供 25 個交易日後的檢定。
+      規格（2026-09-06 鎖定，收滿 25 個交易日前不調參數）：等量成交值格（監測清單自己的
+      成交值，13:25 後不進時鐘、**秒級解析度**）· 大戶＝單筆 >= NT$5,000,000 且可判方向 ·
+      **每格歸零**加權平均成本、只取未實現 · 執行標的台指期（來回成本 2 bps）· **持有版**。
+      已定案、非待驗項目（結構性、與樣本無關）：①秒級解析度 —— 分鐘版 N=60 只切得出 57~58
+      格、每格佔比 std 0.37~0.43%，秒級是剛好 60 格、std 0.01~0.02%；分鐘版曾讓 N=30 的 A
+      規則從 +4.73 虛增到 +7.31 bps/格。②持有版 —— N=60 進出版每日換邊 16.5~21.5 次、
+      持有版 3~6 次，成本差 20~35 bps/日。
+      待驗組合 6 格（Bonferroni 門檻 |t| > 2.6）：N ∈ {30, 60} × 規則 {A, C, E}。
+      A＝連續 k=3 格未實現 > 0；C＝連續 k=3 且 bps[t] > bps[t-1]；E＝連續 k=3 且
+      bps[t] > 前兩格平均。「越賺越多」一律用 bps 判斷不能用金額（金額被部位大小主導）。
+      D（bps 單調遞增）已剔除：N=30 持有淨 +51.7、N=60 −17.3，兩個 N 上翻號。
+      N=40 只當內插檢查、不進結論表。全部可從輸出 CSV 事後重算，加變體不必改收集。
+      證偽檢查：若 25 天後 A/C/E 在 N=30 與 N=60 上結論相反＝參數過擬合，整條線收掉。
+      輸入＝biglot-live-watch 落的 cache/biglot_live_watch/raw_{date}.jsonl（沒有就跳過）；
+      另補當天 TX 逐筆（FinMind，1 request，失敗不擋）。
+      輸出 ${GOLDENSTOCKS_DATA_DIR}/data/cache/biglot_bucket/bucket_reset_n{30,40,60}.csv（依日期去重，可重跑）。
+      唯讀、無送單路徑。刻意不進 install-launchd.sh LABELS，安裝見
+      scripts/launchd/biglot-bucket-eod.command 檔頭。開關：.env RUN_BIGLOT_BUCKET_EOD（預設 1）。
+      ⚠ 目前只有 2 天樣本、掃過 20+ 組參數、有效獨立樣本＝2，**不是結論**；此 job 的唯一目的
+      是把樣本收到能檢定的程度。
+
   - label: biglot-live-watch
     category: collect
     order_capable: false
@@ -675,7 +703,10 @@ jobs:
       訊號預測隔日開盤跳空，非當日走勢（純盤中版本實測 +1.9~+9.6 bps 全不顯著）。
       **必須 09:00 起算**：全場 IC +0.151，只取 12:00-13:00 掉到 +0.068 且對全場零增量。
       宇宙＝PIT tick 宇宙 ∩ 個股期貨日均量>=500 口（兩腿皆可做；期貨放空無平盤下限制），
-      定義於 ${GOLDENSTOCKS_DATA_DIR}/data/cache/pit_universe_tick/_live_calib.json。
+      定義於 ${GOLDENSTOCKS_DATA_DIR}/data/cache/pit_universe_tick/_live_calib_v3.json
+      （2026-09-05 起；產生器 scripts/research/build_hivol_futures_universe.py，可重現。
+      舊 _live_calib.json 的 vol20 欄位混了兩種量、且對 8 檔標的用到已萎縮的舊期貨契約，
+      詳見該腳本檔頭。launcher 以 BIGLOT_CALIB 指定，檔案不存在時 fail-safe 回退舊檔）。
       唯讀、無送單路徑；訂閱預算 45×1。刻意不進 install-launchd.sh LABELS（比照
       chip-lot-probe），安裝見 scripts/launchd/biglot-live-watch.command 檔頭。
       開關：.env RUN_BIGLOT_LIVE_WATCH（預設 1）。
