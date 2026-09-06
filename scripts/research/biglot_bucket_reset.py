@@ -19,6 +19,24 @@ from biglot_unrealized_volclock import vol_buckets    # noqa: E402
 from txf_volume_clock import build_minutes            # noqa: E402
 
 
+def px_by_bucket(date, N):
+    """每檔每格的格末價與該格成交（供事後檢定『同一訊號改做個股期貨』）"""
+    df = load(date)
+    df["sec"] = (df.t.str.slice(0, 2).astype(int) * 3600
+                 + df.t.str.slice(3, 5).astype(int) * 60 + df.t.str.slice(6, 8).astype(int))
+    bk = vol_buckets(df, N)
+    df["bk"] = df.sec.map(bk)
+    df = df.dropna(subset=["bk"])
+    g = df.groupby(["bk", "sym"]).agg(px=("px", "last"), n_trades=("px", "size"),
+                                      lots=("sz", "sum"))
+    g["value"] = g.px * g.lots * 1000
+    g = g.reset_index()
+    g["bk"] = g.bk.astype(int); g["date"] = date
+    ends = df.groupby("bk").sec.max().astype(int)
+    g["end_sec"] = g.bk.map(ends)
+    return g[["date", "bk", "end_sec", "sym", "px", "n_trades", "lots", "value"]]
+
+
 def run_day(date, thresh, N):
     df = load(date)
     df["mi"] = df.t.str.slice(0, 2).astype(int) * 60 + df.t.str.slice(3, 5).astype(int)
@@ -65,6 +83,8 @@ def main():
     ap.add_argument("--k", type=int, default=3)
     ap.add_argument("--date", default=None, help="只跑單日（收盤後排程用）")
     ap.add_argument("--append-csv", default=None, help="把每格結果 append 到這個 CSV（依日期去重）")
+    ap.add_argument("--append-px-csv", default=None,
+                    help="另外落每檔每格的收盤價（供「訊號 × 個股期貨」變體事後檢定）")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     try:
@@ -100,6 +120,15 @@ def main():
                   f"{int(x.streak_L):>7}{int(x.streak_S):>7}{x.txf:>9,.0f}"
                   f"{nxt if nxt==nxt else float('nan'):>9.1f}")
     d = pd.concat(out, ignore_index=True)
+    if a.append_px_csv:
+        from pathlib import Path as _P
+        fp = _P(a.append_px_csv); fp.parent.mkdir(parents=True, exist_ok=True)
+        pxs = pd.concat([px_by_bucket(dt, a.n) for dt in dates], ignore_index=True)
+        if fp.exists():
+            oldp = pd.read_csv(fp, dtype={"date": str, "sym": str})
+            pxs = pd.concat([oldp[~oldp.date.isin(pxs.date.unique())], pxs], ignore_index=True)
+        pxs.sort_values(["date", "bk", "sym"]).to_csv(fp, index=False)
+        print(f"append → {fp}（{len(pxs)} 列 / {pxs.date.nunique()} 天 / {pxs.sym.nunique()} 檔）")
     if a.append_csv:
         from pathlib import Path as _P
         f = _P(a.append_csv); f.parent.mkdir(parents=True, exist_ok=True)

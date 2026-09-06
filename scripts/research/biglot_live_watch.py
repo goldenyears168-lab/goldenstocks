@@ -494,9 +494,12 @@ def build_report(cal, label) -> tuple[str, str]:
     rows = [r for r in rows if r.get("cat") not in WEAK_CATS]
     rows.sort(key=lambda r: -r["norm"])
     disp = float(np.std([r["norm"] for r in rows])) if len(rows) > 5 else 0.0
-    p = cal["disp_pct"]
-    band = ("高（>P70）" if disp >= p["70"] else
-            "中" if disp >= p["30"] else "低（<P30，訊號偏弱）")
+    p = cal.get("disp_pct") or {}
+    if "70" in p and "30" in p:
+        band = ("高（>P70）" if disp >= p["70"] else
+                "中" if disp >= p["30"] else "低（<P30，訊號偏弱）")
+    else:
+        band = "—（宇宙檔無 disp_pct 分位，不分帶）"
     ROLE = {"12:00": "觀察（訊號未定，勿據此下單）",
             "13:00": "預告（訊號已近定型，可開始準備）",
             "13:30": "★可執行：現貨收盤競價已撮合、訊號定型；個股期貨尚有 13:30–13:45 可下單",
