@@ -409,8 +409,8 @@ jobs:
     category: collect
     order_capable: false
     status: enabled
-    schedule: "KeepAlive 常駐 · 平日 08:55–13:35 自行判窗，窗外 sleep"
-    description: "固定觀察清單（高波動 45＝_live_calib.json 的 universe，含台達電 2308）五檔委託簿收集 · 唯讀 · 2026-09-05 建立。與 limitup-books-collect 同一套 TWSE MIS 五檔抓法（import 重用 fetch/parse_depth/market_map），**不佔富邦 ws 連線額度**；差別＝不掃漲停候選、改收一份固定清單，每天記錄各檔在各價位的買/賣掛單量（牆），供「大戶的牆在哪、撐不撐得住」研究——成交側只看得到隊列被吃多少、看不到補進多少，牆只有委託簿看得到（台達電 09-04 收盤快照即證：成交沒發生在 1800，但買五檔在 1800 掛 203 張最厚）。45 檔一次請求即收完（BATCH=45），WL_POLL_SEC 5 秒可達。相同揭示時間+累積量+五檔去重不寫。清單來源：WL_SYMS 覆寫 / WL_FILE / 預設 _live_calib.json。輸出 ${GOLDENSTOCKS_DATA_DIR}/cache/watchlist_books/watchlist_books_YYYY-MM-DD.jsonl（tier=watch）。⚠️ MIS 是 ~5 秒快照，看得到分鐘級的牆厚不厚、撐不撐得住，看不到 5 秒內補牆速度（要更細得走富邦 ws books、佔額度）。刻意不在 install-launchd.sh 的 LABELS 陣列，安裝方式見 scripts/launchd/watchlist-books-collect.command 檔頭"
+    schedule: "KeepAlive 常駐 · 平日 08:30–13:35 自行判窗（08:30 起收現股開盤前試撮），窗外 sleep"
+    description: "固定觀察清單（高波動 45＝_live_calib.json 的 universe，含台達電 2308）五檔委託簿收集 · 唯讀 · 2026-09-05 建立。與 limitup-books-collect 同一套 TWSE MIS 五檔抓法（import 重用 fetch/parse_depth/market_map），**不佔富邦 ws 連線額度**；差別＝不掃漲停候選、改收一份固定清單，每天記錄各檔在各價位的買/賣掛單量（牆），供「大戶的牆在哪、撐不撐得住」研究——成交側只看得到隊列被吃多少、看不到補進多少，牆只有委託簿看得到（台達電 09-04 收盤快照即證：成交沒發生在 1800，但買五檔在 1800 掛 203 張最厚）。45 檔一次請求即收完（BATCH=45），WL_POLL_SEC 5 秒可達。相同揭示時間+累積量+五檔去重不寫。清單來源：WL_SYMS 覆寫 / WL_FILE / 預設 _live_calib.json。輸出 ${GOLDENSTOCKS_DATA_DIR}/cache/watchlist_books/watchlist_books_YYYY-MM-DD.jsonl（tier=watch）。⚠️ MIS 是 ~5 秒快照，看得到分鐘級的牆厚不厚、撐不撐得住，看不到 5 秒內補牆速度（要更細得走富邦 ws books、佔額度）。2026-09-06 起窗口提早到 08:30（WL_START_HM=510）以收現股 09:00 開盤前的試撮（委買/委賣累積不平衡＋試撮預估開盤價），供「試撮不平衡→開盤 surge」研究——期貨盤前 5 分走勢已證與現股開盤 surge 無關(corr≈0)，改用同一本委託簿的試撮。刻意不在 install-launchd.sh 的 LABELS 陣列，安裝方式見 scripts/launchd/watchlist-books-collect.command 檔頭"
 
   - label: pivot-wall-daily
     category: collect

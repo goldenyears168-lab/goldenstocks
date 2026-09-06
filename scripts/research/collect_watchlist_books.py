@@ -20,10 +20,20 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stock_db import DATA_DIR
-from collect_limitup_books import fetch, parse_depth, market_map, in_session, BATCH, TPE
+from collect_limitup_books import fetch, parse_depth, market_map, BATCH, TPE
 
 OUT_DIR = DATA_DIR / "cache" / "watchlist_books"
 POLL_SEC = float(os.environ.get("WL_POLL_SEC", "5"))
+WL_START_HM = int(os.environ.get("WL_START_HM", "510"))  # 分鐘·預設 08:30(收現股開盤前試撮)
+
+
+def in_session(now):
+    # 08:30 起就開收(比 limitup-books 的 08:55 早)——現股 09:00 開盤前的試撮
+    # (委買/委賣累積、試撮預估開盤價)是「試撮不平衡→開盤 surge」研究的關鍵。
+    if now.weekday() >= 5:
+        return False
+    hm = now.hour * 60 + now.minute
+    return WL_START_HM <= hm <= 13 * 60 + 35
 
 
 def load_watchlist() -> list[str]:
