@@ -103,14 +103,26 @@ def on_message(raw, THR):
     if msg.get("channel") != "trades" or msg.get("event") not in (None, "data"):
         return
     d = msg.get("data") or {}
-    sid, px, sz = str(d.get("symbol", "")), d.get("price"), d.get("size")
-    if not sid or px is None or sz is None:
+    sid, px, vol = str(d.get("symbol", "")), d.get("price"), d.get("volume")
+    if not sid or px is None or vol is None:
         return
     if d.get("isTrial"):                      # 13:25-13:30 試撮不是成交
         return
-    if d.get("isContinuous") is not True:      # 收盤競價：單一價，內外盤無意義
+    px, vol = float(px), float(vol)
+    acc = _ACC.setdefault(sid, {"vol": 0.0, "bb": 0.0, "bs": 0.0, "n": 0,
+                                "rb": 0.0, "rs": 0.0, "px0": px, "px1": px,
+                                "lastvol": 0.0})
+    # 單筆量＝累積成交量的增量 Δvolume，不用 data.size。
+    # 富邦 ws 的 size 欄不是單筆量、且有殭屍重送（2026-09-06 實測 Σsize 為真實日量的
+    # 3~4 倍，且用它做 Lee-Ready 會把買賣方向算反：9/4 聯電/南亞科本是大戶淨買卻算成淨賣）。
+    # 累積量沒前進＝重送/無新成交 → 跳過。
+    dv = vol - acc["lastvol"]
+    acc["lastvol"] = vol
+    if dv <= 0:
         return
-    px, sz = float(px), float(sz)
+    acc["px1"] = px
+    if d.get("isContinuous") is not True:      # 開/收盤競價：單一價，內外盤無意義，只推進量不計方向
+        return
     b, a = d.get("bid"), d.get("ask")
     side = 1 if (a is not None and px >= float(a)) else (
         -1 if (b is not None and px <= float(b)) else 0)
@@ -118,21 +130,18 @@ def on_message(raw, THR):
         p = _LAST.get(sid)
         side = 0 if p is None else (1 if px > p else (-1 if px < p else 0))
     _LAST[sid] = px
-    acc = _ACC.setdefault(sid, {"vol": 0.0, "bb": 0.0, "bs": 0.0, "n": 0,
-                                "rb": 0.0, "rs": 0.0, "px0": px, "px1": px})
-    acc["vol"] += sz
+    acc["vol"] += dv
     acc["n"] += 1
-    acc["px1"] = px
-    if px * sz * 1000 >= BIG_AMT:      # 用當下價換算，股價漂移自動跟上
+    if px * dv * 1000 >= BIG_AMT:      # 用當下價換算，股價漂移自動跟上
         if side > 0:
-            acc["bb"] += sz
+            acc["bb"] += dv
         elif side < 0:
-            acc["bs"] += sz
-    if sz == RETAIL_LOTS:              # 散戶＝單筆 1 張（最小交易單位）
+            acc["bs"] += dv
+    if dv == RETAIL_LOTS:              # 散戶＝單筆 1 張（最小交易單位）
         if side > 0:
-            acc["rb"] += sz
+            acc["rb"] += dv
         elif side < 0:
-            acc["rs"] += sz
+            acc["rs"] += dv
 
 
 def _load_vixtwn():
