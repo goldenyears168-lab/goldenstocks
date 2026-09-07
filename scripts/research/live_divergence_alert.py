@@ -56,7 +56,7 @@ def main():
             continue
         p = float(p); dv = v - prev.get(s, 0); prev[s] = v
         last[s] = p; hi[s] = max(hi.get(s, 0), p)
-        if dv <= 0 or d.get("isContinuous") is not True:
+        if dv <= 0 or d.get("isOpen") or d.get("isClose"):
             continue
         side = 1 if (ask and p >= float(ask)) else (-1 if (bid and p <= float(bid)) else 0)
         if side > 0:

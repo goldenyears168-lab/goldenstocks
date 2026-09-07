@@ -121,8 +121,10 @@ def on_message(raw, THR):
     if dv <= 0:
         return
     acc["px1"] = px
-    if d.get("isContinuous") is not True:      # 開/收盤競價：單一價，內外盤無意義，只推進量不計方向
+    if d.get("isOpen") or d.get("isClose"):    # 開/收盤競價：單一價，內外盤無意義，只推進量不計方向
         return
+    # 注意：不可要求 isContinuous is True —— 處置/分盤股(每N分集合競價)的真成交
+    # 完全不帶 isContinuous 旗標(2026-09-08 玉晶光等 6 檔實測),正檢查會整檔漏光。
     b, a = d.get("bid"), d.get("ask")
     side = 1 if (a is not None and px >= float(a)) else (
         -1 if (b is not None and px <= float(b)) else 0)
