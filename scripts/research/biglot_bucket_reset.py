@@ -15,16 +15,16 @@ import argparse, sys
 import numpy as np, pandas as pd
 sys.path.insert(0, "src"); sys.path.insert(0, "scripts/research")
 from biglot_unrealized import load, book              # noqa: E402
-from biglot_unrealized_volclock import vol_buckets    # noqa: E402
+from biglot_unrealized_volclock import vol_buckets, fixed_buckets  # noqa: E402
 from txf_volume_clock import build_minutes            # noqa: E402
 
 
-def px_by_bucket(date, N):
+def px_by_bucket(date, N, per_value=None):
     """每檔每格的格末價與該格成交（供事後檢定『同一訊號改做個股期貨』）"""
     df = load(date)
     df["sec"] = (df.t.str.slice(0, 2).astype(int) * 3600
                  + df.t.str.slice(3, 5).astype(int) * 60 + df.t.str.slice(6, 8).astype(int))
-    bk = vol_buckets(df, N)
+    bk = fixed_buckets(df, per_value) if per_value else vol_buckets(df, N)
     df["bk"] = df.sec.map(bk)
     df = df.dropna(subset=["bk"])
     g = df.groupby(["bk", "sym"]).agg(px=("px", "last"), n_trades=("px", "size"),
@@ -37,10 +37,22 @@ def px_by_bucket(date, N):
     return g[["date", "bk", "end_sec", "sym", "px", "n_trades", "lots", "value"]]
 
 
-def run_day(date, thresh, N):
+def calib_per_bucket(N, days, thresh=None):
+    """固定門檻校準：歷史各日全日成交值中位 ÷ N（元）。找不到歷史就回 None。"""
+    vals = []
+    for d in days:
+        try:
+            x = load(d)
+        except Exception:
+            continue
+        vals.append(float((x.px * x.sz * 1000).sum()))
+    return float(np.median(vals)) / N if vals else None
+
+
+def run_day(date, thresh, N, per_value=None):
     df = load(date)
     df["mi"] = df.t.str.slice(0, 2).astype(int) * 60 + df.t.str.slice(3, 5).astype(int)
-    bk = vol_buckets(df, N)          # 秒級解析度（N>=40 用分鐘會有空格）
+    bk = fixed_buckets(df, per_value) if per_value else vol_buckets(df, N)          # 秒級解析度（N>=40 用分鐘會有空格）
     df["sec"] = (df.t.str.slice(0, 2).astype(int) * 3600
                  + df.t.str.slice(3, 5).astype(int) * 60 + df.t.str.slice(6, 8).astype(int))
     df["bk"] = df.sec.map(bk)
@@ -86,16 +98,26 @@ def main():
     ap.add_argument("--append-px-csv", default=None,
                     help="另外落每檔每格的收盤價（供「訊號 × 個股期貨」變體事後檢定）")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--clock", default="equal", choices=["equal", "fixed"],
+                    help="equal=真等量 N 格（收盤回算，含未來資訊）· fixed=固定金額門檻（live 可實作）")
+    ap.add_argument("--calib-days", nargs="*", default=["2026-09-03", "2026-09-04"],
+                    help="fixed 模式的校準日")
     a = ap.parse_args()
     try:
         tx = build_minutes(); txm = tx.set_index(["trade_date", "mi"]).close
     except Exception as e:                      # TXF 快取缺料不擋大戶那一半
         print(f"WARN: TXF 分鐘檔讀不到（{type(e).__name__}），txf 欄位留空")
         txm = pd.Series(dtype=float)
+    per_value = None
+    if a.clock == "fixed":
+        per_value = calib_per_bucket(a.n, a.calib_days)
+        if per_value is None:
+            print("ERROR: fixed 模式找不到校準日資料"); return 1
+        print(f"固定門檻：每格 {per_value/1e8:.2f} 億（校準日 {','.join(a.calib_days)} 中位 ÷ {a.n}）")
     out = []
     dates = (a.date,) if a.date else ("2026-09-03", "2026-09-04")
     for date in dates:
-        r = run_day(date, a.thresh, a.n)
+        r = run_day(date, a.thresh, a.n, per_value)
         r["txf"] = [txm.get((date, mi), np.nan) if len(txm) else np.nan for mi in r.end_mi]
         r["txf"] = r.txf.ffill()
         r["txf_r"] = r.txf.pct_change() * 1e4
@@ -123,7 +145,7 @@ def main():
     if a.append_px_csv:
         from pathlib import Path as _P
         fp = _P(a.append_px_csv); fp.parent.mkdir(parents=True, exist_ok=True)
-        pxs = pd.concat([px_by_bucket(dt, a.n) for dt in dates], ignore_index=True)
+        pxs = pd.concat([px_by_bucket(dt, a.n, per_value) for dt in dates], ignore_index=True)
         if fp.exists():
             oldp = pd.read_csv(fp, dtype={"date": str, "sym": str})
             pxs = pd.concat([oldp[~oldp.date.isin(pxs.date.unique())], pxs], ignore_index=True)
@@ -134,7 +156,10 @@ def main():
         f = _P(a.append_csv); f.parent.mkdir(parents=True, exist_ok=True)
         cols = ["date", "bk", "end_mi", "n_big", "long_u", "short_u", "long_bps",
                 "short_bps", "nL", "nS", "streak_L", "streak_S", "txf"]
+        cols = [c for c in cols if c in d.columns]
         new = d[cols].copy()
+        new["clock"] = a.clock
+        new["per_bucket_e"] = (per_value / 1e8) if per_value else np.nan
         if f.exists():
             old = pd.read_csv(f, dtype={"date": str})
             new = pd.concat([old[~old.date.isin(new.date.unique())], new], ignore_index=True)

@@ -20,6 +20,29 @@ from txf_volume_clock import build_minutes        # noqa: E402
 TPE = timezone(timedelta(hours=8))
 
 
+def fixed_buckets(df, per_value, res="sec"):
+    """固定金額門檻切格（**live 唯一做得到的版本**）。
+
+    等量格 N 需要「當日總成交值」，那是收盤才知道的未來資訊。實測 2026-09-07：
+    同一組規則在真等量（回算）與固定門檻（live）上**淨值正負相反**
+    （規則 A +26.3 vs −18.5 bps、規則 E +17.9 vs −54.0），所以兩種都要落、都要測。
+    per_value 由歷史全日成交值中位 ÷ N 校準。
+    """
+    df = df.copy()
+    if res == "sec":
+        key = (df.t.str.slice(0, 2).astype(int) * 3600 + df.t.str.slice(3, 5).astype(int) * 60
+               + df.t.str.slice(6, 8).astype(int))
+        cutoff = (13 * 60 + 25) * 60
+    else:
+        key = df.t.str.slice(0, 2).astype(int) * 60 + df.t.str.slice(3, 5).astype(int)
+        cutoff = 13 * 60 + 25
+    df["_k"] = key
+    v = df.groupby("_k").apply(lambda g: (g.px * g.sz).sum(), include_groups=False)
+    v = v[v.index < cutoff].sort_index()
+    cum = v.cumsum() - v * 0.5
+    return pd.Series((cum / (per_value / 1000)).astype(int), index=v.index)
+
+
 def vol_buckets(df, N, res="sec"):
     """用監測清單自己的成交值切等量格。
 

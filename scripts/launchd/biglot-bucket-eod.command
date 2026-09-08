@@ -3,6 +3,12 @@
 #
 # 事前登記的規格（2026-09-05 鎖定，收滿 25 個交易日前不調參數）：
 #   切格   等量成交值格（監測清單自己的成交值，13:25 後不進時鐘），**秒級解析度**
+#          兩種時鐘都落、都測：
+#            equal — 真等量 N 格（收盤回算）。**含未來資訊**：切格需要當日總成交值。
+#            fixed — 固定金額門檻（live 唯一可實作）。每格金額＝校準日全日成交值中位 ÷ N，
+#                    目前 82.20 億/格（校準日 09-03/09-04）；2026-09-07 實走 51 格 vs 目標 60。
+#          ⚠ 2026-09-07 實測兩者**淨值正負相反**：規則 A equal +26.3 / fixed −18.5 bps、
+#            規則 E equal +17.9 / fixed −54.0。只看 equal 會得到交易當下做不到的結論。
 #   大戶   單筆成交金額 >= NT$5,000,000 且可判方向（price>=ask / price<=bid）
 #   記帳   每格歸零，加權平均成本，只取未實現
 #   執行   台指期（成本 2 bps）
@@ -29,6 +35,17 @@
 #   E  連續 k=3 且 **bps**[t] > (bps[t-1]+bps[t-2])/2
 #   ⚠ 越賺越多必須用 bps（單位成本報酬）判斷，不能用金額 —— 金額被部位大小主導。
 #   ⚠ D（bps 單調遞增）已剔除：N=30 持有淨 +51.7、N=60 −17.3，兩個 N 上翻號。
+#
+#   tie-break（2026-09-08 補登記）：多空**同時**滿足 k 連勝的情況在 09-08 一天就出現 4 次，
+#     不是罕見狀況。原本沒有規定該站哪邊，是 `if 多 … elif 空` 的程式碼順序在決定 ——
+#     那是一個沒登記、沒被思考過的自由度。改成**兩種都算、都報告**：
+#       long_first  沿用原行為（同時滿足時取多方）
+#       larger_bps  取該格 bps 較大的一邊
+#     ⚠ 不需要改收集：long_bps / short_bps 都在 CSV 裡，兩種都能事後重算。
+#     實測影響：12 格裡有 2 格會變（都是規則 A，因為它沒有成長條件過濾，最常兩邊同時觸發）。
+#
+#   評估工具 scripts/research/biglot_rule_eval.py（讀 CSV，一次算完所有登記格 ×
+#     兩種 tie-break × 換邊次數分層）。25 天收滿後跑它，不要臨時寫 ad-hoc 腳本。
 #
 #   證偽檢查 若 25 天後 A/C/E 在 N=30 與 N=60 上結論相反 = 參數過擬合，整條線收掉
 #
@@ -91,11 +108,17 @@ d = j.get("data") or []
 f.write_text(json.dumps(d)); print(f"TX {day} {len(d)} 筆")
 PYEOF
 
-# 2) 待驗 N=30 / N=60 + 內插檢查 N=40
+# 2) 兩種時鐘都落：equal=真等量（收盤回算，含未來資訊）· fixed=固定門檻（live 可實作）
+#    2026-09-07 實測：同一規則兩種切法**淨值正負相反**（A +26.3 vs −18.5、E +17.9 vs −54.0），
+#    所以兩種都要收、都要測，不能只留一種。
 for N in 30 40 60; do
   "${PY}" "${ROOT}/scripts/research/biglot_bucket_reset.py" \
-      --date "${DAY}" --n "${N}" --quiet \
+      --date "${DAY}" --n "${N}" --quiet --clock equal \
       --append-csv "${OUT}/bucket_reset_n${N}.csv" \
-      --append-px-csv "${OUT}/bucket_px_n${N}.csv" || echo "WARN: N=${N} 失敗"
+      --append-px-csv "${OUT}/bucket_px_n${N}.csv" || echo "WARN: equal N=${N} 失敗"
+  "${PY}" "${ROOT}/scripts/research/biglot_bucket_reset.py" \
+      --date "${DAY}" --n "${N}" --quiet --clock fixed \
+      --append-csv "${OUT}/bucket_reset_fx${N}.csv" \
+      --append-px-csv "${OUT}/bucket_px_fx${N}.csv" || echo "WARN: fixed N=${N} 失敗"
 done
 echo "=== biglot-bucket-eod ${DAY} done $(date '+%H:%M:%S') ==="

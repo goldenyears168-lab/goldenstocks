@@ -18,6 +18,11 @@ source .venv/bin/activate
 .venv/bin/ruff check src tests
 
 # 測試 — production（排除 archived backtest）
+# ⚠ mini 是生產機：全套 1,959 個測試會長時間佔用 52GB 的 stocks.db，跟盤中收集器和
+#   tmf-channel-poll 送單 worker 搶 CPU/DB。2026-09-06 曾有三個 pytest 同時卡住
+#   （其中一個跑了 2 天 11 小時、各吃 ~53% CPU、load average 8.7），SIGTERM 殺不掉、
+#   要 kill -9。跑之前先 `pgrep -f pytest` 確認沒有殘留；盤中不要跑全套；
+#   agent 預設只跑針對性子集（-k），全套留給人手動在收盤後跑。
 .venv/bin/pytest tests/ --ignore=tests/research/archive -q
 # 單檔 / 單測（pyproject 已設 pythonpath=["src"]，pytest 不需 PYTHONPATH）
 .venv/bin/pytest tests/test_analytics_bench.py -q
@@ -170,6 +175,13 @@ SSOT：`docs/terminology.md`（§7 Deprecated、§10 quick reference）。完整
 
 回答分析比較、策略檢視、研究摘要時，**直接把完整答案寫在聊天回覆裡**（markdown 表格／條列），不要產生 canvas。
 
+**發言紀律**（SSOT：`docs/analysis-claim-discipline.md`）——給出「值不值得做／往哪走」這類判斷前：
+
+- 每個陳述標成 **[事實]**（可重算）／**[推論]**（＋寫出名字的假設）／**[猜測]**（無檢定基礎）三級之一；**猜測不得用陳述句、不得進結論表**。
+- 委託簿數字一律換算成「幾分鐘的成交量」再判讀（<3 分鐘＝真空、>10 分鐘＝牆），**不看買賣比**。
+- 資料不足時預設輸出「**不足＋補什麼才能答**」，不拿替代資料硬推。
+- 自家證偽記錄若否定的是**訊號本身**，則看多與看空**皆不得援引**。
+
 ---
 
 ## 文件導航
@@ -185,6 +197,7 @@ SSOT：`docs/terminology.md`（§7 Deprecated、§10 quick reference）。完整
 | Backtest spec / per-track JSON | `docs/evaluation-contract.md` · `docs/unified-backtest-standard.md` |
 | FinMind 取數（dataset 對照、rate limit） | `.cursor/rules/finmind.mdc` |
 | 專家池 mini 操作凍結規則 | `MINI_OPS_REFERENCE.md` |
+| **分析發言紀律**（三級標記、委託簿流速換算、資料不足時的預設輸出） | `docs/analysis-claim-discipline.md` |
 | **狀態根目錄**（`data/` 佈局、log／備份／鎖慣例、各表預期資料輪廓、mini 每日體檢 job） | `${GOLDENSTOCKS_DATA_DIR}/CLAUDE.md`（不在 git；cwd 在資料目錄時才會自動載入） |
 
 `docs/` 約 28 份含階段性研究筆記、無嚴格閱讀順序；有疑問優先 `docs/PRD.md`、`docs/daily-operations.md`、`config/job_registry.yaml`。

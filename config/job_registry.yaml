@@ -697,7 +697,13 @@ jobs:
       格、每格佔比 std 0.37~0.43%，秒級是剛好 60 格、std 0.01~0.02%；分鐘版曾讓 N=30 的 A
       規則從 +4.73 虛增到 +7.31 bps/格。②持有版 —— N=60 進出版每日換邊 16.5~21.5 次、
       持有版 3~6 次，成本差 20~35 bps/日。
-      待驗組合 6 格（Bonferroni 門檻 |t| > 2.6）：N ∈ {30, 60} × 規則 {A, C, E}。
+      **兩種時鐘都落、都測**：equal＝真等量 N 格（收盤回算，切格用到當日總成交值＝未來
+      資訊）· fixed＝固定金額門檻（live 唯一可實作，每格＝校準日全日成交值中位 ÷ N，
+      目前 82.20 億）。2026-09-07 實測兩者**淨值正負相反**（規則 A equal +26.3 /
+      fixed −18.5 bps、規則 E equal +17.9 / fixed −54.0），只看 equal 會得到交易當下
+      做不到的結論。輸出 bucket_reset_n{N}.csv（equal）與 bucket_reset_fx{N}.csv（fixed）。
+      待驗組合 6 格（Bonferroni 門檻 |t| > 2.6）：N ∈ {30, 60} × 規則 {A, C, E}
+      —— 兩種時鐘各跑一次，共 12 格；以 fixed 為主、equal 為對照。
       樣本從 2026-09-08 起算 25 個交易日；2026-09-03 / 09-04 兩天**不列入檢定**
       （那兩天用舊 biglot 訂閱清單收的，跟 v3 只重疊 19 檔，只當管線驗證）。
       宇宙 2026-09-06 因修 bug 換過：流動性門檻由「口數」改為「名目成交金額」——
@@ -706,10 +712,17 @@ jobs:
       bps[t] > 前兩格平均。「越賺越多」一律用 bps 判斷不能用金額（金額被部位大小主導）。
       D（bps 單調遞增）已剔除：N=30 持有淨 +51.7、N=60 −17.3，兩個 N 上翻號。
       N=40 只當內插檢查、不進結論表。全部可從輸出 CSV 事後重算，加變體不必改收集。
+      tie-break（2026-09-08 補登記）：多空**同時**滿足 k 連勝在 09-08 一天就出現 4 次，
+      原本靠 `if 多 … elif 空` 的程式碼順序決定，是沒登記的自由度。改為兩種都算、都報告
+      （long_first＝沿用原行為取多方；larger_bps＝取該格 bps 較大的一邊）。不必改收集，
+      CSV 已有 long_bps / short_bps。實測 12 格裡 2 格會變，都是規則 A（無成長條件過濾，
+      最常兩邊同時觸發）。
+      評估工具＝scripts/research/biglot_rule_eval.py（一次算完所有登記格 × 兩種 tie-break
+      × 換邊次數分層）。25 天收滿後跑它，不要臨時寫 ad-hoc 腳本。
       證偽檢查：若 25 天後 A/C/E 在 N=30 與 N=60 上結論相反＝參數過擬合，整條線收掉。
       輸入＝biglot-live-watch 落的 cache/biglot_live_watch/raw_{date}.jsonl（沒有就跳過）；
       另補當天 TX 逐筆（FinMind，1 request，失敗不擋）。
-      輸出 ${GOLDENSTOCKS_DATA_DIR}/data/cache/biglot_bucket/bucket_reset_n{30,40,60}.csv（依日期去重，可重跑）。
+      輸出 ${GOLDENSTOCKS_DATA_DIR}/data/cache/biglot_bucket/bucket_reset_n{30,40,60}.csv 與 bucket_reset_fx{30,40,60}.csv（依日期去重，可重跑）。
       唯讀、無送單路徑。刻意不進 install-launchd.sh LABELS，安裝見
       scripts/launchd/biglot-bucket-eod.command 檔頭。開關：.env RUN_BIGLOT_BUCKET_EOD（預設 1）。
       ⚠ 目前只有 2 天樣本、掃過 20+ 組參數、有效獨立樣本＝2，**不是結論**；此 job 的唯一目的
