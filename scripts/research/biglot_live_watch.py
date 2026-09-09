@@ -139,7 +139,12 @@ def on_message(raw, THR):
             acc["bb"] += dv
         elif side < 0:
             acc["bs"] += dv
-    if dv == RETAIL_LOTS:              # 散戶＝單筆 1 張（最小交易單位）
+    elif dv == RETAIL_LOTS:            # 散戶＝單筆 1 張（最小交易單位）
+        # elif 不是 if：股價 >=5,000 元的股票 1 張即 >=500 萬，同筆成交會同時符合兩個
+        # 門檻。2026-09-09 前是雙重計入（大戶與散戶各記一次），大立光/川湖/旺矽/健策/
+        # 創意/台光電的「散戶流」實為大單重複記帳。改 elif 後這些高價股的散戶欄位
+        # 結構上不可測（每筆 1 張都被歸大戶）——寧可空白也不要污染，判讀時要知道
+        # 高價股的 retail／scoreD／concord 散戶腿沒有意義。
         if side > 0:
             acc["rb"] += dv
         elif side < 0:
