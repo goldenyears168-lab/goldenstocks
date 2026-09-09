@@ -43,13 +43,24 @@ def load(date):
         cum = float(cum)
         if cum <= maxc[sym]:
             continue
-        sz = cum - maxc[sym] if maxc[sym] else float(d["size"])
+        # 單筆量一律用 Δvolume（含第一筆：cum 本身就是從 0 起算的增量）。
+        # 不可退回 data.size —— 富邦 ws 的 size 不是單筆量、且有殭屍重送
+        # （2026-09-06 實測 Σsize 為真實日量 3~4 倍，用它做 Lee-Ready 會把方向算反）。
+        sz = cum - maxc[sym]
         maxc[sym] = cum
         rows.append((sym, datetime.fromtimestamp(d["time"] / 1e6, TPE).strftime("%H:%M:%S"),
                      float(d["price"]), sz, float(d.get("bid") or np.nan),
-                     float(d.get("ask") or np.nan)))
-    df = pd.DataFrame(rows, columns=["sym", "t", "px", "sz", "bid", "ask"]).sort_values(["sym", "t"])
-    df["d"] = np.where(df.px >= df.ask, 1.0, np.where(df.px <= df.bid, -1.0, 0.0))
+                     float(d.get("ask") or np.nan),
+                     bool(d.get("isOpen") or d.get("isClose"))))
+    df = pd.DataFrame(rows, columns=["sym", "t", "px", "sz", "bid", "ask", "auction"]).sort_values(["sym", "t"])
+    # 開/收盤集合競價是單一價，內外盤無意義 → 只算量、方向記 0（不進大戶多空）。
+    # 13:30 那一撮佔全日成交值中位 6.33%，不排除會系統性污染方向。
+    # ⚠ 只能用 isOpen / isClose 判斷，**不可**要求 isContinuous is True ——
+    #   處置/分盤股（每 N 分鐘集合競價）的真成交完全不帶 isContinuous 旗標：
+    #   2026-09-08 實測金居 8358、全新 2455、精材 3374、雙鴻 3324、大立光 3008、
+    #   玉晶光 3406 六檔 100% 缺旗標，正檢查會讓這六檔整檔方向歸零、從多空分析中消失。
+    df["d"] = np.where(df.auction, 0.0,
+                       np.where(df.px >= df.ask, 1.0, np.where(df.px <= df.bid, -1.0, 0.0)))
     df["amt"] = df.px * df.sz * 1000
     return df
 
