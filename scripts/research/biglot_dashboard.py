@@ -442,7 +442,7 @@ def render():
             + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
             + td(r["share5"], "pct", False, r["unm"])
             + td(r["streak"] if r["streak"] else None, "int")
-            + td(r["bigday"], "yi") + td(r["bigpm"], "yi") + td(r["retday"], "yi", unm=r["unm"])
+            + td(r["bigday"], "yi") + td(r["retday"], "yi", unm=r["unm"])
             + td(r["vwap_gap"], "bps")
             + td(r["lu_dist"], "pct2", False)
             + td(r["bid_min"], "min", False) + td(r["ask_min"], "min", False)
@@ -468,7 +468,7 @@ def render():
 <th class="g30">Δ參與30</th>
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
 <th class="g5">參與%</th><th class="g5">連續窗</th>
-<th class="gd">全日大戶</th><th class="gd">午後大戶</th><th class="gd">全日散戶</th>
+<th class="gd">全日大戶</th><th class="gd">全日散戶</th>
 <th>VWAP差</th><th>距漲停</th><th>買簿</th><th>賣簿</th><th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
