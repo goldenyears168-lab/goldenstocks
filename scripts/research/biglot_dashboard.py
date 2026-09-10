@@ -36,7 +36,43 @@ NAMES = {r["sid"]: r["name"] for r in _cal["universe"]}
 CATS = {r["sid"]: r["cat"][:4] for r in _cal["universe"]}
 RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= BIG_AMT}
 
-PAGE = {"html": "<html><body>初始化中…</body></html>"}
+PAGE = {"frag": "<div class='meta'>初始化中…</div>"}
+
+SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
+<title>大戶45檔儀表板</title><style>
+body{{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',monospace;margin:8px}}
+h3{{margin:4px 0;font-size:14px}}
+.meta{{color:#8b949e;font-size:11px;margin-bottom:6px}}
+table{{border-collapse:collapse;width:100%;white-space:nowrap}}
+th,td{{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}}
+th{{position:sticky;top:0;background:#161b22;color:#8b949e;font-weight:600;cursor:default}}
+th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
+td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
+.cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
+.up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
+.warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
+.flag{{color:#e3b341;text-align:left}}
+.rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
+.flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
+</style></head><body>
+<h3>大戶-散戶 45檔即時儀表板</h3>
+<div id="app"><div class="meta">載入中…</div></div>
+<script>
+const R={REFRESH_SEC}000;
+async function tick(){{
+  try{{
+    const r=await fetch('/frag?_='+Date.now());
+    const t=await r.text();
+    document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
+    const c=document.getElementById('closed');
+    if(c && c.dataset.closed==='1') return;        // 收盤後停止輪詢
+  }}catch(e){{}}
+  setTimeout(tick,R);
+}}
+tick();
+</script>
+</body></html>"""
 
 
 class S:
@@ -413,32 +449,15 @@ def render():
             + f"<td class='flag'>{r['flag']}</td>"
             "</tr>")
 
-    PAGE["html"] = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
-<meta http-equiv="refresh" content="{REFRESH_SEC}">
-<title>大戶45檔儀表板</title><style>
-body{{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',monospace;margin:8px}}
-h3{{margin:4px 0;font-size:14px}}
-.meta{{color:#8b949e;font-size:11px;margin-bottom:6px}}
-table{{border-collapse:collapse;width:100%;white-space:nowrap}}
-th,td{{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}}
-th{{position:sticky;top:0;background:#161b22;color:#8b949e;font-weight:600;cursor:default}}
-th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
-td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
-.cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
-.up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
-.warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
-.flag{{color:#e3b341;text-align:left}}
-.rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
-.flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
-</style></head><body>
-<h3>大戶-散戶 45檔即時儀表板</h3>
+    upd_note = (f"每{REFRESH_SEC}s自動更新(不重載)" if in_mkt
+                else "盤後定格,已停止更新")
+    PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
 {stale_bar}
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
-勿追30超額−5bps/跌深大戶接+9bps) · 5分組=執行細節 · 每{REFRESH_SEC}s自動更新</div>
+勿追30超額−5bps/跌深大戶接+9bps) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{flag_bar}</div>
 <table><thead><tr>
 <th>股票</th>
@@ -451,13 +470,15 @@ td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
 <th class="g5">參與%</th><th class="g5">連續窗</th>
 <th class="gd">全日大戶</th><th class="gd">午後大戶</th><th class="gd">全日散戶</th>
 <th>VWAP差</th><th>距漲停</th><th>買簿</th><th>賣簿</th><th>旗標</th>
-</tr></thead><tbody>{''.join(trs)}</tbody></table>
-</body></html>"""
+</tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = PAGE["html"].encode("utf-8")
+        if self.path.split("?", 1)[0] == "/frag":
+            body = PAGE["frag"].encode("utf-8")
+        else:
+            body = SHELL.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -468,14 +489,26 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+def _in_market():
+    n = datetime.now(TZ)
+    return n.weekday() < 5 and "08:55" <= n.strftime("%H:%M") <= "13:35"
+
+
 def loop():
+    done_close = False
     while True:
         try:
-            ingest()
-            render()
+            if _in_market():
+                ingest()
+                render()
+                done_close = False
+            elif not done_close:
+                ingest()          # 收盤後補跑一次定格,之後停工
+                render()
+                done_close = True
         except Exception as e:
-            PAGE["html"] = f"<html><body>render error: {html_mod.escape(str(e))}</body></html>"
-        time.sleep(REFRESH_SEC)
+            PAGE["frag"] = f"<div class='meta'>render error: {html_mod.escape(str(e))}</div>"
+        time.sleep(REFRESH_SEC if _in_market() else 300)
 
 
 if __name__ == "__main__":
