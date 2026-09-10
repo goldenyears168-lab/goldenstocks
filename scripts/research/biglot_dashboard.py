@@ -299,6 +299,20 @@ def render():
         elif (r["r30"] is not None and r["r30"] < -30
               and big30n is not None and big30n > 5):
             r["flag"] = "🟢跌深大戶接"
+        # 5分早期旗標(127日驗證預測未來30分:F8超額-6.1/cl-t-4.9、F9 -9.1/-5.0;
+        #  F7 +10.8/+2.8僅觀察)——與30分旗標並列顯示
+        big5n = (r["big5"] / r["tot5"] * 100
+                 if (r.get("big5") is not None and r.get("tot5")) else None)
+        early = ""
+        if r["w_ret"] is not None and r["w_ret"] > 20:
+            if ((r["dshare"] is not None and r["dshare"] > 5 and not r["unm"])
+                    or (big5n is not None and big5n < -5)):
+                early = "⚠勿追5m"
+        elif (r["w_ret"] is not None and r["w_ret"] < -20
+              and big5n is not None and big5n > 5):
+            early = "🟡接刀觀察"
+        if early:
+            r["flag"] = (r["flag"] + " " + early).strip()
 
     rows.sort(key=lambda r: -(r["big30"] or 0))
     win_lbl = (f"{cur.strftime('%H:%M')}–{(cur+timedelta(minutes=5)).strftime('%H:%M')}"
@@ -314,7 +328,13 @@ def render():
     if fl_chase:
         flag_bar += f"<span class='warnv'>⚠勿追30(漲窗×參與跳升/大戶賣):</span> {fl_chase} "
     if fl_catch:
-        flag_bar += f"<span style='color:#3fb950'>🟢跌深大戶接(唯一正EV格):</span> {fl_catch}"
+        flag_bar += f"<span style='color:#3fb950'>🟢跌深大戶接(唯一正EV格):</span> {fl_catch} "
+    fl_e1 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "⚠勿追5m" in r["flag"])
+    fl_e2 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "🟡接刀觀察" in r["flag"])
+    if fl_e1:
+        flag_bar += f"<span class='warnv'>⚠勿追5m(早期):</span> {fl_e1} "
+    if fl_e2:
+        flag_bar += f"<span style='color:#d29922'>🟡接刀觀察(5m早期,未達門檻):</span> {fl_e2}"
     if not flag_bar:
         flag_bar = "<span class='dim'>本窗無旗標</span>"
     raw_path = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{ST.date}.jsonl"
