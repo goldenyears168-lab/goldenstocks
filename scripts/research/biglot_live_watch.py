@@ -111,7 +111,7 @@ def on_message(raw, THR):
     px, vol = float(px), float(vol)
     acc = _ACC.setdefault(sid, {"vol": 0.0, "bb": 0.0, "bs": 0.0, "n": 0,
                                 "rb": 0.0, "rs": 0.0, "px0": px, "px1": px,
-                                "lastvol": 0.0})
+                                "lastvol": 0.0, "seen1": False})
     # 單筆量＝累積成交量的增量 Δvolume，不用 data.size。
     # 富邦 ws 的 size 欄不是單筆量、且有殭屍重送（2026-09-06 實測 Σsize 為真實日量的
     # 3~4 倍，且用它做 Lee-Ready 會把買賣方向算反：9/4 聯電/南亞科本是大戶淨買卻算成淨賣）。
@@ -122,6 +122,13 @@ def on_message(raw, THR):
         return
     acc["px1"] = px
     if d.get("isOpen") or d.get("isClose"):    # 開/收盤競價：單一價，內外盤無意義，只推進量不計方向
+        return
+    if not acc["seen1"]:
+        # 當日第一筆 Δvolume＝開盤競價彙總量，且常**不帶 isOpen 旗標**（2026-09-10 玉晶光
+        # 417 張＝4.57 億實測，旗標 None）——單一價無內外盤，被 Lee-Ready 歸類會把整包
+        # 競價量誤判成單邊大戶（當日玉晶光大戶淨賣被灌水 6 倍、欣興正負號整個翻面）。
+        # 比照 isOpen 路徑：只推進 lastvol、不計方向。
+        acc["seen1"] = True
         return
     # 注意：不可要求 isContinuous is True —— 處置/分盤股(每N分集合競價)的真成交
     # 完全不帶 isContinuous 旗標(2026-09-08 玉晶光等 6 檔實測),正檢查會整檔漏光。
