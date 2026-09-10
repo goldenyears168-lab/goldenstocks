@@ -189,6 +189,9 @@ def render():
         if r["w_ret"] is not None:
             rets5.append(r["w_ret"])
         r["big5"] = a["big"] if a else None
+        r["big5p"] = p["big"] if p else None
+        r["tot5"] = a["tot"] if a else None
+        r["tot5p"] = p["tot"] if p else None
         r["retn5"] = a["retn"] if a else None
         share = a["ret2"] / a["tot"] * 100 if (a and a["tot"]) else None
         share_p = p["ret2"] / p["tot"] * 100 if (p and p["tot"]) else None
@@ -257,6 +260,22 @@ def render():
 
     mkt5 = sum(rets5) / len(rets5) if rets5 else 0.0
     mkt30 = sum(rets30) / len(rets30) if rets30 else 0.0
+
+    # 排名(1=最大;注意力分流用,非訊號——個股排名持續性已檢定為不可持續)
+    def _rank(key):
+        order = sorted((r for r in rows if r.get(key) is not None),
+                       key=lambda x: -x[key])
+        return {r["sid"]: i + 1 for i, r in enumerate(order)}
+    rk5, rk5p = _rank("big5"), _rank("big5p")
+    rkh, rkhp = _rank("tot5"), _rank("tot5p")
+    rk30, rkd = _rank("big30"), _rank("bigday")
+    for r in rows:
+        r["r5"] = rk5.get(r["sid"])
+        r["d5"] = (rk5p[r["sid"]] - r["r5"]) if (r["r5"] and r["sid"] in rk5p) else None
+        r["rh"] = rkh.get(r["sid"])
+        r["dh"] = (rkhp[r["sid"]] - r["rh"]) if (r["rh"] and r["sid"] in rkhp) else None
+        r["r30r"] = rk30.get(r["sid"])
+        r["rdr"] = rkd.get(r["sid"])
     # 旗標
     for r in rows:
         r["flag"] = ""
@@ -273,6 +292,33 @@ def render():
                if cur else "—")
     w30_lbl = (f"{win6[0].strftime('%H:%M')}–{(win6[-1]+timedelta(minutes=5)).strftime('%H:%M')}"
                if win6 else "—")
+
+    # 旗標速覽 + 資料延遲警示
+    fl_chase = " ".join(f"{r['sid']}{r['name']}" for r in rows if r["flag"] == "⚠勿追")
+    fl_sell = " ".join(f"{r['sid']}{r['name']}" for r in rows
+                       if r["flag"] == "⚠大戶賣回檔")
+    flag_bar = ""
+    if fl_chase:
+        flag_bar += f"<span class='warnv'>⚠勿追(獨漲+散戶湧入):</span> {fl_chase} "
+    if fl_sell:
+        flag_bar += f"<span class='warnv'>⚠大戶賣回檔:</span> {fl_sell}"
+    if not flag_bar:
+        flag_bar = "<span class='dim'>本窗無旗標</span>"
+    raw_path = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{ST.date}.jsonl"
+    in_mkt = now.weekday() < 5 and "09:00" <= now.strftime("%H:%M") <= "13:32"
+    stale_bar = ""
+    if in_mkt:
+        try:
+            age = time.time() - raw_path.stat().st_mtime
+            if age > 90:
+                stale_bar = (f"<div style='background:#6e1a1a;color:#ffb3b3;padding:4px 8px;"
+                             f"font-weight:700'>⚠ 資料延遲 {age:.0f} 秒——collector 可能斷線,"
+                             f"表格為舊資料</div>")
+        except FileNotFoundError:
+            stale_bar = ("<div style='background:#6e1a1a;color:#ffb3b3;padding:4px 8px;"
+                         "font-weight:700'>⚠ 今日 raw 檔不存在——collector 未啟動</div>")
+    else:
+        stale_bar = "<div style='color:#8b949e;padding:2px 8px'>盤後定格(非交易時段)</div>"
 
     def td(v, fmt="wan", cls_by_sign=True, unm=False):
         if unm:
@@ -302,13 +348,25 @@ def render():
             txt = str(v)
         return f"<td class='{cls}'>{txt}</td>"
 
+    def rk_td(n, d=None):
+        if n is None:
+            return "<td class='dim'>—</td>"
+        arrow = ""
+        if d is not None and d != 0:
+            arrow = (f"<span class='up'>▲{d}</span>" if d > 0
+                     else f"<span class='dn'>▼{-d}</span>")
+        cls = "rk1" if n <= 3 else ("rkN" if n >= 43 else "")
+        return f"<td class='{cls}'>{n}{arrow}</td>"
+
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
         trs.append(
             "<tr>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
-            f"<td>{r['px'] if r['px'] else '—'}</td>"
+            + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
+            + rk_td(r["r30r"]) + rk_td(r["rdr"])
+            + f"<td>{r['px'] if r['px'] else '—'}</td>"
             + td(r["day_ret"], "pct2")
             + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
             + td(r["share5"], "pct", False, r["unm"]) + td(r["dshare"], "bps" if False else "bps", True, r["unm"]).replace("bps", "")
@@ -337,14 +395,21 @@ td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
 .flag{{color:#e3b341;text-align:left}}
+.rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
+.flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
 </style></head><body>
 <h3>大戶-散戶 45檔即時儀表板</h3>
+{stale_bar}
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
-散戶參與≥35%標黃 · 每{REFRESH_SEC}s自動更新</div>
+散戶參與≥35%標黃 · 排名=注意力分流非訊號 · 每{REFRESH_SEC}s自動更新</div>
+<div class="flagbar">{flag_bar}</div>
 <table><thead><tr>
-<th>股票</th><th>價</th><th>日內%</th>
+<th>股票</th>
+<th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
+<th title="30分大戶淨流排名">R30</th><th title="全日大戶淨流排名">R日</th>
+<th>價</th><th>日內%</th>
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
 <th class="g5">參與%</th><th class="g5">Δ參與</th><th class="g5">連續窗</th>
 <th class="g30">30分bps</th><th class="g30">30分大戶</th><th class="g30">參與%</th>
