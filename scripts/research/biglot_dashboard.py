@@ -174,6 +174,7 @@ def render():
     cur = done[-1] if done else None
     prev = done[-2] if len(done) >= 2 else None
     win6 = done[-6:] if done else []
+    win6p = done[-12:-6] if len(done) >= 7 else []
     base_bk = max((bk for bk in all_bks if bk < win6[0]), default=None) if win6 else None
 
     rows, rets5, rets30 = [], [], []
@@ -216,8 +217,15 @@ def render():
         if win6:
             r["big30"] = sum(m[bk]["big"] for bk in win6 if bk in m)
             t30 = sum(m[bk]["tot"] for bk in win6 if bk in m)
+            r["tot30"] = t30
             r["share30"] = (sum(m[bk]["ret2"] for bk in win6 if bk in m) / t30 * 100
                             if t30 else None)
+            r["big30p"] = sum(m[bk]["big"] for bk in win6p if bk in m) if win6p else None
+            t30p = sum(m[bk]["tot"] for bk in win6p if bk in m) if win6p else 0
+            sh30p = (sum(m[bk]["ret2"] for bk in win6p if bk in m) / t30p * 100
+                     if t30p else None)
+            r["dsh30"] = (r["share30"] - sh30p
+                          if (r["share30"] is not None and sh30p is not None) else None)
             px_end = next((m[bk]["px"] for bk in reversed(win6) if bk in m and m[bk]["px"]), None)
             px_base = (m[base_bk]["px"] if base_bk and base_bk in m and m[base_bk].get("px")
                        else next((m[bk]["px"] for bk in win6 if bk in m and m[bk]["px"]), None))
@@ -226,6 +234,7 @@ def render():
                 rets30.append(r["r30"])
         else:
             r["big30"] = r["share30"] = r["r30"] = None
+            r["tot30"] = r["big30p"] = r["dsh30"] = None
         # 全日
         last_price = ST.last_px.get(sid)
         r["px"] = last_price
@@ -268,40 +277,44 @@ def render():
         return {r["sid"]: i + 1 for i, r in enumerate(order)}
     rk5, rk5p = _rank("big5"), _rank("big5p")
     rkh, rkhp = _rank("tot5"), _rank("tot5p")
-    rk30, rkd = _rank("big30"), _rank("bigday")
+    rk30, rk30p, rkd = _rank("big30"), _rank("big30p"), _rank("bigday")
     for r in rows:
         r["r5"] = rk5.get(r["sid"])
         r["d5"] = (rk5p[r["sid"]] - r["r5"]) if (r["r5"] and r["sid"] in rk5p) else None
         r["rh"] = rkh.get(r["sid"])
         r["dh"] = (rkhp[r["sid"]] - r["rh"]) if (r["rh"] and r["sid"] in rkhp) else None
         r["r30r"] = rk30.get(r["sid"])
+        r["d30"] = ((rk30p[r["sid"]] - r["r30r"])
+                    if (r["r30r"] and r["sid"] in rk30p) else None)
         r["rdr"] = rkd.get(r["sid"])
-    # 旗標
+    # 旗標(30分尺度,127日面板驗證:勿追超額-4.9~-5.6bps cl-t≈-3;跌深大戶接+8.9bps cl-t+2.3)
     for r in rows:
         r["flag"] = ""
-        if (r["w_ret"] is not None and r["w_ret"] > 0 and mkt5 < 5
-                and (r["w_ret"] - mkt5) > 20 and r["dshare"] is not None
-                and r["dshare"] > 3 and not r["unm"]):
-            r["flag"] = "⚠勿追"
-        elif (r["w_ret"] is not None and r["w_ret"] < -20
-              and r["big5"] is not None and r["big5"] < -3e7):
-            r["flag"] = "⚠大戶賣回檔"
+        big30n = (r["big30"] / r["tot30"] * 100
+                  if (r.get("big30") is not None and r.get("tot30")) else None)
+        if r["r30"] is not None and r["r30"] > 30:
+            if ((r["dsh30"] is not None and r["dsh30"] > 10 and not r["unm"])
+                    or (big30n is not None and big30n < -5)):
+                r["flag"] = "⚠勿追30"
+        elif (r["r30"] is not None and r["r30"] < -30
+              and big30n is not None and big30n > 5):
+            r["flag"] = "🟢跌深大戶接"
 
-    rows.sort(key=lambda r: -(r["big5"] or 0))
+    rows.sort(key=lambda r: -(r["big30"] or 0))
     win_lbl = (f"{cur.strftime('%H:%M')}–{(cur+timedelta(minutes=5)).strftime('%H:%M')}"
                if cur else "—")
     w30_lbl = (f"{win6[0].strftime('%H:%M')}–{(win6[-1]+timedelta(minutes=5)).strftime('%H:%M')}"
                if win6 else "—")
 
     # 旗標速覽 + 資料延遲警示
-    fl_chase = " ".join(f"{r['sid']}{r['name']}" for r in rows if r["flag"] == "⚠勿追")
-    fl_sell = " ".join(f"{r['sid']}{r['name']}" for r in rows
-                       if r["flag"] == "⚠大戶賣回檔")
+    fl_chase = " ".join(f"{r['sid']}{r['name']}" for r in rows if r["flag"] == "⚠勿追30")
+    fl_catch = " ".join(f"{r['sid']}{r['name']}" for r in rows
+                        if r["flag"] == "🟢跌深大戶接")
     flag_bar = ""
     if fl_chase:
-        flag_bar += f"<span class='warnv'>⚠勿追(獨漲+散戶湧入):</span> {fl_chase} "
-    if fl_sell:
-        flag_bar += f"<span class='warnv'>⚠大戶賣回檔:</span> {fl_sell}"
+        flag_bar += f"<span class='warnv'>⚠勿追30(漲窗×參與跳升/大戶賣):</span> {fl_chase} "
+    if fl_catch:
+        flag_bar += f"<span style='color:#3fb950'>🟢跌深大戶接(唯一正EV格):</span> {fl_catch}"
     if not flag_bar:
         flag_bar = "<span class='dim'>本窗無旗標</span>"
     raw_path = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{ST.date}.jsonl"
@@ -364,14 +377,15 @@ def render():
         trs.append(
             "<tr>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
+            + rk_td(r["r30r"], r["d30"]) + rk_td(r["rdr"])
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
-            + rk_td(r["r30r"]) + rk_td(r["rdr"])
             + f"<td>{r['px'] if r['px'] else '—'}</td>"
             + td(r["day_ret"], "pct2")
-            + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
-            + td(r["share5"], "pct", False, r["unm"]) + td(r["dshare"], "bps" if False else "bps", True, r["unm"]).replace("bps", "")
-            + td(r["streak"] if r["streak"] else None, "int")
             + td(r["r30"], "bps") + td(r["big30"], "wan") + td(r["share30"], "pct", False, r["unm"])
+            + td(r["dsh30"], "bps", True, r["unm"]).replace("bps", "")
+            + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
+            + td(r["share5"], "pct", False, r["unm"])
+            + td(r["streak"] if r["streak"] else None, "int")
             + td(r["bigday"], "yi") + td(r["bigpm"], "yi") + td(r["retday"], "yi", unm=r["unm"])
             + td(r["vwap_gap"], "bps")
             + td(r["lu_dist"], "pct2", False)
@@ -403,16 +417,18 @@ td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
-散戶參與≥35%標黃 · 排名=注意力分流非訊號 · 每{REFRESH_SEC}s自動更新</div>
+散戶參與≥35%標黃 · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
+勿追30超額−5bps/跌深大戶接+9bps) · 5分組=執行細節 · 每{REFRESH_SEC}s自動更新</div>
 <div class="flagbar">{flag_bar}</div>
 <table><thead><tr>
 <th>股票</th>
+<th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
-<th title="30分大戶淨流排名">R30</th><th title="全日大戶淨流排名">R日</th>
 <th>價</th><th>日內%</th>
-<th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
-<th class="g5">參與%</th><th class="g5">Δ參與</th><th class="g5">連續窗</th>
 <th class="g30">30分bps</th><th class="g30">30分大戶</th><th class="g30">參與%</th>
+<th class="g30">Δ參與30</th>
+<th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
+<th class="g5">參與%</th><th class="g5">連續窗</th>
 <th class="gd">全日大戶</th><th class="gd">午後大戶</th><th class="gd">全日散戶</th>
 <th>VWAP差</th><th>距漲停</th><th>買簿</th><th>賣簿</th><th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
