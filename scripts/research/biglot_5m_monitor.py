@@ -37,7 +37,8 @@ TODAY = datetime.now(TZ).strftime("%Y-%m-%d")
 RAW = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{TODAY}.jsonl"
 STATE = DATA_DIR.parent / "cache" / "biglot_live_watch" / "_5m_monitor_state.json"
 CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
-BIG_AMT = 5_000_000
+BIG_AMT = 10_000_000     # 2026-09-12 使用者定案:大戶=真大戶(>=1000萬)
+RETAIL_CAP = 5_000_000   # 散戶定義不動:1張且<500萬(高價股1張大單歸中實不歸散戶)
 GAP_JUMP_AMT = 500_000_000
 GAP_SECONDS = 90
 
@@ -45,7 +46,7 @@ try:
     _cal = json.load(open(CALIB))
     NAMES = {r["sid"]: r["name"] for r in _cal["universe"]}
     RET_UNMEASURABLE = {r["sid"] for r in _cal["universe"]
-                        if r.get("px", 0) * 1000 >= BIG_AMT}
+                        if r.get("px", 0) * 1000 >= RETAIL_CAP}
 except Exception:
     NAMES, RET_UNMEASURABLE = {}, set()
 
@@ -128,7 +129,7 @@ def load_buckets():
                 ds["big"] += sgn * amt
                 if t.hour >= 12:
                     ds["big_pm"] += sgn * amt
-            elif dv == 1:
+            elif dv == 1 and amt < RETAIL_CAP:
                 row["retn"] += sgn * amt
                 row["ret2"] += amt
                 ds["ret"] += sgn * amt

@@ -25,7 +25,8 @@ from stock_db import DATA_DIR  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
-BIG_AMT = 5_000_000
+BIG_AMT = 10_000_000     # 2026-09-12 使用者定案:大戶=真大戶(>=1000萬)
+RETAIL_CAP = 5_000_000   # 散戶定義不動:1張且<500萬(高價股1張大單歸中實不歸散戶)
 GAP_JUMP_AMT = 500_000_000
 GAP_SECONDS = 90
 REFRESH_SEC = 30
@@ -34,7 +35,7 @@ CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 _cal = json.load(open(CALIB))
 NAMES = {r["sid"]: r["name"] for r in _cal["universe"]}
 CATS = {r["sid"]: r["cat"][:4] for r in _cal["universe"]}
-RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= BIG_AMT}
+RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= RETAIL_CAP}
 try:
     _rb = json.load(open(DATA_DIR.parent / "cache" / "biglot_live_watch" / "_rvol_base.json"))
     RVOL_BASE = _rb.get("base", {})
@@ -203,7 +204,7 @@ def _ingest_trade(line):
         ds["big"] += sgn * amt
         if t.hour >= 12:
             ds["big_pm"] += sgn * amt
-    elif dv == 1:
+    elif dv == 1 and amt < RETAIL_CAP:
         row["retn"] += sgn * amt
         row["ret2"] += amt
         ds["ret"] += sgn * amt
@@ -491,7 +492,7 @@ def render():
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
-散戶參與≥35%標黃 · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
+散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{flag_bar}</div>
 <table><thead><tr>
