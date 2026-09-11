@@ -35,6 +35,11 @@ _cal = json.load(open(CALIB))
 NAMES = {r["sid"]: r["name"] for r in _cal["universe"]}
 CATS = {r["sid"]: r["cat"][:4] for r in _cal["universe"]}
 RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= BIG_AMT}
+try:
+    _rb = json.load(open(DATA_DIR.parent / "cache" / "biglot_live_watch" / "_rvol_base.json"))
+    RVOL_BASE = _rb.get("base", {})
+except Exception:
+    RVOL_BASE = {}
 
 PAGE = {"frag": "<div class='meta'>初始化中…</div>"}
 
@@ -230,6 +235,16 @@ def render():
         r["tot5"] = a["tot"] if a else None
         r["tot5p"] = p["tot"] if p else None
         r["retn5"] = a["retn"] if a else None
+        rb = RVOL_BASE.get(sid, {})
+        bk_lbl = cur.strftime("%H:%M") if cur else None
+        r["rvol5"] = (a["tot"] / rb[bk_lbl] if (a and a["tot"] and bk_lbl in rb and rb[bk_lbl] > 0)
+                      else None)
+        if win6:
+            b30 = sum(rb.get(bk.strftime("%H:%M"), 0) for bk in win6)
+            t30v = sum(m[bk]["tot"] for bk in win6 if bk in m)
+            r["rvol30"] = t30v / b30 if b30 > 0 else None
+        else:
+            r["rvol30"] = None
         share = a["ret2"] / a["tot"] * 100 if (a and a["tot"]) else None
         share_p = p["ret2"] / p["tot"] * 100 if (p and p["tot"]) else None
         r["share5"] = share
@@ -344,9 +359,14 @@ def render():
             if ((r["dshare"] is not None and r["dshare"] > 5 and not r["unm"])
                     or (big5n is not None and big5n < -5)):
                 early = "⚠勿追5m"
+                if r["rvol5"] is not None and r["rvol5"] < 1.0:
+                    early = "⚠勿追5m(枯量,最強帶)"   # 127日:<1x 帶超額-7~-9bps t≈-3.3
         elif (r["w_ret"] is not None and r["w_ret"] < -20
               and big5n is not None and big5n > 5):
-            early = "🟡接刀觀察"
+            if r["rvol5"] is not None and r["rvol5"] >= 0.5:
+                early = "🟢跌深大戶接"               # RVOL>=0.5 條件版:127日+11~14bps cl-t 3.4-3.9
+            else:
+                early = "▫接刀(枯量,無效帶)"          # <0.5x 帶127日超額≈0
         if early:
             r["flag"] = (r["flag"] + " " + early).strip()
 
@@ -445,6 +465,8 @@ def render():
             + td(r["bigday"], "yi") + td(r["retday"], "yi", unm=r["unm"])
             + td(r["vwap_gap"], "bps")
             + td(r["lu_dist"], "pct2", False)
+            + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
+               f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
             + td(r["bid_min"], "min", False) + td(r["ask_min"], "min", False)
             + f"<td class='flag'>{r['flag']}</td>"
             "</tr>")
@@ -469,7 +491,7 @@ def render():
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
 <th class="g5">參與%</th><th class="g5">連續窗</th>
 <th class="gd">全日大戶</th><th class="gd">全日散戶</th>
-<th>VWAP差</th><th>距漲停</th><th>買簿</th><th>賣簿</th><th>旗標</th>
+<th>VWAP差</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th><th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
