@@ -231,6 +231,23 @@ def render():
     win6p = done[-12:-6] if len(done) >= 7 else []
     base_bk = max((bk for bk in all_bks if bk < win6[0]), default=None) if win6 else None
 
+    prior6 = done[-7:-1] if len(done) >= 7 else []
+    # 前6窗市場報酬(各窗宇宙均值)
+    mret_prior = 0.0
+    if prior6:
+        for k, bk in enumerate(prior6):
+            pb = done[done.index(bk)-1] if done.index(bk) >= 1 else None
+            if pb is None:
+                continue
+            vs = []
+            for sid2 in NAMES:
+                m2 = ST.buckets.get(sid2, {})
+                a2, p2 = m2.get(bk), m2.get(pb)
+                if a2 and p2 and a2["px"] and p2["px"]:
+                    vs.append((a2["px"] / p2["px"] - 1) * 10000)
+            if vs:
+                mret_prior += sum(vs) / len(vs)
+
     rows, rets5, rets30 = [], [], []
     for sid in NAMES:
         m = ST.buckets.get(sid, {})
@@ -244,6 +261,8 @@ def render():
         if r["w_ret"] is not None:
             rets5.append(r["w_ret"])
         r["big5"] = a["big"] if a else None
+        r["big_prior6"] = (sum(m[bk]["big"] for bk in prior6 if bk in m)
+                           if prior6 else None)
         r["big5p"] = p["big"] if p else None
         r["tot5"] = a["tot"] if a else None
         r["tot5p"] = p["tot"] if p else None
@@ -368,7 +387,14 @@ def render():
         big5n = (r["big5"] / r["tot5"] * 100
                  if (r.get("big5") is not None and r.get("tot5")) else None)
         early = ""
-        if r["w_ret"] is not None and r["w_ret"] > 20:
+        tot5v = r.get("tot5") or 0
+        if (big5n is not None and big5n > 10 and tot5v > 0
+                and r["share5"] is not None and r["share5"] < 5 and not r["unm"]
+                and r["big_prior6"] is not None and r["big_prior6"] < 0
+                and mret_prior < 0):
+            # 127日驗證:逆大戶∧逆市場∧散戶<5%的千萬淨買 → fwd30超額+16.0bps cl-t+4.37
+            early = "💎逆勢純機構"
+        elif r["w_ret"] is not None and r["w_ret"] > 20:
             if ((r["dshare"] is not None and r["dshare"] > 5 and not r["unm"])
                     or (big5n is not None and big5n < -5)):
                 early = "⚠勿追5m"
@@ -400,6 +426,10 @@ def render():
         flag_bar += f"<span style='color:#3fb950'>🟢跌深大戶接(唯一正EV格):</span> {fl_catch} "
     fl_e1 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "⚠勿追5m" in r["flag"])
     fl_e2 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "🟡接刀觀察" in r["flag"])
+    fl_dia = " ".join(f"{r['sid']}{r['name']}" for r in rows if "💎" in r["flag"])
+    if fl_dia:
+        flag_bar = (f"<span style='color:#79c0ff'>💎逆勢純機構買單(127日+16bps/t4.4,全系統最強格):</span> "
+                    f"{fl_dia} ") + flag_bar
     if fl_e1:
         flag_bar += f"<span class='warnv'>⚠勿追5m(早期):</span> {fl_e1} "
     if fl_e2:
@@ -493,7 +523,7 @@ def render():
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
-勿追30超額−5bps/跌深大戶接+9bps) · 5分組=執行細節 · {upd_note}</div>
+勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前30分大戶淨賣∧市場跌∧散戶&lt;5%→+16bps cl-t4.4) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{flag_bar}</div>
 <table><thead><tr>
 <th>股票</th>
