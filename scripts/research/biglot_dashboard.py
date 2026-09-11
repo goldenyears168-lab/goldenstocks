@@ -391,8 +391,10 @@ def render():
         if (big5n is not None and big5n > 10 and tot5v > 0
                 and r["share5"] is not None and r["share5"] < 5 and not r["unm"]
                 and r["big_prior6"] is not None and r["big_prior6"] < 0
+                and r["big5p"] is not None and r["big5p"] < 0
                 and mret_prior < 0):
-            # 127日驗證:逆大戶∧逆市場∧散戶<5%的千萬淨買 → fwd30超額+16.0bps cl-t+4.37
+            # 127日驗證:雙尺度(前5分+前30分)大戶皆淨賣∧市場跌∧散戶<5%的千萬淨買
+            # → fwd30超額+25.1bps cl-t+5.41 n=1076;分半+25.0/+25.2、逐月6/6正
             early = "💎逆勢純機構"
         elif r["w_ret"] is not None and r["w_ret"] > 20:
             if ((r["dshare"] is not None and r["dshare"] > 5 and not r["unm"])
@@ -523,7 +525,7 @@ def render():
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
-勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前30分大戶淨賣∧市場跌∧散戶&lt;5%→+16bps cl-t4.4) · 5分組=執行細節 · {upd_note}</div>
+勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧前30分市場跌∧散戶&lt;5%→+25bps cl-t5.4) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{flag_bar}</div>
 <table><thead><tr>
 <th>股票</th>
