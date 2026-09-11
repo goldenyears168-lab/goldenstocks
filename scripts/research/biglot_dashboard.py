@@ -532,12 +532,42 @@ def render():
 
 ARC_CSS = """<style>body{background:#0d1117;color:#c9d1d9;font:13px/1.6 -apple-system,'PingFang TC',monospace;margin:10px}
 table{border-collapse:collapse;white-space:nowrap}th,td{padding:2px 9px;text-align:right;border-bottom:1px solid #21262d}
-th{background:#161b22;color:#8b949e;position:sticky;top:0;z-index:2}
+th{background:#161b22;color:#8b949e;position:sticky;top:0;z-index:2;cursor:pointer;user-select:none}
 td.nm{position:sticky;left:0;background:#0d1117;text-align:left;font-weight:600;color:#e6edf3;z-index:1}
 th.stk{position:sticky;left:0;top:0;z-index:3}
 .top5{color:#ffd700;font-weight:700}.bot5{color:#3fb950;font-weight:700}
 .up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.nx{background:#161b22}
 a{color:#79c0ff;text-decoration:none}h3{margin:4px 0}.meta{color:#8b949e;font-size:11px}</style>"""
+
+
+SORT_JS = """<script>
+(function(){
+  const tb = document.querySelector('table'); if(!tb) return;
+  const ths = tb.querySelectorAll('thead th');
+  let cur = -1, asc = false;
+  function val(td){
+    const t = td.textContent.trim();
+    if(t==='—'||t==='') return null;
+    const n = parseFloat(t.replace(/[+%,]/g,'').replace('不可測',''));
+    return isNaN(n) ? t : n;
+  }
+  ths.forEach((th,i)=>{ th.addEventListener('click',()=>{
+    if(cur===i){ asc=!asc } else { cur=i; asc=false }
+    ths.forEach(h=>h.textContent=h.textContent.replace(/[▲▼]$/,''));
+    th.textContent += asc?'▲':'▼';
+    const rows=[...tb.querySelectorAll('tbody tr')];
+    rows.sort((a,b)=>{
+      const x=val(a.children[i]), y=val(b.children[i]);
+      if(x===null) return 1; if(y===null) return -1;
+      if(typeof x==='string'||typeof y==='string')
+        return asc ? String(x).localeCompare(String(y)) : String(y).localeCompare(String(x));
+      return asc ? x-y : y-x;
+    });
+    const body=tb.querySelector('tbody');
+    rows.forEach(r=>body.appendChild(r));
+  })});
+})();
+</script>"""
 
 
 def _day_sig_counts():
@@ -661,12 +691,13 @@ def render_day(d):
             f"<meta name='viewport' content='width=device-width,initial-scale=0.7'>"
             f"<title>{d} 收盤</title>{ARC_CSS}</head><body>"
             f"<h3>{d} 收盤快照 &nbsp;{nav_p} <a href='/history'>索引</a> {nav_n}</h3>"
-            f"<div class='meta'>依當日漲跌排序 · 漲跌基準=前一快照收盤(缺則用當日首價) · "
+            f"<div class='meta'>點欄位標題可排序(再點反向) · 預設=當日漲跌 · 漲跌基準=前一快照收盤(缺則用當日首價) · "
             f"💎欄=當日核心/強訊號觸發數 · 深底色兩欄=<b>次日</b>漲跌與排名(次日收盤自動補)</div>"
             f"<table><thead><tr><th>#</th><th class='stk'>股票</th><th>收盤</th><th>當日%</th>"
             f"<th>全日大戶(億)</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
             f"<th class='nx'>次日%</th><th class='nx'>次日名</th></tr></thead>"
-            f"<tbody>{''.join(trs)}</tbody></table></body></html>")
+            f"<tbody>{''.join(trs)}</tbody></table>"
+            + SORT_JS + "</body></html>")
 
 
 class H(BaseHTTPRequestHandler):
