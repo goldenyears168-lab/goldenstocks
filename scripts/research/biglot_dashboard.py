@@ -43,6 +43,8 @@ except Exception:
     RVOL_BASE = {}
 
 PAGE = {"frag": "<div class='meta'>初始化中…</div>"}
+SNAP_DIR = DATA_DIR.parent / "cache" / "biglot_live_watch" / "eod_snapshots"
+SNAP_DIR.mkdir(parents=True, exist_ok=True)
 
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
@@ -63,6 +65,7 @@ td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
 .flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
 </style></head><body>
 <h3>大戶-散戶 45檔即時儀表板
+<a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <button id="hpBtn" style="font-size:11px;margin-left:10px;background:#21262d;color:#8b949e;
 border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer"></button></h3>
 <div id="app"><div class="meta">載入中…</div></div>
@@ -527,10 +530,149 @@ def render():
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
+ARC_CSS = """<style>body{background:#0d1117;color:#c9d1d9;font:13px/1.6 -apple-system,'PingFang TC',monospace;margin:10px}
+table{border-collapse:collapse;white-space:nowrap}th,td{padding:2px 9px;text-align:right;border-bottom:1px solid #21262d}
+th{background:#161b22;color:#8b949e;position:sticky;top:0}td.nm{text-align:left;font-weight:600;color:#e6edf3}
+.up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.nx{background:#161b22}
+a{color:#79c0ff;text-decoration:none}h3{margin:4px 0}.meta{color:#8b949e;font-size:11px}</style>"""
+
+
+def _day_sig_counts():
+    """以儀表板旗標同款條件回放今日:每檔 💎 / 💎💎 觸發數。"""
+    out = {}
+    for sid, m in ST.buckets.items():
+        if sid in RET_UNM:
+            continue
+        bks = sorted(m)
+        c1 = c2 = 0
+        for i in range(7, len(bks)):
+            cur, prev, prior6 = bks[i], bks[i - 1], bks[i - 6:i]
+            a, p = m[cur], m[prev]
+            if not a["tot"] or a["big"] <= 0.10 * a["tot"]:
+                continue
+            if a["ret2"] / a["tot"] * 100 >= 5:
+                continue
+            if sum(m[b]["big"] for b in prior6) >= 0 or p["big"] >= 0:
+                continue
+            c1 += 1
+            if a["big"] >= 3e7:
+                c2 += 1
+        out[sid] = (c1, c2)
+    return out
+
+
+def snapshot_day():
+    """收盤後存當日 EOD 快照(冪等)。"""
+    today = ST.date
+    if not today:
+        return
+    f = SNAP_DIR / f"eod_{today}.json"
+    if f.exists() or not ST.day:
+        return
+    sig = _day_sig_counts()
+    rows = []
+    for sid in NAMES:
+        ds = ST.day.get(sid)
+        px = ST.last_px.get(sid)
+        if not ds or px is None:
+            continue
+        s1, s2 = sig.get(sid, (0, 0))
+        rows.append({"sid": sid, "name": NAMES[sid], "close": px, "px0": ds["px0"],
+                     "big": ds["big"], "ret2": ds["ret2"], "tot": ds["tot"],
+                     "sig1": s1, "sig2": s2})
+    if len(rows) >= 20:                      # 資料太少不存(避免半天斷線垃圾)
+        json.dump({"date": today, "rows": rows}, open(f, "w"))
+
+
+def _snap_dates():
+    return sorted(p.name[4:14] for p in SNAP_DIR.glob("eod_*.json"))
+
+
+def _load_snap(d):
+    try:
+        return json.load(open(SNAP_DIR / f"eod_{d}.json"))
+    except Exception:
+        return None
+
+
+def render_history():
+    ds = _snap_dates()
+    lis = "".join(f"<li><a href='/day?d={d}'>{d}</a></li>" for d in reversed(ds))
+    return (f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width,initial-scale=0.8'>"
+            f"<title>歷史分頁</title>{ARC_CSS}</head><body>"
+            f"<h3>每日收盤快照 <a href='/'>←即時</a></h3><ul>{lis or '<li>尚無</li>'}</ul>"
+            f"<div class='meta'>每頁最後兩欄=次日漲跌/次日排名(次日收盤後自動補上)</div></body></html>")
+
+
+def render_day(d):
+    snap = _load_snap(d)
+    if not snap:
+        return f"<!DOCTYPE html><html><head>{ARC_CSS}</head><body>無 {html_mod.escape(d)} 快照 <a href='/history'>返回</a></body></html>"
+    ds_all = _snap_dates()
+    i = ds_all.index(d) if d in ds_all else -1
+    prev = _load_snap(ds_all[i - 1]) if i > 0 else None
+    nxt = _load_snap(ds_all[i + 1]) if 0 <= i < len(ds_all) - 1 else None
+    pc = {r["sid"]: r["close"] for r in prev["rows"]} if prev else {}
+    nc = {r["sid"]: r["close"] for r in nxt["rows"]} if nxt else {}
+    rows = []
+    for r in snap["rows"]:
+        base = pc.get(r["sid"]) or r["px0"]
+        r["dret"] = (r["close"] / base - 1) * 100 if base else None
+        n = nc.get(r["sid"])
+        r["nret"] = (n / r["close"] - 1) * 100 if (n and r["close"]) else None
+        rows.append(r)
+    rows.sort(key=lambda r: -(r["dret"] if r["dret"] is not None else -99))
+    nrank = {r["sid"]: k + 1 for k, r in enumerate(
+        sorted([r for r in rows if r["nret"] is not None], key=lambda r: -r["nret"]))}
+    trs = []
+    for k, r in enumerate(rows, 1):
+        def pct(v):
+            if v is None:
+                return "<td class='dim'>—</td>"
+            return f"<td class='{'up' if v > 0 else 'dn' if v < 0 else ''}'>{v:+.2f}%</td>"
+        unm = r["sid"] in RET_UNM
+        share = (r["ret2"] / r["tot"] * 100) if (r["tot"] and not unm) else None
+        trs.append(
+            f"<tr><td>{k}</td><td class='nm'>{r['sid']} {r['name']}</td>"
+            f"<td>{r['close']:g}</td>" + pct(r["dret"])
+            + f"<td class='{'up' if r['big'] > 0 else 'dn' if r['big'] < 0 else ''}'>{r['big'] / 1e8:+.2f}</td>"
+            + (f"<td>{share:.1f}%</td>" if share is not None else "<td class='dim'>不可測</td>")
+            + f"<td>{r['tot'] / 1e8:.1f}</td>"
+            + f"<td>{r['sig1'] or ''}</td>"
+            + f"<td>{r['sig2'] or ''}</td>"
+        )
+        # 次日兩欄
+        if r["nret"] is None:
+            trs[-1] += "<td class='nx dim'>—</td><td class='nx dim'>—</td></tr>"
+        else:
+            cl = 'up' if r['nret'] > 0 else 'dn' if r['nret'] < 0 else ''
+            trs[-1] += (f"<td class='nx {cl}'>{r['nret']:+.2f}%</td>"
+                        f"<td class='nx'>{nrank.get(r['sid'], '—')}</td></tr>")
+    nav_p = f"<a href='/day?d={ds_all[i-1]}'>←{ds_all[i-1]}</a>" if i > 0 else ""
+    nav_n = f"<a href='/day?d={ds_all[i+1]}'>{ds_all[i+1]}→</a>" if 0 <= i < len(ds_all) - 1 else ""
+    return (f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width,initial-scale=0.7'>"
+            f"<title>{d} 收盤</title>{ARC_CSS}</head><body>"
+            f"<h3>{d} 收盤快照 &nbsp;{nav_p} <a href='/history'>索引</a> {nav_n}</h3>"
+            f"<div class='meta'>依當日漲跌排序 · 漲跌基準=前一快照收盤(缺則用當日首價) · "
+            f"💎欄=當日核心/強訊號觸發數 · 深底色兩欄=<b>次日</b>漲跌與排名(次日收盤自動補)</div>"
+            f"<table><thead><tr><th>#</th><th>股票</th><th>收盤</th><th>當日%</th>"
+            f"<th>全日大戶(億)</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
+            f"<th class='nx'>次日%</th><th class='nx'>次日名</th></tr></thead>"
+            f"<tbody>{''.join(trs)}</tbody></table></body></html>")
+
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.split("?", 1)[0] == "/frag":
+        path, _, qs = self.path.partition("?")
+        if path == "/frag":
             body = PAGE["frag"].encode("utf-8")
+        elif path == "/history":
+            body = render_history().encode("utf-8")
+        elif path == "/day":
+            d = qs.split("d=")[-1][:10] if "d=" in qs else ""
+            body = render_day(d).encode("utf-8")
         else:
             body = SHELL.encode("utf-8")
         self.send_response(200)
@@ -559,6 +701,7 @@ def loop():
             elif not done_close:
                 ingest()          # 收盤後補跑一次定格,之後停工
                 render()
+                snapshot_day()
                 done_close = True
         except Exception as e:
             PAGE["frag"] = f"<div class='meta'>render error: {html_mod.escape(str(e))}</div>"
