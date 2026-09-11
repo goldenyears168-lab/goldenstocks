@@ -532,7 +532,10 @@ def render():
 
 ARC_CSS = """<style>body{background:#0d1117;color:#c9d1d9;font:13px/1.6 -apple-system,'PingFang TC',monospace;margin:10px}
 table{border-collapse:collapse;white-space:nowrap}th,td{padding:2px 9px;text-align:right;border-bottom:1px solid #21262d}
-th{background:#161b22;color:#8b949e;position:sticky;top:0}td.nm{text-align:left;font-weight:600;color:#e6edf3}
+th{background:#161b22;color:#8b949e;position:sticky;top:0;z-index:2}
+td.nm{position:sticky;left:0;background:#0d1117;text-align:left;font-weight:600;color:#e6edf3;z-index:1}
+th.stk{position:sticky;left:0;top:0;z-index:3}
+.top5{color:#ffd700;font-weight:700}.bot5{color:#3fb950;font-weight:700}
 .up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.nx{background:#161b22}
 a{color:#79c0ff;text-decoration:none}h3{margin:4px 0}.meta{color:#8b949e;font-size:11px}</style>"""
 
@@ -647,8 +650,11 @@ def render_day(d):
             trs[-1] += "<td class='nx dim'>—</td><td class='nx dim'>—</td></tr>"
         else:
             cl = 'up' if r['nret'] > 0 else 'dn' if r['nret'] < 0 else ''
+            rk = nrank.get(r['sid'])
+            rk_cl = ('top5' if rk and rk <= 5 else
+                     'bot5' if rk and rk > len(nrank) - 5 else '')
             trs[-1] += (f"<td class='nx {cl}'>{r['nret']:+.2f}%</td>"
-                        f"<td class='nx'>{nrank.get(r['sid'], '—')}</td></tr>")
+                        f"<td class='nx {rk_cl}'>{rk or '—'}</td></tr>")
     nav_p = f"<a href='/day?d={ds_all[i-1]}'>←{ds_all[i-1]}</a>" if i > 0 else ""
     nav_n = f"<a href='/day?d={ds_all[i+1]}'>{ds_all[i+1]}→</a>" if 0 <= i < len(ds_all) - 1 else ""
     return (f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -657,7 +663,7 @@ def render_day(d):
             f"<h3>{d} 收盤快照 &nbsp;{nav_p} <a href='/history'>索引</a> {nav_n}</h3>"
             f"<div class='meta'>依當日漲跌排序 · 漲跌基準=前一快照收盤(缺則用當日首價) · "
             f"💎欄=當日核心/強訊號觸發數 · 深底色兩欄=<b>次日</b>漲跌與排名(次日收盤自動補)</div>"
-            f"<table><thead><tr><th>#</th><th>股票</th><th>收盤</th><th>當日%</th>"
+            f"<table><thead><tr><th>#</th><th class='stk'>股票</th><th>收盤</th><th>當日%</th>"
             f"<th>全日大戶(億)</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
             f"<th class='nx'>次日%</th><th class='nx'>次日名</th></tr></thead>"
             f"<tbody>{''.join(trs)}</tbody></table></body></html>")
