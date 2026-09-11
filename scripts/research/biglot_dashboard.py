@@ -648,16 +648,21 @@ def render_day(d):
     nxt = _load_snap(ds_all[i + 1]) if 0 <= i < len(ds_all) - 1 else None
     pc = {r["sid"]: r["close"] for r in prev["rows"]} if prev else {}
     nc = {r["sid"]: r["close"] for r in nxt["rows"]} if nxt else {}
+    no = {r["sid"]: r.get("px0") for r in nxt["rows"]} if nxt else {}
     rows = []
     for r in snap["rows"]:
         base = pc.get(r["sid"]) or r["px0"]
         r["dret"] = (r["close"] / base - 1) * 100 if base else None
         n = nc.get(r["sid"])
         r["nret"] = (n / r["close"] - 1) * 100 if (n and r["close"]) else None
+        op = no.get(r["sid"])
+        r["ngap"] = (op / r["close"] - 1) * 100 if (op and r["close"]) else None
         rows.append(r)
     rows.sort(key=lambda r: -(r["dret"] if r["dret"] is not None else -99))
     nrank = {r["sid"]: k + 1 for k, r in enumerate(
         sorted([r for r in rows if r["nret"] is not None], key=lambda r: -r["nret"]))}
+    grank = {r["sid"]: k + 1 for k, r in enumerate(
+        sorted([r for r in rows if r["ngap"] is not None], key=lambda r: -r["ngap"]))}
     trs = []
     for k, r in enumerate(rows, 1):
         def pct(v):
@@ -678,6 +683,15 @@ def render_day(d):
             + f"<td>{r['sig2'] or ''}</td>"
         )
         # 次日兩欄
+        if r["ngap"] is None:
+            trs[-1] += "<td class='nx dim'>—</td><td class='nx dim'>—</td>"
+        else:
+            gcl = 'up' if r['ngap'] > 0 else 'dn' if r['ngap'] < 0 else ''
+            gk = grank.get(r['sid'])
+            gk_cl = ('top5' if gk and gk <= 5 else
+                     'bot5' if gk and gk > len(grank) - 5 else '')
+            trs[-1] += (f"<td class='nx {gcl}'>{r['ngap']:+.2f}%</td>"
+                        f"<td class='nx {gk_cl}'>{gk or '—'}</td>")
         if r["nret"] is None:
             trs[-1] += "<td class='nx dim'>—</td><td class='nx dim'>—</td></tr>"
         else:
@@ -697,7 +711,7 @@ def render_day(d):
             f"💎欄=當日核心/強訊號觸發數 · 深底色兩欄=<b>次日</b>漲跌與排名(次日收盤自動補)</div>"
             f"<table><thead><tr><th>#</th><th class='stk'>股票</th><th>收盤</th><th>當日%</th>"
             f"<th>全日大戶(億)</th><th title='大戶淨流÷成交,127日驗證次日排名IC+0.043/t3.2=最佳排序鍵'>大戶佔比</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
-            f"<th class='nx'>次日%</th><th class='nx'>次日名</th></tr></thead>"
+            f"<th class='nx' title='次日開盤vs今收(隔夜跳空);127日:大戶佔比→開盤IC+0.097/t7.1=最可預測段'>次日開%</th><th class='nx'>開名</th><th class='nx' title='次日收對收;=開盤慣性−日內回吐的殘影'>次日%</th><th class='nx'>收名</th></tr></thead>"
             f"<tbody>{''.join(trs)}</tbody></table>"
             + SORT_JS + "</body></html>")
 
