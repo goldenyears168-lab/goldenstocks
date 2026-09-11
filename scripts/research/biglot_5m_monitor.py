@@ -199,17 +199,16 @@ def report_window():
         if r["d_share"] < 3:
             break
         flag = ""
-        if (r["w_ret"] is not None and r["w_ret"] > 0 and mkt < 5
-                and (r["w_ret"] - mkt) > 20):
-            flag = "  ⚠獨漲+散戶湧入(歷史下一窗均值-16bps,勿追)"
+        if (r["w_ret"] is not None and r["w_ret"] > 20 and r["d_share"] > 5):
+            flag = "  ⚠勿追5m(127日:未來30分超額-6bps,cl-t-4.9)"
         print(f"  {r['sid']} {nm(r['sid']):<5} Δ{r['d_share']:+.1f}pp  散戶淨 "
               f"{r['retn']/1e4:+.0f}萬  {wr(r)}{flag}")
-    warn = [r for r in rows if r["w_ret"] is not None and r["w_ret"] < -20
-            and r["big"] < -3e7]
-    if warn:
-        print("\n【回檔且大戶在賣（此型回檔後續最差）】")
-        for r in sorted(warn, key=lambda x: x["big"])[:5]:
-            print(f"  {r['sid']} {nm(r['sid']):<5} {wr(r)}  大戶淨賣 {r['big']/1e4:.0f}萬")
+    catch = [r for r in rows if r["w_ret"] is not None and r["w_ret"] < -20
+             and r["big"] > 3e7]
+    if catch:
+        print("\n【🟢跌深大戶接（127日+10.8bps/cl-t+2.8,觀察級未達門檻）】")
+        for r in sorted(catch, key=lambda x: -x["big"])[:5]:
+            print(f"  {r['sid']} {nm(r['sid']):<5} {wr(r)}  大戶淨買 {r['big']/1e4:.0f}萬")
 
     # 30分鐘窗
     win6 = done[-6:]
