@@ -670,6 +670,8 @@ def render_day(d):
             f"<tr><td>{k}</td><td class='nm'>{r['sid']} {r['name']}</td>"
             f"<td>{r['close']:g}</td>" + pct(r["dret"])
             + f"<td class='{'up' if r['big'] > 0 else 'dn' if r['big'] < 0 else ''}'>{r['big'] / 1e8:+.2f}</td>"
+            + (f"<td class='{'up' if r['big'] > 0 else 'dn'}'>{r['big'] / r['tot'] * 100:+.1f}%</td>"
+               if r['tot'] else "<td class='dim'>—</td>")
             + (f"<td>{share:.1f}%</td>" if share is not None else "<td class='dim'>不可測</td>")
             + f"<td>{r['tot'] / 1e8:.1f}</td>"
             + f"<td>{r['sig1'] or ''}</td>"
@@ -694,7 +696,7 @@ def render_day(d):
             f"<div class='meta'>點欄位標題可排序(再點反向) · 預設=當日漲跌 · 漲跌基準=前一快照收盤(缺則用當日首價) · "
             f"💎欄=當日核心/強訊號觸發數 · 深底色兩欄=<b>次日</b>漲跌與排名(次日收盤自動補)</div>"
             f"<table><thead><tr><th>#</th><th class='stk'>股票</th><th>收盤</th><th>當日%</th>"
-            f"<th>全日大戶(億)</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
+            f"<th>全日大戶(億)</th><th title='大戶淨流÷成交,127日驗證次日排名IC+0.043/t3.2=最佳排序鍵'>大戶佔比</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
             f"<th class='nx'>次日%</th><th class='nx'>次日名</th></tr></thead>"
             f"<tbody>{''.join(trs)}</tbody></table>"
             + SORT_JS + "</body></html>")
