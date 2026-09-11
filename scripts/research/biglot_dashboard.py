@@ -61,15 +61,27 @@ td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
 .rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
 .flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
 </style></head><body>
-<h3>大戶-散戶 45檔即時儀表板</h3>
+<h3>大戶-散戶 45檔即時儀表板
+<button id="hpBtn" style="font-size:11px;margin-left:10px;background:#21262d;color:#8b949e;
+border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer"></button></h3>
 <div id="app"><div class="meta">載入中…</div></div>
 <script>
 const R={REFRESH_SEC}000;
+let showHP = localStorage.getItem('showHP')==='1';
+function applyHP(){{
+  document.querySelectorAll('tr[data-hp]').forEach(tr=>tr.style.display=showHP?'':'none');
+  document.getElementById('hpBtn').textContent =
+    showHP?'隱藏高價股(≥2000,散戶不可測)':'顯示高價股(9檔,已隱藏)';
+}}
+document.getElementById('hpBtn').onclick=()=>{{
+  showHP=!showHP; localStorage.setItem('showHP',showHP?'1':'0'); applyHP();
+}};
 async function tick(){{
   try{{
     const r=await fetch('/frag?_='+Date.now());
     const t=await r.text();
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
+    applyHP();                                     // 換完內容重套高價股隱藏
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1') return;        // 收盤後停止輪詢
   }}catch(e){{}}
@@ -450,8 +462,9 @@ def render():
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
+        hp = ' data-hp="1"' if (r["px"] or 0) >= 2000 else ""
         trs.append(
-            "<tr>"
+            f"<tr{hp}>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
             + rk_td(r["r30r"], r["d30"]) + rk_td(r["rdr"])
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
