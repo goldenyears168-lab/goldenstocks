@@ -46,6 +46,40 @@ PAGE = {"frag": "<div class='meta'>初始化中…</div>"}
 SNAP_DIR = DATA_DIR.parent / "cache" / "biglot_live_watch" / "eod_snapshots"
 SNAP_DIR.mkdir(parents=True, exist_ok=True)
 
+def _load_hist():
+    """近5個快照:每檔前幾日大戶淨流/收盤、宇宙5日累積、昨日午後低。"""
+    files = sorted(SNAP_DIR.glob("eod_*.json"))[-5:]
+    snaps = []
+    for f in files:
+        try:
+            snaps.append(json.load(open(f)))
+        except Exception:
+            pass
+    hist_big = {}      # sid -> [前n日big,...最舊在前]
+    prev_close = {}
+    y_pmlow = {}
+    for s in snaps:
+        for r in s["rows"]:
+            hist_big.setdefault(r["sid"], []).append(r.get("big", 0))
+            prev_close[r["sid"]] = r.get("close")
+            if "pm_low" in r:
+                y_pmlow[r["sid"]] = r["pm_low"]
+    # 宇宙近5日累積(等權,快照收盤鏈)
+    u5 = None
+    if len(snaps) >= 2:
+        rets = []
+        for i in range(1, len(snaps)):
+            a = {r["sid"]: r["close"] for r in snaps[i-1]["rows"]}
+            b = {r["sid"]: r["close"] for r in snaps[i]["rows"]}
+            vs = [(b[k]/a[k]-1) for k in b if k in a and a[k]]
+            if vs:
+                rets.append(sum(vs)/len(vs))
+        if rets:
+            u5 = sum(rets) * 100
+    return hist_big, prev_close, y_pmlow, u5
+
+HIST_BIG, PREV_CLOSE, Y_PMLOW, UNI5 = _load_hist()
+
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
 <title>大戶45檔儀表板</title><style>
@@ -319,6 +353,18 @@ def render():
         r["bigday"] = ds["big"] if ds else None
         r["retday"] = ds["ret"] if ds else None
         r["bigpm"] = ds["big_pm"] if ds else None
+        # 隔夜策略因子
+        r["bigsh_d"] = (ds["big"] / ds["tot"] * 100) if (ds and ds["tot"]) else None
+        last12 = [m[bk]["px"] for bk in done[-12:] if bk in m and m[bk]["px"]]
+        r["cmp1h"] = ((last_price / (sum(last12) / len(last12)) - 1) * 100
+                      if (len(last12) >= 8 and last_price) else None)
+        hb = HIST_BIG.get(sid, [])
+        streak_ok = (ds and ds["big"] > 0 and len(hb) >= 2 and hb[-1] > 0 and hb[-2] > 0)
+        tongmai = (ds and ds["big"] < 0 and ds["ret"] < 0)
+        weak_open = tongmai and (r["cmp1h"] is not None and r["cmp1h"] > 0)
+        r["stamp"] = ("連3買" if streak_ok else "") + ("⚠同賣" if tongmai else "") + ("↓弱開" if weak_open else "")
+        ypl = Y_PMLOW.get(sid)
+        r["pmlow_warn"] = (ypl is not None and last_price is not None and last_price <= ypl * 1.002)
         # VWAP 與委託簿
         tv = sum(v["vol"] for v in m.values())
         tpv = sum(v["pxvol"] for v in m.values())
@@ -416,6 +462,20 @@ def render():
     fl_catch = " ".join(f"{r['sid']}{r['name']}" for r in rows
                         if r["flag"] == "🟢跌深大戶接")
     flag_bar = ""
+    gate_txt = ""
+    if UNI5 is not None:
+        gate_on = UNI5 < -5
+        gate_txt = (f"<span style='color:{'#ff7b72' if gate_on else '#8b949e'}'>閘門(近5日{UNI5:+.1f}%):"
+                    f"{'🔴啟動-僅記帳' if gate_on else '🟢關'}</span> · ")
+    on_pool = [r for r in rows if r.get("bigday") and r["bigday"] > 0 and not r["unm"]]
+    cand_txt = ""
+    if now.strftime("%H:%M") >= "13:00" and len(on_pool) >= 5:
+        pool = sorted(on_pool, key=lambda r: -r["bigday"])[:10]
+        pool = [r for r in pool if r.get("cmp1h") is not None]
+        picks = sorted(pool, key=lambda r: r["cmp1h"])[:3]
+        cand_txt = ("<span style='color:#ffd700'>隔夜候選(前10∧壓縮深3,13:25定案):</span> "
+                    + " ".join(f"{r['sid']}{r['name']}({r['cmp1h']:+.1f}%/佔{r['bigsh_d']:.0f}%)"
+                               for r in picks) + " · ")
     if fl_chase:
         flag_bar += f"<span class='warnv'>⚠勿追30(漲窗×參與跳升/大戶賣):</span> {fl_chase} "
     if fl_catch:
@@ -505,6 +565,11 @@ def render():
             + (f"<td>{r['rsell5']:.1f}%</td>" if (r["rsell5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + td(r["streak"] if r["streak"] else None, "int")
             + td(r["bigday"], "yi") + td(r["retday"], "yi", unm=r["unm"])
+            + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
+               if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
+            + (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
+               if r["cmp1h"] is not None else "<td class='dim'>—</td>")
+            + f"<td class='flag'>{r['stamp']}{'🔻破昨低' if r.get('pmlow_warn') else ''}</td>"
             + td(r["vwap_gap"], "bps")
             + td(r["lu_dist"], "pct2", False)
             + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -522,7 +587,7 @@ def render():
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
-<div class="flagbar">{flag_bar}</div>
+<div class="flagbar">{gate_txt}{cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th>股票</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
@@ -533,6 +598,9 @@ def render():
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
 <th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="g5">連續窗</th>
 <th class="gd">全日大戶</th><th class="gd">全日散戶</th>
+<th class="gd" title="當日大戶淨流÷成交=隔夜排序主鍵(IC+0.097/t7.1)">佔比%</th>
+<th class="gd" title="現價距尾盤1h均線=壓縮鍵(負=壓著,隔夜挑股用;13:20後看)">壓縮1h</th>
+<th class="gd" title="連3買=持續章(挑股加分)/⚠同賣=今晚勿抱(-28bps/t-6)/↓弱開=明日弱開候選/🔻=跌回昨日午後低點(出場警戒)">章</th>
 <th>VWAP差</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th><th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
@@ -617,7 +685,10 @@ def snapshot_day():
         if not ds or px is None:
             continue
         s1, s2 = sig.get(sid, (0, 0))
+        m = ST.buckets.get(sid, {})
+        pm_px = [m[bk]["px"] for bk in m if bk.hour >= 12 and m[bk]["px"]]
         rows.append({"sid": sid, "name": NAMES[sid], "close": px, "px0": ds["px0"],
+                     "pm_low": min(pm_px) if len(pm_px) >= 3 else None,
                      "big": ds["big"], "ret2": ds["ret2"], "retn": ds["ret"], "tot": ds["tot"],
                      "sig1": s1, "sig2": s2})
     if len(rows) >= 20:                      # 資料太少不存(避免半天斷線垃圾)
