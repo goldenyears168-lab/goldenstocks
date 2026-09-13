@@ -268,6 +268,11 @@ def render():
         share = a["ret2"] / a["tot"] * 100 if (a and a["tot"]) else None
         share_p = p["ret2"] / p["tot"] * 100 if (p and p["tot"]) else None
         r["share5"] = share
+        if a and a["tot"]:
+            r["rbuy5"] = (a["ret2"] + a["retn"]) / 2 / a["tot"] * 100
+            r["rsell5"] = (a["ret2"] - a["retn"]) / 2 / a["tot"] * 100
+        else:
+            r["rbuy5"] = r["rsell5"] = None
         r["dshare"] = share - share_p if (share is not None and share_p is not None) else None
         # 大戶連續同向窗數
         streak = 0
@@ -495,7 +500,9 @@ def render():
             + td(r["r30"], "bps") + td(r["big30"], "wan") + td(r["share30"], "pct", False, r["unm"])
             + td(r["dsh30"], "bps", True, r["unm"]).replace("bps", "")
             + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
-            + td(r["share5"], "pct", False, r["unm"])
+            + (f"<td class='{'warnv' if (r['rbuy5'] or 0) >= 5 else ''}'>"
+               f"{r['rbuy5']:.1f}%</td>" if (r["rbuy5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
+            + (f"<td>{r['rsell5']:.1f}%</td>" if (r["rsell5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + td(r["streak"] if r["streak"] else None, "int")
             + td(r["bigday"], "yi") + td(r["retday"], "yi", unm=r["unm"])
             + td(r["vwap_gap"], "bps")
@@ -524,7 +531,7 @@ def render():
 <th class="g30">30分bps</th><th class="g30">30分大戶</th><th class="g30">參與%</th>
 <th class="g30">Δ參與30</th>
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
-<th class="g5">參與%</th><th class="g5">連續窗</th>
+<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="g5">連續窗</th>
 <th class="gd">全日大戶</th><th class="gd">全日散戶</th>
 <th>VWAP差</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th><th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
@@ -611,7 +618,7 @@ def snapshot_day():
             continue
         s1, s2 = sig.get(sid, (0, 0))
         rows.append({"sid": sid, "name": NAMES[sid], "close": px, "px0": ds["px0"],
-                     "big": ds["big"], "ret2": ds["ret2"], "tot": ds["tot"],
+                     "big": ds["big"], "ret2": ds["ret2"], "retn": ds["ret"], "tot": ds["tot"],
                      "sig1": s1, "sig2": s2})
     if len(rows) >= 20:                      # 資料太少不存(避免半天斷線垃圾)
         json.dump({"date": today, "rows": rows}, open(f, "w"))
