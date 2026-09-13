@@ -79,6 +79,92 @@ def _load_hist():
     return hist_big, prev_close, y_pmlow, u5
 
 HIST_BIG, PREV_CLOSE, Y_PMLOW, UNI5 = _load_hist()
+OOS_FILE = DATA_DIR.parent / "cache" / "biglot_live_watch" / "oos_scoreboard.json"
+
+def _oos_load():
+    try:
+        return json.load(open(OOS_FILE))
+    except Exception:
+        return {"intraday": [], "overnight": [], "overnight_pending": []}
+
+def _oos_summary():
+    o = _oos_load()
+    parts = []
+    it = o.get("intraday", [])
+    if it:
+        rets = [x["ret"] for x in it]
+        parts.append(f"💎終版 {len(it)}筆 均{sum(rets)/len(rets):+.0f}bps "
+                     f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
+    ov = o.get("overnight", [])
+    if ov:
+        rets = [x["ret"] for x in ov]
+        parts.append(f"隔夜 {len(ov)}筆 均{sum(rets)/len(rets):+.0f}bps "
+                     f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
+    pend = len(o.get("overnight_pending", []))
+    if pend:
+        parts.append(f"待結算{pend}")
+    return " | ".join(parts) if parts else "OOS帳本累積中"
+
+
+def _oos_update_at_close():
+    """收盤後:結算昨日隔夜腿、記今日盤中終版訊號、掛今日隔夜候選。冪等(按日期)。"""
+    o = _oos_load()
+    today = ST.date
+    if any(x.get("date") == today for x in o["intraday"]) or \
+       any(x.get("date") == today for x in o["overnight_pending"]):
+        return
+    # a) 結算pending(用今日首價)
+    still = []
+    for p in o["overnight_pending"]:
+        px0 = ST.day.get(p["sid"], {}).get("px0")
+        if px0 and p.get("close"):
+            o["overnight"].append({**p, "resolve_date": today,
+                                   "ret": (px0 / p["close"] - 1) * 1e4})
+        else:
+            still.append(p)
+    o["overnight_pending"] = still
+    # b) 今日盤中終版訊號實績(三窗<5%∧pb5<0∧pb30<=-3千萬∧買>=3千萬>10%,45分)
+    for sid, m in ST.buckets.items():
+        if sid in RET_UNM:
+            continue
+        bks = sorted(m)
+        for i in range(7, len(bks)):
+            a = m[bks[i]]
+            if not a["tot"] or a["big"] < 3e7 or a["big"] <= 0.10 * a["tot"]:
+                continue
+            shs = [m[bks[j]]["ret2"] / m[bks[j]]["tot"] * 100 if m[bks[j]]["tot"] else 99
+                   for j in (i, i - 1, i - 2)]
+            if max(shs) >= 5:
+                continue
+            if m[bks[i - 1]]["big"] >= 0 or sum(m[b]["big"] for b in bks[i - 6:i]) > -3e7:
+                continue
+            if i + 9 >= len(bks) or not a["px"] or not m[bks[i + 9]]["px"]:
+                continue
+            o["intraday"].append({"date": today, "sid": sid,
+                                  "bucket": bks[i].strftime("%H:%M"),
+                                  "ret": (m[bks[i + 9]]["px"] / a["px"] - 1) * 1e4,
+                                  "gate": bool(UNI5 is not None and UNI5 < -5)})
+    # c) 今日隔夜候選3檔(前10∧壓縮深,剔鎖死)
+    pool = []
+    for sid in NAMES:
+        ds = ST.day.get(sid)
+        px = ST.last_px.get(sid)
+        pc = PREV_CLOSE.get(sid)
+        if not ds or not px or not ds["tot"] or ds["big"] <= 0:
+            continue
+        if pc and px / pc - 1 >= 0.09:
+            continue
+        m = ST.buckets.get(sid, {})
+        bks = sorted(m)
+        last12 = [m[b]["px"] for b in bks[-12:] if m[b]["px"]]
+        if len(last12) < 8:
+            continue
+        pool.append({"sid": sid, "big": ds["big"], "close": px,
+                     "cmp": px / (sum(last12) / len(last12)) - 1})
+    pool = sorted(pool, key=lambda r: -r["big"])[:10]
+    for p in sorted(pool, key=lambda r: r["cmp"])[:3]:
+        o["overnight_pending"].append({"date": today, "sid": p["sid"], "close": p["close"]})
+    json.dump(o, open(OOS_FILE, "w"))
 
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
@@ -587,7 +673,7 @@ def render():
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
-<div class="flagbar">{gate_txt}{cand_txt}{flag_bar}</div>
+<div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th>股票</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
@@ -833,6 +919,10 @@ def loop():
                 ingest()          # 收盤後補跑一次定格,之後停工
                 render()
                 snapshot_day()
+                try:
+                    _oos_update_at_close()
+                except Exception:
+                    pass
                 done_close = True
         except Exception as e:
             PAGE["frag"] = f"<div class='meta'>render error: {html_mod.escape(str(e))}</div>"
