@@ -27,9 +27,10 @@
 #   ⚠ 宇宙在 2026-09-06 因修 bug 換過：流動性門檻從「口數」改成「名目成交金額」
 #     （小型契約 1 口只有 100 股，用口數挑會固定選到小型契約，45 檔裡錯了 16 檔）。
 #     相對修正前換 7 檔、10 檔換回標準契約；相對舊 biglot 清單換 14 檔。
-#   （25 天後只看這 6 格，其餘是探索、不進結論表。
-#    Bonferroni 於 6 個檢定的門檻＝|t| > 2.6）。全部可從下面 CSV 事後重算，不必改收集：
-#   N ∈ {30, 60}（N=40 只當內插檢查，不進結論表）
+#   （25 天後只看這 18 格，其餘是探索、不進結論表。
+#    Bonferroni 於 18 個檢定的門檻＝|t| > 2.99）。全部可從下面 CSV 事後重算，不必改收集：
+#   N ∈ {30, 60, 100}（N=40 只當內插檢查，不進結論表；N=100 為 2026-09-09 新增，
+#     已回填 09-03~09-08 歷史）
 #   A  連續 k=3 格未實現 > 0 → 站那一邊
 #   C  連續 k=3 且 **bps**[t] > bps[t-1]
 #   E  連續 k=3 且 **bps**[t] > (bps[t-1]+bps[t-2])/2
@@ -47,7 +48,16 @@
 #   評估工具 scripts/research/biglot_rule_eval.py（讀 CSV，一次算完所有登記格 ×
 #     兩種 tie-break × 換邊次數分層）。25 天收滿後跑它，不要臨時寫 ad-hoc 腳本。
 #
-#   證偽檢查 若 25 天後 A/C/E 在 N=30 與 N=60 上結論相反 = 參數過擬合，整條線收掉
+#   證偽檢查 若 25 天後 A/C/E 在 N=30／60／100 三者結論不一致 = 參數過擬合，整條線收掉
+#
+#   2026-09-10 補登記 k_scaled／cooldown 兩個 variant（不必改收集，事後從 CSV 重算）：
+#     k_scaled(N)=round(3·N/30)（N=30→3・N=60→6・N=100→10）
+#     k_scaled  用 k=k_scaled(N) 取代 base 的 k=3
+#     cooldown  維持 k=3，換邊後 k_scaled(N) 格內不准反向
+#   兩者的縮放公式**不是**從 09-09/10 用 3 天資料做的 k∈{3,5,7,10,13}／M∈{0..30}
+#   exploratory 掃描裡挑最好看的值訂出來的——那次掃描 fixed 翻正但 equal 不通過、
+#   逐日非單調，判定過擬合。改用不看結果、純按 N 比例的公式，避免洗白 exploratory 數字。
+#   Bonferroni 於 48 格（base 18 ＋ k_scaled 新增 12 ＋ cooldown 新增 18）門檻 |t| > 3.28。
 #
 # ── 執行標的的候選（2026-09-06 加）──────────────────────────────────────────
 #   除了台指期，同一個總量訊號也可以做高波動個股期貨。實測價差（books、09:00-13:25 中位）：
@@ -111,7 +121,7 @@ PYEOF
 # 2) 兩種時鐘都落：equal=真等量（收盤回算，含未來資訊）· fixed=固定門檻（live 可實作）
 #    2026-09-07 實測：同一規則兩種切法**淨值正負相反**（A +26.3 vs −18.5、E +17.9 vs −54.0），
 #    所以兩種都要收、都要測，不能只留一種。
-for N in 30 40 60; do
+for N in 30 40 60 100; do
   "${PY}" "${ROOT}/scripts/research/biglot_bucket_reset.py" \
       --date "${DAY}" --n "${N}" --quiet --clock equal \
       --append-csv "${OUT}/bucket_reset_n${N}.csv" \
@@ -121,4 +131,11 @@ for N in 30 40 60; do
       --append-csv "${OUT}/bucket_reset_fx${N}.csv" \
       --append-px-csv "${OUT}/bucket_px_fx${N}.csv" || echo "WARN: fixed N=${N} 失敗"
 done
+
+# 3) 機械切單指紋掃描（2026-09-14 加；規格見 biglot_fingerprint_scan.py 檔頭，
+#    收滿 20 個交易日後才檢定「買程式 → 隔夜」。失敗不擋前面的 bucket 落檔）
+if [[ "${RUN_BIGLOT_FP_SCAN:-1}" != "0" ]]; then
+  "${PY}" "${ROOT}/scripts/research/biglot_fingerprint_scan.py" --date "${DAY}" \
+    || echo "WARN: fingerprint scan 失敗"
+fi
 echo "=== biglot-bucket-eod ${DAY} done $(date '+%H:%M:%S') ==="
