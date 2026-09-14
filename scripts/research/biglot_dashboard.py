@@ -358,6 +358,7 @@ def render():
     prior6 = done[-7:-1] if len(done) >= 7 else []
 
     rows, rets5, rets30 = [], [], []
+    _dayrets = []
     for sid in NAMES:
         m = ST.buckets.get(sid, {})
         ds = ST.day.get(sid)
@@ -479,6 +480,8 @@ def render():
                 r["bid_min"] = r["ask_min"] = r["lu_dist"] = None
         else:
             r["bid_min"] = r["ask_min"] = r["lu_dist"] = None
+        if r.get("day_ret") is not None:
+            _dayrets.append(r["day_ret"])
         rows.append(r)
 
     mkt5 = sum(rets5) / len(rets5) if rets5 else 0.0
@@ -638,6 +641,10 @@ def render():
         cls = "rk1" if n <= 3 else ("rkN" if n >= 43 else "")
         return f"<td class='{cls}'>{n}{arrow}</td>"
 
+    _mktday = sum(_dayrets) / len(_dayrets) if _dayrets else None
+    for r in rows:
+        r["rs_live"] = (r["day_ret"] - _mktday
+                        if (r.get("day_ret") is not None and _mktday is not None) else None)
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -659,14 +666,14 @@ def render():
             + (f"<td class='{'warnv' if (r['rbuy5'] or 0) >= 5 else ''}'>"
                f"{r['rbuy5']:.1f}%</td>" if (r["rbuy5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell5']:.1f}%</td>" if (r["rsell5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + td(r["streak"] if r["streak"] else None, "int")
             + td(r["bigday"], "yi") + td(r["retday"], "yi", unm=r["unm"])
             + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
                if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
             + (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
                if r["cmp1h"] is not None else "<td class='dim'>—</td>")
             + f"<td class='flag'>{r['stamp']}{'🔻破昨低' if r.get('pmlow_warn') else ''}</td>"
-            + td(r["vwap_gap"], "bps")
+            + (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
+               f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
             + td(r["lu_dist"], "pct2", False)
             + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
                f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
@@ -694,12 +701,11 @@ def render():
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">散賣30</th>
 <th class="g30">Δ參與30</th>
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
-<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="g5">連續窗</th>
-<th class="gd">全日大戶</th><th class="gd">全日散戶</th>
+<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="gd">全日大戶</th><th class="gd">全日散戶</th>
 <th class="gd" title="當日大戶淨流÷成交=隔夜排序主鍵(IC+0.097/t7.1)">佔比%</th>
 <th class="gd" title="現價距尾盤1h均線=壓縮鍵(負=壓著,隔夜挑股用;13:20後看)">壓縮1h</th>
 <th class="gd" title="連3買=持續章(挑股加分)/⚠同賣=今晚勿抱(-28bps/t-6)/↓弱開=明日弱開候選/🔻=跌回昨日午後低點(出場警戒)">章</th>
-<th>VWAP差</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th><th>旗標</th>
+<th title="個股日內−宇宙日內(百分點):負(綠)=相對壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">即時RS</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th><th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
