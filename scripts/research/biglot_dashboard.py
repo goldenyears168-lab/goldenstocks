@@ -176,7 +176,8 @@ table{{border-collapse:collapse;width:100%;white-space:nowrap}}
 th,td{{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}}
 th{{position:sticky;top:0;background:#161b22;color:#8b949e;font-weight:600;cursor:default}}
 th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
-td.nm{{text-align:left;font-weight:600;color:#e6edf3}}
+td.nm{{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}}
+th.stk{{position:sticky;left:0;z-index:3}}
 .cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
@@ -414,7 +415,11 @@ def render():
             r["big30"] = sum(m[bk]["big"] for bk in win6 if bk in m)
             t30 = sum(m[bk]["tot"] for bk in win6 if bk in m)
             r["tot30"] = t30
-            r["share30"] = (sum(m[bk]["ret2"] for bk in win6 if bk in m) / t30 * 100
+            _r2 = sum(m[bk]["ret2"] for bk in win6 if bk in m)
+            _rn = sum(m[bk]["retn"] for bk in win6 if bk in m)
+            r["rbuy30"] = (_r2 + _rn) / 2 / t30 * 100 if t30 else None
+            r["rsell30"] = (_r2 - _rn) / 2 / t30 * 100 if t30 else None
+            r["share30"] = (_r2 / t30 * 100
                             if t30 else None)
             r["big30p"] = sum(m[bk]["big"] for bk in win6p if bk in m) if win6p else None
             t30p = sum(m[bk]["tot"] for bk in win6p if bk in m) if win6p else 0
@@ -430,6 +435,7 @@ def render():
                 rets30.append(r["r30"])
         else:
             r["big30"] = r["share30"] = r["r30"] = None
+            r["rbuy30"] = r["rsell30"] = None
             r["tot30"] = r["big30p"] = r["dsh30"] = None
         # 全日
         last_price = ST.last_px.get(sid)
@@ -643,7 +649,11 @@ def render():
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
             + f"<td>{r['px'] if r['px'] else '—'}</td>"
             + td(r["day_ret"], "pct2")
-            + td(r["r30"], "bps") + td(r["big30"], "wan") + td(r["share30"], "pct", False, r["unm"])
+            + td(r["r30"], "bps") + td(r["big30"], "wan")
+            + (f"<td class='{'warnv' if (r['rbuy30'] or 0) >= 5 else ''}'>{r['rbuy30']:.1f}%</td>"
+               if (r.get("rbuy30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
+            + (f"<td>{r['rsell30']:.1f}%</td>"
+               if (r.get("rsell30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + td(r["dsh30"], "bps", True, r["unm"]).replace("bps", "")
             + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
             + (f"<td class='{'warnv' if (r['rbuy5'] or 0) >= 5 else ''}'>"
@@ -675,11 +685,13 @@ def render():
 勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
-<th>股票</th>
+<th class="stk">股票</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
 <th>價</th><th>日內%</th>
-<th class="g30">30分bps</th><th class="g30">30分大戶</th><th class="g30">參與%</th>
+<th class="g30">30分bps</th><th class="g30">30分大戶</th>
+<th class="g30" title="30分散戶買方參與(毒藥側,≥5%標黃)">散買30</th>
+<th class="g30" title="30分散戶賣方參與(投降側,無資訊)">散賣30</th>
 <th class="g30">Δ參與30</th>
 <th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
 <th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="g5">連續窗</th>
