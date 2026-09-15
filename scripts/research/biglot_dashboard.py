@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -21,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, "src")
-from stock_db import DATA_DIR  # noqa: E402
+from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -79,6 +80,143 @@ def _load_hist():
     return hist_big, prev_close, y_pmlow, u5
 
 HIST_BIG, PREV_CLOSE, Y_PMLOW, UNI5 = _load_hist()
+
+
+def _load_daily_trend():
+    """每檔日線趨勢(截至最近日收盤):站上5日均線? 5日動能%。
+    回測(127日隔夜候選池):壓縮∧站上5日線 +93.8bps/t5.10 vs 跌破 +30/t1.65,
+    差+63.5bps;純脈絡欄+影子帳分層,不改選股規則。日線雙來源(finmind/tpex/twse)
+    同價,按 trade_date 去重取一筆。"""
+    out = {}
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        for sid in NAMES:
+            rows = conn.execute(
+                "SELECT trade_date, MAX(close) FROM stock_daily_bars "
+                "WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT 11",
+                (sid,)).fetchall()
+            closes = [c for _, c in rows if c]
+            if len(closes) < 4:
+                continue
+            last = closes[0]
+            ma5 = sum(closes[:5]) / len(closes[:5])
+            ma10 = sum(closes[:10]) / len(closes[:10]) if len(closes) >= 6 else None
+            ret5 = (last / closes[5] - 1) * 100 if len(closes) >= 6 and closes[5] else None
+            out[sid] = {"above_ma5": last > ma5,
+                        "above_ma10": (last > ma10) if ma10 else None,
+                        "ret5d": ret5, "last": last, "asof": rows[0][0]}
+        conn.close()
+    except Exception as e:
+        print(f"[daily_trend] load failed: {e}", file=sys.stderr)
+    return out
+
+DAILY_TREND = _load_daily_trend()
+
+# ---- 融資/借券雙增 → 波動風險旗標（非方向訊號，多空都適用）----------------------
+# 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
+# 2025-01~2026-09 回測）。同日融資餘額日增幅 ∧ 借券餘額日增幅 都達該股自身歷史高分位時，
+# 隔日盤中振幅(T+1 high-low ÷ T close)均值顯著較高：q≥95%事件35次、+1.88pp(t3.89 p0.0004)；
+# 用OLS控制當日振幅(vol clustering)後仍有 +1.09pp 增量(t2.52 p0.012)——排除純自相關假象。
+# 樣本仍薄(35事件·74%集中2026年)，屬候選訊號非可下單依據，只做「留意」不做方向判斷。
+# ⚠ margin_balance 單位是「張」(1張=1000股)、lending_balance 單位是「股」，
+# 不可共用同一個門檻——5000張門檻會系統性排掉大立光/玉晶光/華碩/緯穎等高價股
+# (股價高→可融資張數天生就少，不是資料不足)。
+MIN_PREV_MARGIN_LOTS = 100        # 張，只擋真正近零/停融資的退化列
+MIN_PREV_LENDING_SHARES = 5_000   # 股，同一用意
+VOLRISK_MIN_OBS = 60              # 兩邊都要至少60個交易日紀錄才計分位，避免新股/資料不足誤判
+VOLRISK_TIERS = ((0.98, "🌊🌊"), (0.95, "🌊"))  # 由極端到寬鬆，取第一個命中的
+VOLRISK_STALE_DAYS = 7             # 融資/借券最新一筆超過這麼多天沒更新(處置股常停融資)就不計分位
+
+
+def _pctile_rank(values):
+    """回傳每個元素在序列中的百分位排名(0~1,含自己;越大越極端)。"""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    for pos, i in enumerate(order):
+        ranks[i] = (pos + 1) / len(values)
+    return ranks
+
+
+def _load_vol_risk_flags():
+    """算出每檔股票「最新一筆」融資/借券日增幅在自己歷史中的分位，判定波動風險旗標。"""
+    conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+    sids = list(NAMES)
+    ph = ",".join("?" * len(sids))
+    mg_by_sid = defaultdict(list)
+    for sid, td, bal in conn.execute(
+            f"""SELECT stock_id, trade_date, margin_balance FROM (
+                    SELECT stock_id, trade_date, margin_balance,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY stock_id, trade_date
+                               ORDER BY CASE source WHEN 'twse_mi_margn' THEN 0 ELSE 1 END
+                           ) AS rn
+                      FROM stock_margin_daily WHERE stock_id IN ({ph})
+                ) WHERE rn=1 ORDER BY stock_id, trade_date""", sids):
+        mg_by_sid[sid].append((td, bal))
+    ln_by_sid = defaultdict(list)
+    for sid, td, prev_bal, bal in conn.execute(
+            f"""SELECT stock_id, trade_date, prev_balance, lending_balance
+                  FROM stock_lending_balance_daily WHERE stock_id IN ({ph})
+                  ORDER BY stock_id, trade_date""", sids):
+        ln_by_sid[sid].append((td, prev_bal, bal))
+    conn.close()
+
+    out = {}
+    for sid in sids:
+        m, l = mg_by_sid.get(sid, []), ln_by_sid.get(sid, [])
+        if len(m) < VOLRISK_MIN_OBS + 1 or len(l) < VOLRISK_MIN_OBS:
+            continue
+        m_dates, m_pct = [], []
+        for i in range(1, len(m)):
+            prev, cur = m[i - 1][1], m[i][1]
+            if prev and prev >= MIN_PREV_MARGIN_LOTS and cur is not None:
+                m_dates.append(m[i][0])
+                m_pct.append((cur - prev) / prev)
+        l_dates, l_pct = [], []
+        for td, prev, bal in l:
+            if prev and prev >= MIN_PREV_LENDING_SHARES and bal is not None:
+                l_dates.append(td)
+                l_pct.append((bal - prev) / prev)
+        if len(m_pct) < VOLRISK_MIN_OBS or len(l_pct) < VOLRISK_MIN_OBS:
+            continue
+        stale = any(
+            (datetime.now(TZ).date() - datetime.strptime(d, "%Y-%m-%d").date()).days
+            > VOLRISK_STALE_DAYS
+            for d in (m_dates[-1], l_dates[-1])
+        )
+        if stale:
+            out[sid] = {
+                "tier": None, "stale": True,
+                "margin_asof": m_dates[-1], "lending_asof": l_dates[-1],
+                "margin_pct": m_pct[-1], "lending_pct": l_pct[-1],
+                "margin_pctile": None, "lending_pctile": None,
+            }
+            continue
+        m_last, l_last = _pctile_rank(m_pct)[-1], _pctile_rank(l_pct)[-1]
+        tier = next((badge for thr, badge in VOLRISK_TIERS
+                     if m_last >= thr and l_last >= thr), None)
+        out[sid] = {
+            "tier": tier, "stale": False,
+            "margin_asof": m_dates[-1], "lending_asof": l_dates[-1],
+            "margin_pct": m_pct[-1], "lending_pct": l_pct[-1],
+            "margin_pctile": m_last, "lending_pctile": l_last,
+        }
+    return out
+
+
+VOLRISK, VOLRISK_DATE = {}, None
+
+
+def _refresh_vol_risk_if_needed():
+    global VOLRISK, VOLRISK_DATE
+    if VOLRISK_DATE == ST.date:
+        return
+    try:
+        VOLRISK = _load_vol_risk_flags()
+    except Exception:
+        VOLRISK = {}
+    VOLRISK_DATE = ST.date
+
 OOS_FILE = DATA_DIR.parent / "cache" / "biglot_live_watch" / "oos_scoreboard.json"
 
 def _oos_load():
@@ -100,6 +238,11 @@ def _oos_summary():
         rets = [x["ret"] for x in ov]
         parts.append(f"隔夜 {len(ov)}筆 均{sum(rets)/len(rets):+.0f}bps "
                      f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
+        # 影子分層:只留日線站上5日線(回測+63.5bps)——並行OOS,不改選股
+        ma = [x["ret"] for x in ov if x.get("above_ma5") is True]
+        if ma:
+            parts.append(f"↳日線多{len(ma)}筆 均{sum(ma)/len(ma):+.0f}bps "
+                         f"勝{sum(1 for x in ma if x > 0)}/{len(ma)}")
     pend = len(o.get("overnight_pending", []))
     if pend:
         parts.append(f"待結算{pend}")
@@ -163,7 +306,9 @@ def _oos_update_at_close():
                      "cmp": px / (sum(last12) / len(last12)) - 1})
     pool = sorted(pool, key=lambda r: -r["big"])[:10]
     for p in sorted(pool, key=lambda r: r["cmp"])[:3]:
-        o["overnight_pending"].append({"date": today, "sid": p["sid"], "close": p["close"]})
+        o["overnight_pending"].append({
+            "date": today, "sid": p["sid"], "close": p["close"],
+            "above_ma5": DAILY_TREND.get(p["sid"], {}).get("above_ma5")})
     json.dump(o, open(OOS_FILE, "w"))
 
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
@@ -181,6 +326,7 @@ th.stk{{position:sticky;left:0;z-index:3}}
 .cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
+.vr1{{color:#e3b341;font-weight:700}} .vr2{{color:#f0883e;font-weight:700}}
 .flag{{color:#e3b341;text-align:left}}
 .sigdn{{color:#3fb950}} .sigup{{color:#ff7b72}}
 .rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
@@ -246,6 +392,9 @@ def ingest():
     if ST.date != today:
         ST.__init__()
         ST.date = today
+        _refresh_vol_risk_if_needed()
+        global DAILY_TREND
+        DAILY_TREND = _load_daily_trend()
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
         with open(raw) as f:
@@ -447,6 +596,23 @@ def render():
         r["bigday"] = ds["big"] if ds else None
         r["retday"] = ds["ret"] if ds else None
         r["bigpm"] = ds["big_pm"] if ds else None
+        # 融資/借券雙增波動風險旗標（T-1資料，非方向訊號）
+        vr = VOLRISK.get(sid)
+        r["volrisk"] = vr["tier"] if vr else None
+        if not vr:
+            r["volrisk_title"] = "融資/借券歷史資料不足60個交易日，無法計算分位"
+        elif vr.get("stale"):
+            r["volrisk_title"] = (
+                f"融資或借券最新資料超過{VOLRISK_STALE_DAYS}天未更新"
+                f"(融資asof {vr['margin_asof']}／借券asof {vr['lending_asof']})，"
+                f"可能是處置股停融資或資料延遲，不計分位")
+        else:
+            r["volrisk_title"] = (
+                f"T-1 融資({vr['margin_asof']})日增{vr['margin_pct']*100:+.1f}%"
+                f"(歷史分位{vr['margin_pctile']*100:.0f}%) · "
+                f"借券({vr['lending_asof']})日增{vr['lending_pct']*100:+.1f}%"
+                f"(歷史分位{vr['lending_pctile']*100:.0f}%) · "
+                f"45檔宇宙回測:兩者皆≥95分位時隔日振幅均值+1.88pp(控制當日振幅後仍+1.09pp,t2.52)")
         # 隔夜策略因子
         r["bigsh_d"] = (ds["big"] / ds["tot"] * 100) if (ds and ds["tot"]) else None
         last12 = [m[bk]["px"] for bk in done[-12:] if bk in m and m[bk]["px"]]
@@ -690,6 +856,8 @@ def render():
                             else "逆弱")
         else:
             r["mkt_ctx"] = None
+        dt = DAILY_TREND.get(r["sid"])
+        r["dtrend"] = dt
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -697,6 +865,10 @@ def render():
         trs.append(
             f"<tr{hp}>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
+            + (f"<td class='{'vr2' if r['volrisk'] == '🌊🌊' else 'vr1'}' "
+               f"title=\"{html_mod.escape(r['volrisk_title'])}\">{r['volrisk']}</td>"
+               if r.get("volrisk") else
+               f"<td class='dim' title=\"{html_mod.escape(r.get('volrisk_title') or '')}\">—</td>")
             + rk_td(r["r30r"], r["d30"]) + rk_td(r["rdr"])
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
             + f"<td>{r['px'] if r['px'] else '—'}</td>"
@@ -720,6 +892,13 @@ def render():
                if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
             + (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
                if r["cmp1h"] is not None else "<td class='dim'>—</td>")
+            + (("<td class='up' style='font-size:11px'>↑多"
+                + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
+                + "</td>" if r['dtrend']['above_ma5']
+                else "<td class='dn' style='font-size:11px'>↓空"
+                + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
+                + "</td>")
+               if r.get("dtrend") else "<td class='dim'>—</td>")
             + f"<td class='flag'>{r['stamp']}{'🔻破昨低' if r.get('pmlow_warn') else ''}</td>"
             + (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
@@ -746,6 +925,7 @@ def render():
 <div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th class="stk">股票</th>
+<th title="融資餘額 ∧ 借券餘額 同日日增幅皆達該股歷史高分位(T-1資料)。45檔宇宙回測:兩者皆≥95分位時隔日振幅均值+1.88pp,控制當日振幅(排除純波動群聚)後仍+1.09pp增量(t2.52 p0.012)。非方向訊號——不分多空,提示今天可能比較晃。🌊🌊=雙破98分位(更罕見更極端) 🌊=雙破95分位">波動風險</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
 <th>價</th><th>日內%</th>
@@ -761,6 +941,7 @@ def render():
 <th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="gd">全日散戶</th>
 <th class="gd" title="當日大戶淨流÷成交=隔夜排序主鍵(IC+0.097/t7.1)">佔比%</th>
 <th class="gd" title="現價距尾盤1h均線=壓縮鍵(負=壓著,隔夜挑股用;13:20後看)">壓縮1h</th>
+<th class="gd" title="日線趨勢(截至最近日收盤):↑多=站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線</th>
 <th class="gd" title="連3買=持續章(挑股加分)/⚠同賣=今晚勿抱(-28bps/t-6)/↓弱開=明日弱開候選/🔻=跌回昨日午後低點(出場警戒)">章</th>
 <th title="個股日內−宇宙日內(百分點):負(綠)=相對壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">即時RS</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th>
 <th title="下跌訊號計分(命中數·明細),六格皆127日/實戰驗證:噴後=30分漲≥150bps(峰後均−32) · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構賣=30分大戶賣≥3千萬∧散戶參與<15%(機構主動調節,流量領先價格~2h) · 散急拉=5分漲>20∧散買≥5%(留不到收盤−6~−9) · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨低=觸昨日午後低點(−125bps/73%貫穿);≥2粗體">跌訊</th>
