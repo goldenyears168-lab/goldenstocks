@@ -223,7 +223,8 @@ def _oos_load():
     try:
         return json.load(open(OOS_FILE))
     except Exception:
-        return {"intraday": [], "overnight": [], "overnight_pending": []}
+        return {"intraday": [], "overnight": [], "overnight_pending": [],
+            "overnight_short": [], "overnight_short_pending": []}
 
 def _oos_summary():
     o = _oos_load()
@@ -243,6 +244,15 @@ def _oos_summary():
         if ma:
             parts.append(f"↳日線多{len(ma)}筆 均{sum(ma)/len(ma):+.0f}bps "
                          f"勝{sum(1 for x in ma if x > 0)}/{len(ma)}")
+    sh = o.get("overnight_short", [])
+    if sh:
+        rets = [x["ret"] for x in sh]
+        parts.append(f"隔夜空 {len(sh)}筆 均{sum(rets)/len(rets):+.0f}bps "
+                     f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
+        ms = [x["ret"] for x in sh if x.get("above_ma5") is False]
+        if ms:
+            parts.append(f"↳日線空{len(ms)}筆 均{sum(ms)/len(ms):+.0f}bps "
+                         f"勝{sum(1 for x in ms if x > 0)}/{len(ms)}")
     pend = len(o.get("overnight_pending", []))
     if pend:
         parts.append(f"待結算{pend}")
@@ -266,6 +276,16 @@ def _oos_update_at_close():
         else:
             still.append(p)
     o["overnight_pending"] = still
+    # 做空腿結算:做空報酬=-(次開/今收-1)
+    still_s = []
+    for p in o.get("overnight_short_pending", []):
+        px0 = ST.day.get(p["sid"], {}).get("px0")
+        if px0 and p.get("close"):
+            o.setdefault("overnight_short", []).append(
+                {**p, "resolve_date": today, "ret": -(px0 / p["close"] - 1) * 1e4})
+        else:
+            still_s.append(p)
+    o["overnight_short_pending"] = still_s
     # b) 今日盤中終版訊號實績(三窗<5%∧pb5<0∧pb30<=-3千萬∧買>=3千萬>10%,45分)
     for sid, m in ST.buckets.items():
         if sid in RET_UNM:
@@ -287,28 +307,37 @@ def _oos_update_at_close():
                                   "bucket": bks[i].strftime("%H:%M"),
                                   "ret": (m[bks[i + 9]]["px"] / a["px"] - 1) * 1e4,
                                   "gate": bool(UNI5 is not None and UNI5 < -5)})
-    # c) 今日隔夜候選3檔(前10∧壓縮深,剔鎖死)
-    pool = []
+    # c) 今日隔夜候選:做多3檔(佔比前10∧壓縮深)+ 做空3檔(佔比最負前10∧彈開最多∧日線空)
+    cand = []
     for sid in NAMES:
         ds = ST.day.get(sid)
         px = ST.last_px.get(sid)
         pc = PREV_CLOSE.get(sid)
-        if not ds or not px or not ds["tot"] or ds["big"] <= 0:
-            continue
-        if pc and px / pc - 1 >= 0.09:
+        if not ds or not px or not ds["tot"]:
             continue
         m = ST.buckets.get(sid, {})
         bks = sorted(m)
         last12 = [m[b]["px"] for b in bks[-12:] if m[b]["px"]]
         if len(last12) < 8:
             continue
-        pool.append({"sid": sid, "big": ds["big"], "close": px,
-                     "cmp": px / (sum(last12) / len(last12)) - 1})
-    pool = sorted(pool, key=lambda r: -r["big"])[:10]
-    for p in sorted(pool, key=lambda r: r["cmp"])[:3]:
+        cand.append({"sid": sid, "big": ds["big"], "close": px,
+                     "cmp": px / (sum(last12) / len(last12)) - 1,
+                     "locked": bool(pc and px / pc - 1 >= 0.09),
+                     "above_ma5": DAILY_TREND.get(sid, {}).get("above_ma5")})
+    # 做多:大戶淨買>0∧未鎖漲停,佔比前10取壓縮最深3
+    lp = [c for c in cand if c["big"] > 0 and not c["locked"]]
+    lp = sorted(lp, key=lambda r: -r["big"])[:10]
+    for p in sorted(lp, key=lambda r: r["cmp"])[:3]:
         o["overnight_pending"].append({
             "date": today, "sid": p["sid"], "close": p["close"],
-            "above_ma5": DAILY_TREND.get(p["sid"], {}).get("above_ma5")})
+            "above_ma5": p["above_ma5"]})
+    # 做空:大戶淨賣<0,淨賣量最大前10取彈開最多3,再要日線↓空(回測+74.5/t3.82)
+    sp = [c for c in cand if c["big"] < 0]
+    sp = sorted(sp, key=lambda r: r["big"])[:10]
+    for p in sorted(sp, key=lambda r: -r["cmp"])[:3]:
+        o.setdefault("overnight_short_pending", []).append({
+            "date": today, "sid": p["sid"], "close": p["close"],
+            "above_ma5": p["above_ma5"]})
     json.dump(o, open(OOS_FILE, "w"))
 
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
