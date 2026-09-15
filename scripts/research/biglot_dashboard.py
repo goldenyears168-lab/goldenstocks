@@ -681,6 +681,15 @@ def render():
     for r in rows:
         r["rs_live"] = (r["day_ret"] - _mktday
                         if (r.get("day_ret") is not None and _mktday is not None) else None)
+        # 順/逆市:個股30分方向 vs 市場30分方向(描述性脈絡,非訊號——市場是最強控制變數)
+        if r.get("r30") is not None and abs(r["r30"]) >= 20 and abs(mkt30) >= 5:
+            same = (r["r30"] > 0) == (mkt30 > 0)
+            r["mkt_ctx"] = ("順漲" if (same and mkt30 > 0)
+                            else "順跌" if same
+                            else "逆強" if r["r30"] > 0
+                            else "逆弱")
+        else:
+            r["mkt_ctx"] = None
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -692,7 +701,11 @@ def render():
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
             + f"<td>{r['px'] if r['px'] else '—'}</td>"
             + td(r["day_ret"], "pct2")
-            + td(r["r30"], "bps") + td(r["big30"], "wan")
+            + td(r["r30"], "bps")
+            + (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
+               f"style='font-size:11px'>{r['mkt_ctx']}</td>"
+               if r.get("mkt_ctx") else "<td class='dim'>—</td>")
+            + td(r["big30"], "wan")
             + (f"<td class='{'warnv' if (r['rbuy30'] or 0) >= 5 else ''}'>{r['rbuy30']:.1f}%</td>"
                if (r.get("rbuy30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell30']:.1f}%</td>"
@@ -736,7 +749,9 @@ def render():
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
 <th>價</th><th>日內%</th>
-<th class="g30">30分bps</th><th class="g30">30分大戶</th>
+<th class="g30">30分bps</th>
+<th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格">順逆市</th>
+<th class="g30">30分大戶</th>
 <th class="g30" title="30分散戶買方參與(毒藥側,≥5%標黃)">散買30</th>
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">散賣30</th>
 <th class="g30">Δ參與30</th>
