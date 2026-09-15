@@ -174,7 +174,7 @@ h3{{margin:4px 0;font-size:14px}}
 .meta{{color:#8b949e;font-size:11px;margin-bottom:6px}}
 table{{border-collapse:collapse;width:100%;white-space:nowrap}}
 th,td{{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}}
-th{{position:sticky;top:0;background:#161b22;color:#8b949e;font-weight:600;cursor:default}}
+th{{position:sticky;top:0;z-index:2;background:#161b22;color:#8b949e;font-weight:600;cursor:default}}
 th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
 td.nm{{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}}
 th.stk{{position:sticky;left:0;z-index:3}}
@@ -182,6 +182,7 @@ th.stk{{position:sticky;left:0;z-index:3}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
 .flag{{color:#e3b341;text-align:left}}
+.sigdn{{color:#3fb950}} .sigup{{color:#ff7b72}}
 .rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
 .flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
 </style></head><body>
@@ -546,6 +547,41 @@ def render():
         if early:
             r["flag"] = (r["flag"] + " " + early).strip()
 
+    # 漲訊/跌訊 逐條件計分(只收錄已驗證格;每格獨立打勾,分數=命中數)
+    for r in rows:
+        par30 = ((r["rbuy30"] or 0) + (r["rsell30"] or 0)
+                 if (r.get("rbuy30") is not None and not r["unm"]) else None)
+        bear = []
+        if r.get("r30") is not None and r["r30"] >= 150:
+            bear.append("噴後")        # 波段峰後30分均-32/中位-45
+        if "⚠勿追" in r["flag"]:
+            bear.append("勿追")        # 漲×參與跳升或大戶賣 -5~-9.6bps(趨勢日-32)
+        if (r.get("big30") is not None and r["big30"] <= -3e7
+                and (par30 is None or par30 < 15)):
+            bear.append("機構賣")      # 30分大戶賣≥3千萬∧散戶缺席=機構主動調節(金居格)
+        if (r.get("w_ret") is not None and r["w_ret"] > 20
+                and r.get("rbuy5") is not None and r["rbuy5"] >= 5 and not r["unm"]):
+            bear.append("散急拉")      # 散戶買方推的急拉留不到收盤 -6~-9bps/t-5
+        if "⚠同賣" in r["stamp"]:
+            bear.append("同賣")        # 大戶賣∧散戶賣 隔夜-28bps/t-6
+        if r.get("pmlow_warn"):
+            bear.append("破昨低")      # 觸昨日午後低點 -125bps/73%貫穿
+        bull = []
+        if (r.get("big30") is not None and r["big30"] >= 3e7
+                and (par30 is None or par30 < 45)):
+            bull.append("抬轎")        # 大戶買≥3千萬∧散戶<45%=健康抬轎(唯一正格)
+        if "💎" in r["flag"]:
+            bull.append("💎")          # 逆勢純機構 +24~29bps/t5.2
+        if "🟢" in r["flag"]:
+            bull.append("深接")        # 跌深大戶接(RVOL≥0.5) +11~14bps/t3.4+
+        if (r.get("bigsh_d") is not None and r["bigsh_d"] >= 10
+                and r.get("cmp1h") is not None and r["cmp1h"] < 0):
+            bull.append("佔壓")        # 佔比≥10%∧收盤前壓著=隔夜雙鍵(IC t7.1)
+        if "連3買" in r["stamp"]:
+            bull.append("連3買")       # 持續章(確認格)
+        r["bear_n"], r["bear_txt"] = len(bear), "·".join(bear)
+        r["bull_n"], r["bull_txt"] = len(bull), "·".join(bull)
+
     rows.sort(key=lambda r: -(r["big30"] or 0))
     win_lbl = (f"{cur.strftime('%H:%M')}–{(cur+timedelta(minutes=5)).strftime('%H:%M')}"
                if cur else "—")
@@ -678,6 +714,10 @@ def render():
             + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
                f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
             + td(r["bid_min"], "min", False) + td(r["ask_min"], "min", False)
+            + (f"<td class='sigdn' style='text-align:left{';font-weight:700' if r['bear_n'] >= 2 else ''}'>"
+               f"{r['bear_n']}·{r['bear_txt']}</td>" if r["bear_n"] else "<td class='dim'>0</td>")
+            + (f"<td class='sigup' style='text-align:left{';font-weight:700' if r['bull_n'] >= 2 else ''}'>"
+               f"{r['bull_n']}·{r['bull_txt']}</td>" if r["bull_n"] else "<td class='dim'>0</td>")
             + f"<td class='flag'>{r['flag']}</td>"
             "</tr>")
 
@@ -705,7 +745,10 @@ def render():
 <th class="gd" title="當日大戶淨流÷成交=隔夜排序主鍵(IC+0.097/t7.1)">佔比%</th>
 <th class="gd" title="現價距尾盤1h均線=壓縮鍵(負=壓著,隔夜挑股用;13:20後看)">壓縮1h</th>
 <th class="gd" title="連3買=持續章(挑股加分)/⚠同賣=今晚勿抱(-28bps/t-6)/↓弱開=明日弱開候選/🔻=跌回昨日午後低點(出場警戒)">章</th>
-<th title="個股日內−宇宙日內(百分點):負(綠)=相對壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">即時RS</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th><th>旗標</th>
+<th title="個股日內−宇宙日內(百分點):負(綠)=相對壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">即時RS</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th>
+<th title="下跌訊號計分(命中數·明細),六格皆127日/實戰驗證:噴後=30分漲≥150bps(峰後均−32) · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構賣=30分大戶賣≥3千萬∧散戶參與<15%(機構主動調節,流量領先價格~2h) · 散急拉=5分漲>20∧散買≥5%(留不到收盤−6~−9) · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨低=觸昨日午後低點(−125bps/73%貫穿);≥2粗體">跌訊</th>
+<th title="上漲訊號計分:抬轎=30分大戶買≥3千萬∧散戶<45%(健康抬轎唯一正格) · 💎=逆勢純機構(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 佔壓=全日佔比≥10%∧壓縮<0(隔夜雙鍵IC t7.1,收盤導向) · 連3買=持續章(確認格);≥2粗體">漲訊</th>
+<th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
