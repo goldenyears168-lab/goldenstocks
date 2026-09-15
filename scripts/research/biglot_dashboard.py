@@ -705,17 +705,17 @@ def render():
             + (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                f"style='font-size:11px'>{r['mkt_ctx']}</td>"
                if r.get("mkt_ctx") else "<td class='dim'>—</td>")
-            + td(r["big30"], "wan")
+            + td(r["big5"], "wan") + td(r["big30"], "wan") + td(r["bigday"], "yi")
             + (f"<td class='{'warnv' if (r['rbuy30'] or 0) >= 5 else ''}'>{r['rbuy30']:.1f}%</td>"
                if (r.get("rbuy30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell30']:.1f}%</td>"
                if (r.get("rsell30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + td(r["dsh30"], "bps", True, r["unm"]).replace("bps", "")
-            + td(r["w_ret"], "bps") + td(r["big5"], "wan") + td(r["retn5"], "wan", unm=r["unm"])
+            + td(r["w_ret"], "bps") + td(r["retn5"], "wan", unm=r["unm"])
             + (f"<td class='{'warnv' if (r['rbuy5'] or 0) >= 5 else ''}'>"
                f"{r['rbuy5']:.1f}%</td>" if (r["rbuy5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell5']:.1f}%</td>" if (r["rsell5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + td(r["bigday"], "yi") + td(r["retday"], "yi", unm=r["unm"])
+            + td(r["retday"], "yi", unm=r["unm"])
             + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
                if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
             + (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
@@ -751,12 +751,14 @@ def render():
 <th>價</th><th>日內%</th>
 <th class="g30">30分bps</th>
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格">順逆市</th>
-<th class="g30">30分大戶</th>
+<th class="gd" title="5分大戶淨額(萬)=最短窗">5分大戶</th>
+<th class="g30" title="30分大戶淨額(萬)=滾動窗">30分大戶</th>
+<th class="gd" title="全日累計大戶淨額(億)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶</th>
 <th class="g30" title="30分散戶買方參與(毒藥側,≥5%標黃)">散買30</th>
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">散賣30</th>
 <th class="g30">Δ參與30</th>
-<th class="g5">5分bps</th><th class="g5">5分大戶</th><th class="g5">5分散戶淨</th>
-<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="gd">全日大戶</th><th class="gd">全日散戶</th>
+<th class="g5">5分bps</th><th class="g5">5分散戶淨</th>
+<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">散買%</th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">散賣%</th><th class="gd">全日散戶</th>
 <th class="gd" title="當日大戶淨流÷成交=隔夜排序主鍵(IC+0.097/t7.1)">佔比%</th>
 <th class="gd" title="現價距尾盤1h均線=壓縮鍵(負=壓著,隔夜挑股用;13:20後看)">壓縮1h</th>
 <th class="gd" title="連3買=持續章(挑股加分)/⚠同賣=今晚勿抱(-28bps/t-6)/↓弱開=明日弱開候選/🔻=跌回昨日午後低點(出場警戒)">章</th>
