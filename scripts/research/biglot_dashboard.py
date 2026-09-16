@@ -112,20 +112,28 @@ def _load_daily_trend():
 
 DAILY_TREND = _load_daily_trend()
 
-# ---- 融資/借券雙增 → 波動風險旗標（非方向訊號，多空都適用）----------------------
+# ---- 融資/借券變化幅度 → 波動風險分數（非方向訊號，只預測盤中振幅，多空都適用）------
 # 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
-# 2025-01~2026-09 回測）。同日融資餘額日增幅 ∧ 借券餘額日增幅 都達該股自身歷史高分位時，
-# 隔日盤中振幅(T+1 high-low ÷ T close)均值顯著較高：q≥95%事件35次、+1.88pp(t3.89 p0.0004)；
-# 用OLS控制當日振幅(vol clustering)後仍有 +1.09pp 增量(t2.52 p0.012)——排除純自相關假象。
-# 樣本仍薄(35事件·74%集中2026年)，屬候選訊號非可下單依據，只做「留意」不做方向判斷。
+# 2025-01~2026-09 回測）。演進紀錄（後面取代前面）：
+#   1) 一開始只看「同時大增」(AND, 有方向)：q95 事件少(35~42次)但效果最大(+1.9~2.3pp)。
+#   2) 放寬成「任一邊大增即可」(OR)：事件變多但控制當日振幅(vol clustering)後大多不顯著
+#      (q90 t1.90 p0.057、q95 t1.53 p0.127)——原始t值好看是自相關撐出來的假象。
+#   3) 改良為「不分方向的變化幅度」(用 |日增幅| 而非「大增」)：兩邊各自的絕對值分位數
+#      取平均當 Score(0~100)，關係轉為單調遞增(十等分乾淨遞增4.9%→6.2%)，控制當日振幅後
+#      仍顯著(t=3.40 p=0.0007，比原始AND設計更穩健)——這是目前採用的最終版本。
+# 已驗證的邊界：只影響隔日「盤中振幅(H-L)/前收」，對隔日|收對收報酬|(t1.57 p0.117)、
+# 跳空幅度(t0.01 p0.99)、隔日量能(係數反而顯著為負,t-4.33)都測不出增量——不是方向或
+# 跳空訊號,量能還偏低(流動性變薄格)。換Parkinson(log range)結果不變(t3.43),但換成
+# True Range(含跳空)訊號整個消失(t-0.07)——訊號本質是「盤中來回」不是「跳空」。
 # ⚠ margin_balance 單位是「張」(1張=1000股)、lending_balance 單位是「股」，
 # 不可共用同一個門檻——5000張門檻會系統性排掉大立光/玉晶光/華碩/緯穎等高價股
 # (股價高→可融資張數天生就少，不是資料不足)。
 MIN_PREV_MARGIN_LOTS = 100        # 張，只擋真正近零/停融資的退化列
 MIN_PREV_LENDING_SHARES = 5_000   # 股，同一用意
 VOLRISK_MIN_OBS = 60              # 兩邊都要至少60個交易日紀錄才計分位，避免新股/資料不足誤判
-VOLRISK_TIERS = ((0.98, "🌊🌊"), (0.95, "🌊"))  # 由極端到寬鬆，取第一個命中的
-VOLRISK_STALE_DAYS = 7             # 融資/借券最新一筆超過這麼多天沒更新(處置股常停融資)就不計分位
+VOLRISK_STALE_DAYS = 7            # 融資/借券最新一筆超過這麼多天沒更新(處置股常停融資)就不計分數
+# Score 分級門檻(對應回測的q90/95/98,見上方演進紀錄第3版十等分結果)
+VOLRISK_TIERS = ((92, "🌊🌊"), (86, "🌊"), (80, ""))  # 第三級只上色不加圖示,由極端到寬鬆
 
 
 def _pctile_rank(values):
@@ -138,7 +146,7 @@ def _pctile_rank(values):
 
 
 def _load_vol_risk_flags():
-    """算出每檔股票「最新一筆」融資/借券日增幅在自己歷史中的分位，判定波動風險旗標。"""
+    """算出每檔股票「最新一筆」融資/借券變化幅度(不分方向)的歷史分位平均分數。"""
     conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
     sids = list(NAMES)
     ph = ",".join("?" * len(sids))
@@ -179,27 +187,27 @@ def _load_vol_risk_flags():
                 l_pct.append((bal - prev) / prev)
         if len(m_pct) < VOLRISK_MIN_OBS or len(l_pct) < VOLRISK_MIN_OBS:
             continue
-        stale = any(
+        days_stale = max(
             (datetime.now(TZ).date() - datetime.strptime(d, "%Y-%m-%d").date()).days
-            > VOLRISK_STALE_DAYS
             for d in (m_dates[-1], l_dates[-1])
         )
-        if stale:
+        if days_stale > VOLRISK_STALE_DAYS:
             out[sid] = {
-                "tier": None, "stale": True,
+                "score": None, "tier": None, "stale": True, "days_stale": days_stale,
                 "margin_asof": m_dates[-1], "lending_asof": l_dates[-1],
                 "margin_pct": m_pct[-1], "lending_pct": l_pct[-1],
-                "margin_pctile": None, "lending_pctile": None,
+                "margin_abs_pctile": None, "lending_abs_pctile": None,
             }
             continue
-        m_last, l_last = _pctile_rank(m_pct)[-1], _pctile_rank(l_pct)[-1]
-        tier = next((badge for thr, badge in VOLRISK_TIERS
-                     if m_last >= thr and l_last >= thr), None)
+        m_last = _pctile_rank([abs(x) for x in m_pct])[-1]
+        l_last = _pctile_rank([abs(x) for x in l_pct])[-1]
+        score = (m_last + l_last) / 2 * 100
+        tier = next((badge for thr, badge in VOLRISK_TIERS if score >= thr), None)
         out[sid] = {
-            "tier": tier, "stale": False,
+            "score": score, "tier": tier, "stale": False, "days_stale": days_stale,
             "margin_asof": m_dates[-1], "lending_asof": l_dates[-1],
             "margin_pct": m_pct[-1], "lending_pct": l_pct[-1],
-            "margin_pctile": m_last, "lending_pctile": l_last,
+            "margin_abs_pctile": m_last, "lending_abs_pctile": l_last,
         }
     return out
 
@@ -355,16 +363,29 @@ th.stk{{position:sticky;left:0;z-index:3}}
 .cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
-.vr1{{color:#e3b341;font-weight:700}} .vr2{{color:#f0883e;font-weight:700}}
+.vr0{{color:#58a6ff}} .vr1{{color:#e3b341;font-weight:700}} .vr2{{color:#f0883e;font-weight:700}}
 .flag{{color:#e3b341;text-align:left}}
 .sigdn{{color:#3fb950}} .sigup{{color:#ff7b72}}
 .rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
 .flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
+.disc{{font-size:11px;line-height:1.7;background:#161b22;border:1px solid #30363d;
+border-radius:6px;padding:6px 10px;margin-bottom:6px}}
+.disc b{{color:#e6edf3}} .disc .ok{{color:#3fb950}} .disc .no{{color:#ff7b72}}
+.disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
 </style></head><body>
 <h3>大戶-散戶 45檔即時儀表板
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <button id="hpBtn" style="font-size:11px;margin-left:10px;background:#21262d;color:#8b949e;
 border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer"></button></h3>
+<details class="disc" open><summary>📏 發言紀律（每日必看·避免盤中過度預測）</summary>
+<span class="ok">✓ 可預測（有 edge，只在收盤下判斷）</span>：隔夜今收→明開階梯（大戶佔比+壓縮，IC t7.1）·
+同賣勿抱（大戶賣∧散戶賣，隔夜−28/t−6）· 漲停排隊撐滿30分 · 處置20分盤大戶方向。<br>
+<span class="no">✗ 死區（已證偽/硬幣，盤中禁下方向判斷）</span>：盤中30分價格方向（單窗流量轉向勝率50.3%）·
+壓縮抄底（20格全滅）· 開盤累計預測09:30後（自相關假象）· 午後大戶 · streak · 跳檔動能。<br>
+<b>盤中規則</b>：只描述「當下籌碼事實」＋標 [事實]/[推論]，<b>不對30分後價格喊漲跌</b>；
+方向判斷一律留到收盤（隔夜候選）。過熱/見頂等字眼＝描述當下結構，不是擇時預測。<br>
+<b>每日進步</b>：昨日自評=分析76/30分預測58（見 docs/biglot-broadcast-protocol.md）。
+教訓：主升段連喊「接近高點」早1小時＝等於錯；日線滤網連兩日做多側全空倉（OOS影子驗證中）。</details>
 <div id="app"><div class="meta">載入中…</div></div>
 <script>
 const R={REFRESH_SEC}000;
@@ -625,23 +646,27 @@ def render():
         r["bigday"] = ds["big"] if ds else None
         r["retday"] = ds["ret"] if ds else None
         r["bigpm"] = ds["big_pm"] if ds else None
-        # 融資/借券雙增波動風險旗標（T-1資料，非方向訊號）
+        # 融資/借券變化幅度波動風險分數（T-1資料，只預測盤中振幅，非方向/跳空訊號）
         vr = VOLRISK.get(sid)
-        r["volrisk"] = vr["tier"] if vr else None
+        r["volrisk_score"] = vr["score"] if vr else None
+        r["volrisk_tier"] = vr["tier"] if vr else None
         if not vr:
-            r["volrisk_title"] = "融資/借券歷史資料不足60個交易日，無法計算分位"
+            r["volrisk_title"] = "融資/借券歷史資料不足60個交易日，無法計算分數"
         elif vr.get("stale"):
             r["volrisk_title"] = (
-                f"融資或借券最新資料超過{VOLRISK_STALE_DAYS}天未更新"
+                f"融資或借券最新資料已 {vr['days_stale']} 天未更新(>{VOLRISK_STALE_DAYS}天門檻)"
                 f"(融資asof {vr['margin_asof']}／借券asof {vr['lending_asof']})，"
-                f"可能是處置股停融資或資料延遲，不計分位")
+                f"可能是處置股停融資或資料延遲，不計分數")
         else:
+            stale_note = f"（資料{vr['days_stale']}天前,較舊）" if vr["days_stale"] > 2 else ""
             r["volrisk_title"] = (
-                f"T-1 融資({vr['margin_asof']})日增{vr['margin_pct']*100:+.1f}%"
-                f"(歷史分位{vr['margin_pctile']*100:.0f}%) · "
-                f"借券({vr['lending_asof']})日增{vr['lending_pct']*100:+.1f}%"
-                f"(歷史分位{vr['lending_pctile']*100:.0f}%) · "
-                f"45檔宇宙回測:兩者皆≥95分位時隔日振幅均值+1.88pp(控制當日振幅後仍+1.09pp,t2.52)")
+                f"波動風險分數 {vr['score']:.0f}/100{stale_note} · "
+                f"T-1 融資({vr['margin_asof']})日變動{vr['margin_pct']*100:+.1f}%"
+                f"(變動幅度歷史分位{vr['margin_abs_pctile']*100:.0f}%) · "
+                f"借券({vr['lending_asof']})日變動{vr['lending_pct']*100:+.1f}%"
+                f"(變動幅度歷史分位{vr['lending_abs_pctile']*100:.0f}%) · "
+                f"45檔宇宙回測:分數每+1分,控制當日振幅後隔日振幅仍+0.006pp(t3.40 p0.0007)。"
+                f"只預測盤中來回幅度,對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號")
         # 隔夜策略因子
         r["bigsh_d"] = (ds["big"] / ds["tot"] * 100) if (ds and ds["tot"]) else None
         last12 = [m[bk]["px"] for bk in done[-12:] if bk in m and m[bk]["px"]]
@@ -872,6 +897,18 @@ def render():
         cls = "rk1" if n <= 3 else ("rkN" if n >= 43 else "")
         return f"<td class='{cls}'>{n}{arrow}</td>"
 
+    VR_CLS = {"🌊🌊": "vr2", "🌊": "vr1", "": "vr0"}   # 對應 VOLRISK_TIERS 的分級,單一事實來源
+
+    def vr_td(r):
+        title = html_mod.escape(r.get("volrisk_title") or "")
+        score = r.get("volrisk_score")
+        if score is None:
+            return f"<td class='dim' title=\"{title}\">—</td>"
+        tier = r.get("volrisk_tier")
+        cls = VR_CLS.get(tier, "") if tier is not None else ""
+        icon = tier if tier else ""
+        return f"<td class='{cls}' title=\"{title}\">{icon}{score:.0f}</td>"
+
     _mktday = sum(_dayrets) / len(_dayrets) if _dayrets else None
     for r in rows:
         r["rs_live"] = (r["day_ret"] - _mktday
@@ -894,10 +931,7 @@ def render():
         trs.append(
             f"<tr{hp}>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
-            + (f"<td class='{'vr2' if r['volrisk'] == '🌊🌊' else 'vr1'}' "
-               f"title=\"{html_mod.escape(r['volrisk_title'])}\">{r['volrisk']}</td>"
-               if r.get("volrisk") else
-               f"<td class='dim' title=\"{html_mod.escape(r.get('volrisk_title') or '')}\">—</td>")
+            + vr_td(r)
             + rk_td(r["r30r"], r["d30"]) + rk_td(r["rdr"])
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
             + f"<td>{r['px'] if r['px'] else '—'}</td>"
@@ -954,7 +988,7 @@ def render():
 <div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th class="stk">股票</th>
-<th title="融資餘額 ∧ 借券餘額 同日日增幅皆達該股歷史高分位(T-1資料)。45檔宇宙回測:兩者皆≥95分位時隔日振幅均值+1.88pp,控制當日振幅(排除純波動群聚)後仍+1.09pp增量(t2.52 p0.012)。非方向訊號——不分多空,提示今天可能比較晃。🌊🌊=雙破98分位(更罕見更極端) 🌊=雙破95分位">波動風險</th>
+<th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。45檔宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分數</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
 <th>價</th><th>日內%</th>
