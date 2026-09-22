@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""45檔大戶-散戶即時儀表板 · 唯讀 · 自帶HTTP(:8771) · 30秒增量更新。
+"""大戶-散戶即時儀表板 · 唯讀 · 自帶HTTP(:8771) · 5秒增量更新。
 
   PYTHONPATH=src .venv/bin/python scripts/research/biglot_dashboard.py
   瀏覽 http://100.81.2.33:8771 （Tailscale 內網）
@@ -432,7 +432,7 @@ def _oos_update_at_close():
 
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
-<title>大戶45檔儀表板</title><style>
+<title>大戶{len(NAMES)}檔儀表板</title><style>
 body{{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',monospace;margin:8px}}
 h3{{margin:4px 0;font-size:14px}}
 .meta{{color:#8b949e;font-size:11px;margin-bottom:6px}}
@@ -462,12 +462,10 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .disc b{{color:#e6edf3}} .disc .ok{{color:#3fb950}} .disc .no{{color:#ff7b72}}
 .disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
 </style></head><body>
-<h3>大戶-散戶 45檔即時儀表板
+<h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
-<a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
-<button id="hpBtn" style="font-size:11px;margin-left:10px;background:#21262d;color:#8b949e;
-border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer"></button></h3>
+<a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a></h3>
 <details class="disc" open><summary>📏 發言紀律（每日必看·避免盤中過度預測）</summary>
 <span class="ok">✓ 可預測（有 edge，只在收盤下判斷）</span>：隔夜今收→明開階梯（大戶佔比+壓縮，IC t7.1）·
 同賣勿抱（大戶賣∧散戶賣，隔夜−28/t−6）· 漲停排隊撐滿30分 · 處置20分盤大戶方向。<br>
@@ -486,21 +484,11 @@ const R={REFRESH_SEC}000;
 function clk(){{const d=new Date();const p=n=>String(n).padStart(2,'0');
   document.getElementById('clk').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
 clk(); setInterval(clk,1000);   // 每秒跳動的即時時鐘(到秒),獨立於5秒資料更新
-let showHP = localStorage.getItem('showHP')==='1';
-function applyHP(){{
-  document.querySelectorAll('tr[data-hp]').forEach(tr=>tr.style.display=showHP?'':'none');
-  document.getElementById('hpBtn').textContent =
-    showHP?'隱藏高價股(≥2000,散戶不可測)':'顯示高價股(已隱藏)';
-}}
-document.getElementById('hpBtn').onclick=()=>{{
-  showHP=!showHP; localStorage.setItem('showHP',showHP?'1':'0'); applyHP();
-}};
 async function tick(){{
   try{{
     const r=await fetch('/frag?_='+Date.now());
     const t=await r.text();
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
-    applyHP();                                     // 換完內容重套高價股隱藏
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1') return;        // 收盤後停止輪詢
   }}catch(e){{}}
@@ -809,7 +797,7 @@ def render():
                 f"(變動幅度歷史分位{vr['margin_abs_pctile']*100:.0f}%) · "
                 f"借券({vr['lending_asof']})日變動{vr['lending_pct']*100:+.1f}%"
                 f"(變動幅度歷史分位{vr['lending_abs_pctile']*100:.0f}%) · "
-                f"45檔宇宙回測:分數每+1分,控制當日振幅後隔日振幅仍+0.006pp(t3.40 p0.0007)。"
+                f"宇宙回測:分數每+1分,控制當日振幅後隔日振幅仍+0.006pp(t3.40 p0.0007)。"
                 f"只預測盤中來回幅度,對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號")
         # 隔夜策略因子
         r["bigsh_d"] = (ds["big"] / ds["tot"] * 100) if (ds and ds["tot"]) else None
@@ -1078,7 +1066,6 @@ def render():
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
-        hp = ' data-hp="1"' if (r["px"] or 0) >= 2000 else ""
         _band = " class='band'" if r["sid"] in grpend else ""     # 產業交界粗線
         _cc = r.get("chg_amt")                          # 對昨收漲跌:紅漲綠跌(台股慣例)
         _qcls = _px_class(r.get("px"), PREV_CLOSE.get(r["sid"]), r.get("chg_pct"))
@@ -1110,7 +1097,7 @@ def render():
             _trtd = "<td class='dim'>—</td>"
             _trbktd = "<td class='dim'>—</td>"
         trs.append(
-            f"<tr{hp}{_band}>"
+            f"<tr{_band}>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
             + vr_td(r)
             + (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
@@ -1170,11 +1157,11 @@ def render():
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · 排名=注意力分流非訊號 · <b>主尺度=30分</b>(旗標依127日驗證:
-勿追30超額−5bps/跌深大戶接+9bps/💎逆勢純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
+勿追30超額−5bps/跌深大戶接+9bps/💎純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th class="stk">股票</th>
-<th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。45檔宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分數</th>
+<th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分數</th>
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
@@ -1391,8 +1378,8 @@ def render_day(d):
 
 _HELP_GROUPS = [
     ("識別", [
-        ("股票", "中文名＋細分產業標籤(灰字)。細分產業為45檔手動策展,比大類細一層(如半導體再分晶圓代工/封測/DRAM/矽晶圓;PCB再分CCL/ABF載板/軟板)。",
-         "同族群連動看輪動:今天CCL(聯茂/台燿/台光電)整片被買、ABF(南電/景碩/欣興)整片被賣。高價股(≥2000元)預設隱藏,因1張即≥500萬、散戶欄不可測。"),
+        ("股票", "中文名＋細分產業標籤(灰字)。細分產業為宇宙標的手動策展,比大類細一層(如半導體再分晶圓代工/封測/DRAM/矽晶圓;PCB再分CCL/ABF載板/軟板)。",
+         "同族群連動看輪動:CCL(聯茂/台燿)整片被買、ABF(南電/景碩/欣興)整片被賣一目了然。目前宇宙全為散戶可測標的(股價<2000),無隱藏。"),
     ]),
     ("價格", [
         ("價", "最新成交價。顏色＝對前一交易日收盤:紅漲綠跌(台股慣例,與美股相反)。", "一眼看今日相對昨收是紅是綠。"),
@@ -1402,7 +1389,7 @@ _HELP_GROUPS = [
         ("盤前試撮", "collector 08:45~09:00 收的試撮價,小字=跳空%(vs昨收);09:00開盤後凍結為最終試撮。", "開盤前看試撮價預判開盤;開盤後此欄空窗屬正常(只有盤前有值)。試撮價會被大單掛撤誘導,非確定開盤價。"),
         ("試撮買賣", "盤前試撮的買一價/賣一價 與 撮合張數(bid/ask×張)。", "看盤前買賣一價差(真空還牆)與會撮多少張。與『盤前試撮』同源,只在08:45~09:00有值。"),
         ("30分bps", "近30分窗價格報酬(1bps=0.01%)。主尺度。", "驗證格(噴後/跌深接/勿追)判斷的價格軸。"),
-        ("順逆市", "個股30分方向 vs 市場45檔等權30分方向。順漲/順跌=同向;逆強=大盤跌它漲;逆弱=大盤漲它跌。", "市場是個股報酬最強控制變數——讀任何訊號前先看這格,逆強逆弱才有個股alpha。"),
+        ("順逆市", "個股30分方向 vs 市場全宇宙等權30分方向。順漲/順跌=同向;逆強=大盤跌它漲;逆弱=大盤漲它跌。", "市場是個股報酬最強控制變數——讀任何訊號前先看這格,逆強逆弱才有個股alpha。"),
         ("5分bps", "近5分窗價格報酬。最短尺度、雜訊最大。", "只作即時異動參考,別單獨下判斷。"),
         ("距漲停", "現價距漲停價%。", "接近0=快漲停;配合漲停排隊格(撐滿30分才買)。"),
         ("即時RS", "個股日內% − 宇宙日內%(百分點)。負(綠)=相對壓著(彈簧);＞+1(黃)=已彈開。", "隔夜挑股:壓著的彈簧優先。軟否決:日線弱∧已彈=毒格−31bps。"),
@@ -1459,7 +1446,7 @@ def render_help():
     parts = [f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
              f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
              f"<title>欄位說明</title><style>{css}</style></head><body>"
-             f"<h2>📖 大戶45檔儀表板 · 欄位說明</h2>"
+             f"<h2>📖 大戶儀表板 · 欄位說明</h2>"
              f"<div class='meta'><a href='/'>← 回儀表板</a>　每欄:定義(怎麼算) / 怎麼讀(用途)。"
              f"顏色慣例:<span class='up'>紅=漲/正值</span>、<span class='dn'>綠=跌/負值</span>(台股慣例)、灰=無資料或不可測。</div>"
              f"<div class='leg'><b>表頭顏色</b>=尺度分層:<span style='color:#e3b341'>黃=5分窗</span>·"
