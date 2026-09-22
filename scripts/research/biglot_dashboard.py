@@ -463,6 +463,7 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
 </style></head><body>
 <h3>大戶-散戶 45檔即時儀表板
+<span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
 <button id="hpBtn" style="font-size:11px;margin-left:10px;background:#21262d;color:#8b949e;
@@ -475,13 +476,16 @@ border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer"></but
 <b>盤中30分方向規則（可喊·但要有根據）</b>：只在<b>已驗證格觸發</b>時喊方向，且必附
 數字＋基準＋t——⚠勿追（漲×參與跳升或大戶賣，下跌趨勢日−9.6bps/續跌，V轉日反向）·
 跌深大戶接（跌30分×大戶買×RVOL≥0.5，+11~14bps/t3.4）·噴後（30分漲≥150後均−32）·
-健康抬轎（大戶買∧散戶<45%，唯一正格）。<b>無驗證格觸發的窗＝棄權（不硬喊）</b>。
+主力點火（大戶買∧散戶<45%，健康首發，唯一正格）。<b>無驗證格觸發的窗＝棄權（不硬喊）</b>。
 自由心證的「我覺得會漲/跌」＝禁止；喊完要標這是條件式基準率、非確定。<br>
 <b>每日進步</b>：昨日自評=分析76/30分預測58（見 docs/biglot-broadcast-protocol.md）。
 教訓：主升段連喊「接近高點」早1小時＝等於錯；日線滤網連兩日做多側全空倉（OOS影子驗證中）。</details>
 <div id="app"><div class="meta">載入中…</div></div>
 <script>
 const R={REFRESH_SEC}000;
+function clk(){{const d=new Date();const p=n=>String(n).padStart(2,'0');
+  document.getElementById('clk').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
+clk(); setInterval(clk,1000);   // 每秒跳動的即時時鐘(到秒),獨立於5秒資料更新
 let showHP = localStorage.getItem('showHP')==='1';
 function applyHP(){{
   document.querySelectorAll('tr[data-hp]').forEach(tr=>tr.style.display=showHP?'':'none');
@@ -890,8 +894,8 @@ def render():
             # 127日兩兩交互測試定案:核心=逆大戶(雙尺度)∧散戶<5%,+23.8bps/t5.18 n=1801
             # 市場方向條件是死重(只+1.3bps卻砍40%樣本),已移除;7/7月為正
             # 劑量≥3000萬:+28.7/t4.09、45分+36.1/t3.84
-            early = ("💎💎逆勢強(≥3千萬)" if r["big5"] >= 3e7
-                     else "💎逆勢純機構")
+            early = ("💎💎巨資機構(≥3千萬)" if r["big5"] >= 3e7
+                     else "💎純機構")
         elif r["w_ret"] is not None and r["w_ret"] > 20:
             if ((r["dshare"] is not None and r["dshare"] > 5 and not r["unm"])
                     or (big5n is not None and big5n < -5)):
@@ -903,7 +907,7 @@ def render():
             if r["rvol5"] is not None and r["rvol5"] >= 0.5:
                 early = "🟢跌深大戶接"               # RVOL>=0.5 條件版:127日+11~14bps cl-t 3.4-3.9
             else:
-                early = "▫接刀(枯量,無效帶)"          # <0.5x 帶127日超額≈0
+                early = "▫虛胖接刀(枯量,超額≈0)"     # <0.5x 帶127日超額≈0(名字直接標無效,別和「深接」搞混)
         if early:
             r["flag"] = (r["flag"] + " " + early).strip()
 
@@ -929,14 +933,14 @@ def render():
         bull = []
         if (r.get("big30") is not None and r["big30"] >= 3e7
                 and (par30 is None or par30 < 45)):
-            bull.append("抬轎")        # 大戶買≥3千萬∧散戶<45%=健康抬轎(唯一正格)
+            bull.append("主力點火")     # 大戶買≥3千萬∧散戶<45%=健康首發(唯一正格;台股「抬轎」易誤解為散戶)
         if "💎" in r["flag"]:
-            bull.append("💎")          # 逆勢純機構 +24~29bps/t5.2
+            bull.append("巨資機構" if "💎💎" in r["flag"] else "純機構")  # 逆勢純機構 +24~29/t5.2(文字區分,不靠鑽石數量)
         if "🟢" in r["flag"]:
-            bull.append("深接")        # 跌深大戶接(RVOL≥0.5) +11~14bps/t3.4+
+            bull.append("深接")        # 跌深大戶接(RVOL≥0.5,正EV) +11~14bps/t3.4+
         if (r.get("bigsh_d") is not None and r["bigsh_d"] >= 10
                 and r.get("cmp1h") is not None and r["cmp1h"] < 0):
-            bull.append("佔壓")        # 佔比≥10%∧收盤前壓著=隔夜雙鍵(IC t7.1)
+            bull.append("蓄勢隔夜")     # 佔比≥10%∧收盤前壓著=隔夜雙鍵(IC t7.1)
         if "連3買" in r["stamp"]:
             bull.append("連3買")       # 持續章(確認格)
         r["bear_n"], r["bear_txt"] = len(bear), "·".join(bear)
@@ -982,7 +986,7 @@ def render():
     fl_e2 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "🟡接刀觀察" in r["flag"])
     fl_dia = " ".join(f"{r['sid']}{r['name']}" for r in rows if "💎" in r["flag"])
     if fl_dia:
-        flag_bar = (f"<span style='color:#79c0ff'>💎逆勢純機構買單(127日+16bps/t4.4,全系統最強格):</span> "
+        flag_bar = (f"<span style='color:#79c0ff'>💎純機構買單(127日+16bps/t4.4,全系統最強格):</span> "
                     f"{fl_dia} ") + flag_bar
     if fl_e1:
         flag_bar += f"<span class='warnv'>⚠勿追5m(早期):</span> {fl_e1} "
@@ -1191,7 +1195,7 @@ def render():
 <th class="gd" title="連3買=持續章(挑股加分)/⚠同賣=今晚勿抱(-28bps/t-6)/↓弱開=明日弱開候選/🔻=跌回昨日午後低點(出場警戒)">章</th>
 <th title="個股日內−宇宙日內(百分點):負(綠)=相對壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">即時RS</th><th>距漲停</th><th title="5分窗成交金額/近5日同時段中位">量能x</th><th>買簿</th><th>賣簿</th>
 <th title="下跌訊號計分(命中數·明細),六格皆127日/實戰驗證:噴後=30分漲≥150bps(峰後均−32) · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構賣=30分大戶賣≥3千萬∧散戶參與<15%(機構主動調節,流量領先價格~2h) · 散急拉=5分漲>20∧散買≥5%(留不到收盤−6~−9) · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨低=觸昨日午後低點(−125bps/73%貫穿);≥2粗體">跌訊</th>
-<th title="上漲訊號計分:抬轎=30分大戶買≥3千萬∧散戶<45%(健康抬轎唯一正格) · 💎=逆勢純機構(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 佔壓=全日佔比≥10%∧壓縮<0(隔夜雙鍵IC t7.1,收盤導向) · 連3買=持續章(確認格);≥2粗體">漲訊</th>
+<th title="上漲訊號計分:主力點火=30分大戶買≥3千萬∧散戶<45%(健康首發,唯一正格;台股『抬轎』易被誤解為散戶,故改名) · 純機構/巨資機構=逆勢純機構買單(+24~29/t5.2,巨資=≥3千萬更強,以文字區分不靠鑽石數量) · 深接=跌深大戶接RVOL≥0.5(正EV,+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜雙鍵IC t7.1,收盤導向) · 連3買=持續章(確認格);≥2粗體。⚠注意:『深接』是正EV,旗標區的『虛胖接刀』(枯量RVOL<0.5)超額≈0是無效帶,勿混淆">漲訊</th>
 <th>旗標</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
@@ -1433,9 +1437,9 @@ _HELP_GROUPS = [
     ("訊號計分(只收已驗證格)", [
         ("跌訊", "命中數＋明細:噴後(30分漲≥150,峰後均−32)·勿追(漲×參與跳升或大戶賣,−5~−9.6,趨勢日−32)·機構賣(30分大戶賣≥3千萬∧散＜15%)·散急拉(5分漲＞20∧散買≥5%)·同賣(大戶賣∧散戶賣,−28/t−6)·破昨低。≥2粗體。",
          "空方計分;每格都附127日基準率,粗體=多格共振。"),
-        ("漲訊", "抬轎(30分大戶買≥3千萬∧散＜45%,唯一正格)·💎逆勢純機構(+24~29/t5.2)·深接(跌深大戶接RVOL≥0.5,+11~14/t3.4)·佔壓(全日佔比≥10%∧壓縮＜0,隔夜雙鍵)·連3買。≥2粗體。",
-         "多方計分;佔壓是收盤導向、盤中格是條件式基準率。"),
-        ("旗標", "綜合即時旗標文字:💎逆勢純機構、🟢跌深大戶接、⚠勿追、💎💎逆勢強等。", "當窗最該注意的一句話。"),
+        ("漲訊", "主力點火(30分大戶買≥3千萬∧散＜45%,健康首發唯一正格;台股『抬轎』易誤解為散戶故改名)·純機構/巨資機構(逆勢純機構買單+24~29/t5.2)·深接(跌深大戶接RVOL≥0.5,正EV,+11~14/t3.4)·蓄勢隔夜(全日佔比≥10%∧壓縮＜0,隔夜雙鍵)·連3買。≥2粗體。",
+         "多方計分;蓄勢隔夜是收盤導向、盤中格是條件式基準率。⚠『深接』(正EV)與旗標『虛胖接刀』(枯量無效,超額≈0)語意近但一好一壞,別搞混。"),
+        ("旗標", "綜合即時旗標文字:💎純機構/💎💎巨資機構(逆勢)、🟢跌深大戶接、⚠勿追、▫虛胖接刀(枯量無效)等。", "當窗最該注意的一句話;『深接』正EV vs『虛胖接刀』無效帶要分清楚。"),
     ]),
 ]
 
