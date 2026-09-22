@@ -1085,18 +1085,23 @@ def render():
                       f"<span class='dim' style='font-size:9px'> {_bas:+.1f}</span></td>")
         else:
             _futtd = "<td class='dim'>—</td>"
-        # 盤前試撮:試撮價+跳空%(vs昨收) / 買一/賣一×撮合張
+        # 盤前試撮:08:45~09:00 無成交價時,試撮直接塞進現有欄位共用(價/對昨收/買簿/賣簿),不另立欄
         _tr = PREOPEN.get(r["sid"]); _tpc = PREV_CLOSE.get(r["sid"])
-        if _tr and _tr.get("px") is not None:
-            _tpx = _tr["px"]
-            _gap = ((_tpx / _tpc - 1) * 100) if _tpc else None
-            _gtxt = (f"<span class='dim' style='font-size:9px'> {_gap:+.1f}%</span>" if _gap is not None else "")
-            _trtd = f"<td class='{_px_class(_tpx, _tpc, _gap)}'>{_tpx:g}{_gtxt}</td>"
-            _trbktd = (f"<td style='font-size:10px'>{_tr.get('bid')}/{_tr.get('ask')}"
-                       f"<span class='dim'>×{_tr.get('size') or 0}</span></td>")
-        else:
-            _trtd = "<td class='dim'>—</td>"
-            _trbktd = "<td class='dim'>—</td>"
+        if r["px"]:                                     # 已有成交價:正常顯示
+            _pxtd = f"<td class='{_qcls}'>{r['px']}</td>"
+            _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
+        elif _tr and _tr.get("px") is not None:         # 盤前:借 價/對昨收/買賣簿 顯示試撮(標「試」上標)
+            _tpx = _tr["px"]; _tg = ((_tpx / _tpc - 1) * 100) if _tpc else None
+            _sup = "<sup style='font-size:8px;color:#8b949e'>試</sup>"
+            _pxtd = f"<td class='{_px_class(_tpx, _tpc, _tg)}' title='盤前試撮價'>{_tpx:g}{_sup}</td>"
+            if _tg is not None:
+                _chgtd = (f"<td class='{'up' if _tg > 0 else ('dn' if _tg < 0 else '')}' title='盤前試撮跳空%'>"
+                          f"{_tg:+.2f}%{_sup}</td>")
+            _bidtd = f"<td title='試撮買一'>{_tr.get('bid')}{_sup}</td>"
+            _asktd = f"<td title='試撮賣一(撮合{_tr.get('size') or 0}張)'>{_tr.get('ask')}{_sup}</td>"
+        else:                                           # 開盤前空窗/無試撮
+            _pxtd = "<td class='dim'>—</td>"
+            _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         trs.append(
             f"<tr{_band}>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
@@ -1105,11 +1110,10 @@ def render():
                f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
             + rk_td(r["r30r"], r["d30"]) + rk_td(r["rdr"])
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
-            + f"<td class='{_qcls}'>{r['px'] if r['px'] else '—'}</td>"
+            + _pxtd
             + _futtd
             + _chgtd
             + td(r["day_ret"], "pct2")
-            + _trtd + _trbktd
             + td(r["r30"], "bps")
             + (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                f"style='font-size:11px'>{r['mkt_ctx']}</td>"
@@ -1142,7 +1146,7 @@ def render():
             + td(r["lu_dist"], "pct2", False)
             + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
                f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
-            + td(r["bid_min"], "min", False) + td(r["ask_min"], "min", False)
+            + _bidtd + _asktd
             + (f"<td class='sigdn' style='text-align:left{';font-weight:700' if r['bear_n'] >= 2 else ''}'>"
                f"{r['bear_n']}·{r['bear_txt']}</td>" if r["bear_n"] else "<td class='dim'>0</td>")
             + (f"<td class='sigup' style='text-align:left{';font-weight:700' if r['bull_n'] >= 2 else ''}'>"
@@ -1166,7 +1170,7 @@ def render():
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
-<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)">價</th><th title="個股期貨即時價+基差(小字=期貨/現股−1 %,正=期貨溢價)。資料源:個股期貨ws(Phase2上線後才有值,之前顯示—)">期貨</th><th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)">對昨收</th><th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">日內%</th><th title="盤前08:45~09:00 試撮價+跳空%(小字=vs昨收);09:00開盤後凍結為最終試撮。開盤後空窗屬正常(僅盤前有值)">盤前試撮</th><th title="盤前試撮的買一/賣一價 與 撮合張數(bid/ask×張)">試撮買賣</th>
+<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:45~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價;買簿/賣簿盤前亦借顯示試撮買一/賣一">價</th><th title="個股期貨即時價+基差(小字=期貨/現股−1 %,正=期貨溢價)。資料源:個股期貨ws(Phase2上線後才有值,之前顯示—)">期貨</th><th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:45~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">對昨收</th><th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">日內%</th>
 <th class="g30">30分bps</th>
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格">順逆市</th>
 <th class="gd" title="5分大戶淨額(萬)=最短窗">5分大戶</th>
@@ -1387,8 +1391,7 @@ _HELP_GROUPS = [
         ("對昨收", "現價−昨收 的金額與%,即專業看盤軟體的主報價。▲紅=漲、▼綠=跌。", "這才是一般人講的『今天漲跌多少』。金額看跳動幅度、%看比例。"),
         ("期貨", "個股期貨即時價,小字=基差%(期貨/現股−1,正=期貨溢價)。紅=溢價、綠=逆價差。資料源:個股期貨ws(Phase2)——上線前顯示—。", "盤前期現貨背離、盤中基差都看這欄。緊接在『價』旁邊方便對照。"),
         ("日內%", "現價/今日開盤−1。盤中相對『開盤』的走勢,與對昨收互補。", "跳空開高後拉回:對昨收仍紅、日內%卻綠=開高走低。兩欄一起讀分辨跳空 vs 盤中動能。"),
-        ("盤前試撮", "collector 08:45~09:00 收的試撮價,小字=跳空%(vs昨收);09:00開盤後凍結為最終試撮。", "開盤前看試撮價預判開盤;開盤後此欄空窗屬正常(只有盤前有值)。試撮價會被大單掛撤誘導,非確定開盤價。"),
-        ("試撮買賣", "盤前試撮的買一價/賣一價 與 撮合張數(bid/ask×張)。", "看盤前買賣一價差(真空還牆)與會撮多少張。與『盤前試撮』同源,只在08:45~09:00有值。"),
+        ("盤前試撮(共用欄)", "不另立欄:08:45~09:00 無成交時,試撮價塞進『價』欄、試撮跳空%塞『對昨收』、試撮買一/賣一塞『買簿/賣簿』,皆帶『試』上標;09:00開盤後自動轉為成交資料。", "開盤前看試撮預判開盤;試撮價會被大單掛撤誘導,非確定開盤價。"),
         ("30分bps", "近30分窗價格報酬(1bps=0.01%)。主尺度。", "驗證格(噴後過熱/跌深接/勿追)判斷的價格軸。"),
         ("順逆市", "個股30分方向 vs 市場全宇宙等權30分方向。順漲/順跌=同向;逆強=大盤跌它漲;逆弱=大盤漲它跌。", "市場是個股報酬最強控制變數——讀任何訊號前先看這格,逆強逆弱才有個股alpha。"),
         ("5分bps", "近5分窗價格報酬。最短尺度、雜訊最大。", "只作即時異動參考,別單獨下判斷。"),
