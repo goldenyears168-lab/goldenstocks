@@ -448,6 +448,9 @@ tbody tr:hover{{background:#1c2635 !important}}
 tbody tr:hover td.nm{{background:#1c2635 !important}}
 .cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
+.lup{{background:#d1242f;color:#fff;font-weight:700}}  /* 漲停:紅底白字(台股慣例) */
+.ldn{{background:#1a7f37;color:#fff;font-weight:700}}  /* 跌停:綠底白字 */
+.nlup{{color:#ff7b72;font-weight:700}} .nldn{{color:#3fb950;font-weight:700}}  /* 接近漲/跌停:粗紅/綠 */
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
 .vr0{{color:#58a6ff}} .vr1{{color:#e3b341;font-weight:700}} .vr2{{color:#f0883e;font-weight:700}}
 .flag{{color:#e3b341;text-align:left}}
@@ -647,6 +650,35 @@ def _fmt(v, unit=1e4, dec=0, plus=True):
         return "—"
     s = f"{v/unit:+.{dec}f}" if plus else f"{v/unit:.{dec}f}"
     return s
+
+
+def _tick_sz(p):
+    return (0.01 if p < 10 else 0.05 if p < 50 else 0.1 if p < 100
+            else 0.5 if p < 500 else 1.0 if p < 1000 else 5.0)
+
+
+def _limits(pc):
+    """台股漲跌停價(±10%,對齊 tick):漲停=不超過+10%的最大tick、跌停=不低於−10%的最小tick。"""
+    import math
+    up, dn = pc * 1.1, pc * 0.9
+    return math.floor(up / _tick_sz(up)) * _tick_sz(up), math.ceil(dn / _tick_sz(dn)) * _tick_sz(dn)
+
+
+def _px_class(px, pc, chg):
+    """價格著色類別:漲停紅底白字/跌停綠底白字/接近漲跌停粗字/一般漲跌。"""
+    if px and pc:
+        up, dn = _limits(pc)
+        if px >= up - 1e-6:
+            return "lup"
+        if px <= dn + 1e-6:
+            return "ldn"
+    if chg is None:
+        return ""
+    if chg >= 9.0:
+        return "nlup"
+    if chg <= -9.0:
+        return "nldn"
+    return "up" if chg > 0 else ("dn" if chg < 0 else "")
 
 
 def render():
@@ -1045,7 +1077,7 @@ def render():
         hp = ' data-hp="1"' if (r["px"] or 0) >= 2000 else ""
         _band = " class='band'" if r["sid"] in grpend else ""     # 產業交界粗線
         _cc = r.get("chg_amt")                          # 對昨收漲跌:紅漲綠跌(台股慣例)
-        _qcls = "up" if (_cc is not None and _cc > 0) else ("dn" if (_cc is not None and _cc < 0) else "")
+        _qcls = _px_class(r.get("px"), PREV_CLOSE.get(r["sid"]), r.get("chg_pct"))
         if _cc is not None:
             _arrow = "▲" if _cc > 0 else ("▼" if _cc < 0 else "")
             _chgtd = f"<td class='{_qcls}'>{_arrow}{abs(_cc):g} {r['chg_pct']:+.2f}%</td>"
