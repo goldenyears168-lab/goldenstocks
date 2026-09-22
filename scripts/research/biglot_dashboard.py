@@ -30,7 +30,7 @@ BIG_AMT = 10_000_000     # 2026-09-12 使用者定案:大戶=真大戶(>=1000萬
 RETAIL_CAP = 5_000_000   # 散戶定義不動:1張且<500萬(高價股1張大單歸中實不歸散戶)
 GAP_JUMP_AMT = 500_000_000
 GAP_SECONDS = 90
-REFRESH_SEC = 5
+REFRESH_SEC = 1   # 背景 ingest(~2ms)+render(~23ms) 每秒約 2.5% 單核,client 抓 ~66KB/s,mini 綽綽有餘
 
 CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 _cal = json.load(open(CALIB))
@@ -451,6 +451,7 @@ tbody tr:hover td.nm{{background:#1c2635 !important}}
 .lup{{background:#d1242f;color:#fff;font-weight:700}}  /* 漲停:紅底白字(台股慣例) */
 .ldn{{background:#1a7f37;color:#fff;font-weight:700}}  /* 跌停:綠底白字 */
 .nlup{{color:#ff7b72;font-weight:700}} .nldn{{color:#3fb950;font-weight:700}}  /* 接近漲/跌停:粗紅/綠 */
+.hit{{text-decoration:underline;text-decoration-color:#f2cc60;text-decoration-thickness:2px;text-underline-offset:3px}}  /* 期貨成交價落在的那一邊:黃底線 */
 .warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
 .vr0{{color:#58a6ff}} .vr1{{color:#e3b341;font-weight:700}} .vr2{{color:#f0883e;font-weight:700}}
 .flag{{color:#e3b341;text-align:left}}
@@ -483,7 +484,7 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 const R={REFRESH_SEC}000;
 function clk(){{const d=new Date();const p=n=>String(n).padStart(2,'0');
   document.getElementById('clk').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
-clk(); setInterval(clk,1000);   // 每秒跳動的即時時鐘(到秒),獨立於5秒資料更新
+clk(); setInterval(clk,1000);   // 每秒跳動的即時時鐘(到秒)
 async function tick(){{
   try{{
     const r=await fetch('/frag?_='+Date.now());
@@ -1092,13 +1093,18 @@ def render():
                   else ("up" if _fbid is not None else ""))
         _facls = (_px_class(_fask, _ffpc, (_fask / _ffpc - 1) * 100) if (_fask and _ffpc)
                   else ("dn" if _fask is not None else ""))
+        # 成交價落在買一或賣一的那一邊:該側報價加黃底線(=主動方 price==ask主動買 / price==bid主動賣)
+        _hitb = _futpx is not None and _fbid is not None and abs(_futpx - _fbid) < 1e-6
+        _hita = _futpx is not None and _fask is not None and abs(_futpx - _fask) < 1e-6
         if _fbid is not None:
-            _fbtd = (f"<td class='{_fbcls}' title='期貨買一{_bastxt}'>{_fbid:g}"
+            _bp = f"<span class='hit'>{_fbid:g}</span>" if _hitb else f"{_fbid:g}"
+            _fbtd = (f"<td class='{_fbcls}' title='期貨買一{_bastxt}'>{_bp}"
                      f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}</span></td>")
         else:
             _fbtd = "<td class='dim'>—</td>"
         if _fask is not None:
-            _fatd = (f"<td class='{_facls}' title='期貨賣一{_bastxt}'>{_fask:g}"
+            _ap = f"<span class='hit'>{_fask:g}</span>" if _hita else f"{_fask:g}"
+            _fatd = (f"<td class='{_facls}' title='期貨賣一{_bastxt}'>{_ap}"
                      f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}</span></td>")
         else:
             _fatd = "<td class='dim'>—</td>"
@@ -1406,7 +1412,7 @@ _HELP_GROUPS = [
     ("價格", [
         ("價", "最新成交價。顏色＝對前一交易日收盤:紅漲綠跌(台股慣例,與美股相反)。", "一眼看今日相對昨收是紅是綠。"),
         ("對昨收", "現價−昨收 的金額與%,即專業看盤軟體的主報價。▲紅=漲、▼綠=跌。", "這才是一般人講的『今天漲跌多少』。金額看跳動幅度、%看比例。"),
-        ("期貨買 / 期貨賣", "個股期貨近月買一/賣一,拆成兩欄:委託價＋委託量(小字×N張)。著色比照『價』欄以期貨自身昨結為基準:紅漲綠跌,期貨漲停=紅底白字、跌停=綠底白字(漲停時賣方常空→期貨賣顯示—、買一鎖在漲停價;跌停反之)。滑鼠移上 tooltip 顯示期貨成交價與基差%(期貨/現股−1,正=溢價)。資料源:個股期貨 ws books channel(五檔即時推播取第一檔);整條 ws 斷線逾30秒才剔除,鎖死檔簿不動仍保留(不再閃爍消失)。", "買一/賣一價差=期貨即時流動性(價差窄=好成交);委託量=該價位掛單張數(對照『幾分鐘成交量』判牆/真空,勿看買賣比)。期貨先漲停/跌停常領先現股,是搶帽方向的即時線索;基差看盤前期現貨背離與盤中溢價/逆價差。"),
+        ("期貨買 / 期貨賣", "個股期貨近月買一/賣一,拆成兩欄:委託價＋委託量(小字×N張)。著色比照『價』欄以期貨自身昨結為基準:紅漲綠跌,期貨漲停=紅底白字、跌停=綠底白字(漲停時賣方常空→期貨賣顯示—、買一鎖在漲停價;跌停反之)。**黃底線**標在成交價落在的那一邊(成交價==賣一→主動買、==買一→主動賣),一眼看主動方在哪側。滑鼠移上 tooltip 顯示期貨成交價與基差%(期貨/現股−1,正=溢價)。資料源:個股期貨 ws books channel(五檔即時推播取第一檔);整條 ws 斷線逾30秒才剔除,鎖死檔簿不動仍保留(不再閃爍消失)。", "買一/賣一價差=期貨即時流動性(價差窄=好成交);委託量=該價位掛單張數(對照『幾分鐘成交量』判牆/真空,勿看買賣比)。黃底線那側=最近成交的主動方向。期貨先漲停/跌停常領先現股,是搶帽方向的即時線索;基差看盤前期現貨背離與盤中溢價/逆價差。"),
         ("日內%", "現價/今日開盤−1。盤中相對『開盤』的走勢,與對昨收互補。", "跳空開高後拉回:對昨收仍紅、日內%卻綠=開高走低。兩欄一起讀分辨跳空 vs 盤中動能。"),
         ("盤前試撮(共用欄)", "不另立欄:08:45~09:00 無成交時,試撮價塞進『價』欄、試撮跳空%塞『對昨收』、試撮買一/賣一塞『買簿/賣簿』,皆帶『試』上標;09:00開盤後自動轉為成交資料。", "開盤前看試撮預判開盤;試撮價會被大單掛撤誘導,非確定開盤價。"),
         ("30分bps", "近30分窗價格報酬(1bps=0.01%)。主尺度。", "驗證格(噴後過熱/跌深接/勿追)判斷的價格軸。"),
