@@ -30,7 +30,7 @@ BIG_AMT = 10_000_000     # 2026-09-12 使用者定案:大戶=真大戶(>=1000萬
 RETAIL_CAP = 5_000_000   # 散戶定義不動:1張且<500萬(高價股1張大單歸中實不歸散戶)
 GAP_JUMP_AMT = 500_000_000
 GAP_SECONDS = 90
-REFRESH_SEC = 30
+REFRESH_SEC = 5
 
 CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 _cal = json.load(open(CALIB))
@@ -62,7 +62,29 @@ RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= RETAIL
 # 高波動分數 = 20日日均振幅%((高−低)/收) ,來自 calib;越高越適合本系統的日內波段
 AMP20 = {r["sid"]: r.get("amp20") for r in _cal["universe"]}
 PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector preopen_*.json,08:45~09:00)
-FUT_PX: dict = {}    # 個股期貨即時價 sid->{px,t}(futprice_*.json;Phase2 期貨feed上線後才有)
+FUT_PX: dict = {}    # 個股期貨即時價 sid->{px,t}(futprice_*.json)
+# 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
+# 產業交界畫粗線(band)。查無的股票排最後。
+_CLUSTERS = [
+    ("矽晶圓", ["6182", "6488", "5483", "3532"]),
+    ("晶圓代工", ["2303", "6770"]),
+    ("記憶體", ["2344", "2408", "2337", "3006"]),
+    ("封測", ["2449", "6147", "3374"]),
+    ("化合物半導體", ["3105", "2455"]),
+    ("被動元件", ["2327", "2492", "6173", "3042"]),
+    ("CCL銅箔基板", ["6213", "6274"]),
+    ("ABF載板", ["8046", "3189", "3037"]),
+    ("PCB/載板", ["2368", "4958", "8039", "8358"]),
+    ("散熱", ["3324"]),
+    ("光學", ["3406"]),
+    ("功率二極體", ["2481"]),
+    ("電源光電", ["2301"]),
+    ("系統品牌", ["2357"]),
+    ("塑化", ["1303"]),
+    ("航運", ["2615", "2609"]),
+]
+SORT_INDEX = {sid: i for i, sid in enumerate(s for _n, sids in _CLUSTERS for s in sids)}
+CLUSTER_OF = {sid: name for name, sids in _CLUSTERS for sid in sids}
 try:
     _rb = json.load(open(DATA_DIR.parent / "cache" / "biglot_live_watch" / "_rvol_base.json"))
     RVOL_BASE = _rb.get("base", {})
@@ -436,12 +458,7 @@ let showHP = localStorage.getItem('showHP')==='1';
 function applyHP(){{
   document.querySelectorAll('tr[data-hp]').forEach(tr=>tr.style.display=showHP?'':'none');
   document.getElementById('hpBtn').textContent =
-    showHP?'隱藏高價股(≥2000,散戶不可測)':'顯示高價股(9檔,已隱藏)';
-  let vi=0;                                        // 每5列一條粗分隔線(只數可見列,對高價股切換免疫)
-  document.querySelectorAll('#app tbody tr').forEach(tr=>{{
-    if(tr.style.display==='none'){{tr.classList.remove('band');return;}}
-    vi++; tr.classList.toggle('band', vi%5===0);
-  }});
+    showHP?'隱藏高價股(≥2000,散戶不可測)':'顯示高價股(已隱藏)';
 }}
 document.getElementById('hpBtn').onclick=()=>{{
   showHP=!showHP; localStorage.setItem('showHP',showHP?'1':'0'); applyHP();
@@ -867,7 +884,14 @@ def render():
         r["bear_n"], r["bear_txt"] = len(bear), "·".join(bear)
         r["bull_n"], r["bull_txt"] = len(bull), "·".join(bull)
 
-    rows.sort(key=lambda r: -(r["big30"] or 0))
+    # 固定產業鏈排序(不隨大戶流跳位);查無者(理論上不會有)排最後、依big30
+    rows.sort(key=lambda r: (SORT_INDEX.get(r["sid"], 999), -(r["big30"] or 0)))
+    # 產業交界的最後一列→畫粗線
+    grpend = set()
+    for i, r in enumerate(rows):
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        if nxt is None or CLUSTER_OF.get(r["sid"]) != CLUSTER_OF.get(nxt["sid"]):
+            grpend.add(r["sid"])
     win_lbl = (f"{cur.strftime('%H:%M')}–{(cur+timedelta(minutes=5)).strftime('%H:%M')}"
                if cur else "—")
     w30_lbl = (f"{win6[0].strftime('%H:%M')}–{(win6[-1]+timedelta(minutes=5)).strftime('%H:%M')}"
@@ -993,6 +1017,7 @@ def render():
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
         hp = ' data-hp="1"' if (r["px"] or 0) >= 2000 else ""
+        _band = " class='band'" if r["sid"] in grpend else ""     # 產業交界粗線
         _cc = r.get("chg_amt")                          # 對昨收漲跌:紅漲綠跌(台股慣例)
         _qcls = "up" if (_cc is not None and _cc > 0) else ("dn" if (_cc is not None and _cc < 0) else "")
         if _cc is not None:
@@ -1001,7 +1026,7 @@ def render():
         else:
             _chgtd = "<td class='dim'>—</td>"
         # 個股期貨即時價 + 基差%(期貨/現股−1)
-        _fp = FUT_PX.get(sid); _futpx = _fp.get("px") if isinstance(_fp, dict) else _fp
+        _fp = FUT_PX.get(r["sid"]); _futpx = _fp.get("px") if isinstance(_fp, dict) else _fp
         if _futpx and r.get("px"):
             _bas = (_futpx / r["px"] - 1) * 100
             _futtd = (f"<td class='{'up' if _bas > 0 else ('dn' if _bas < 0 else '')}'>{_futpx:g}"
@@ -1009,7 +1034,7 @@ def render():
         else:
             _futtd = "<td class='dim'>—</td>"
         # 盤前試撮:試撮價+跳空%(vs昨收) / 買一/賣一×撮合張
-        _tr = PREOPEN.get(sid); _tpc = PREV_CLOSE.get(sid)
+        _tr = PREOPEN.get(r["sid"]); _tpc = PREV_CLOSE.get(r["sid"])
         if _tr and _tr.get("px") is not None:
             _tpx = _tr["px"]
             _gap = ((_tpx / _tpc - 1) * 100) if _tpc else None
@@ -1022,7 +1047,7 @@ def render():
             _trtd = "<td class='dim'>—</td>"
             _trbktd = "<td class='dim'>—</td>"
         trs.append(
-            f"<tr{hp}>"
+            f"<tr{hp}{_band}>"
             f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
             + vr_td(r)
             + (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
