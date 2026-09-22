@@ -62,7 +62,7 @@ RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= RETAIL
 # 高波動分數 = 20日日均振幅%((高−低)/收) ,來自 calib;越高越適合本系統的日內波段
 AMP20 = {r["sid"]: r.get("amp20") for r in _cal["universe"]}
 PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector preopen_*.json,08:45~09:00)
-FUT_PX: dict = {}    # 個股期貨即時價 sid->{px,t}(futprice_*.json)
+FUT_PX: dict = {}    # 個股期貨即時 sid->{px,sym,t,bid,bidsz,ask,asksz,bt}(futprice_*.json;bid/ask 來自 ws books)
 # 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
 # 產業交界畫粗線(band)。查無的股票排最後。
 _CLUSTERS = [
@@ -1077,14 +1077,24 @@ def render():
             _chgtd = f"<td class='{_ccls}'>{_arrow}{abs(_cc):g} {r['chg_pct']:+.2f}%</td>"
         else:
             _chgtd = "<td class='dim'>—</td>"
-        # 個股期貨即時價 + 基差%(期貨/現股−1)
-        _fp = FUT_PX.get(r["sid"]); _futpx = _fp.get("px") if isinstance(_fp, dict) else _fp
+        # 個股期貨買一/賣一 拆兩欄:委託價+委託量(小字)。title 附成交價與基差%(期貨/現股−1)
+        _fp = FUT_PX.get(r["sid"]) if isinstance(FUT_PX.get(r["sid"]), dict) else None
+        _futpx = _fp.get("px") if _fp else None
+        _bastxt = ""
         if _futpx and r.get("px"):
-            _bas = (_futpx / r["px"] - 1) * 100
-            _futtd = (f"<td class='{'up' if _bas > 0 else ('dn' if _bas < 0 else '')}'>{_futpx:g}"
-                      f"<span class='dim' style='font-size:9px'> {_bas:+.1f}</span></td>")
+            _bastxt = f" · 期貨成交{_futpx:g} 基差{(_futpx / r['px'] - 1) * 100:+.1f}%"
+        _fbid = _fp.get("bid") if _fp else None
+        _fask = _fp.get("ask") if _fp else None
+        if _fbid is not None:                           # 買一:紅(台股買方側,對齊『紅=買』慣例)
+            _fbtd = (f"<td class='up' title='期貨買一{_bastxt}'>{_fbid:g}"
+                     f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}</span></td>")
         else:
-            _futtd = "<td class='dim'>—</td>"
+            _fbtd = "<td class='dim'>—</td>"
+        if _fask is not None:                           # 賣一:綠
+            _fatd = (f"<td class='dn' title='期貨賣一{_bastxt}'>{_fask:g}"
+                     f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}</span></td>")
+        else:
+            _fatd = "<td class='dim'>—</td>"
         # 盤前試撮:08:45~09:00 無成交價時,試撮直接塞進現有欄位共用(價/對昨收/買簿/賣簿),不另立欄
         _tr = PREOPEN.get(r["sid"]); _tpc = PREV_CLOSE.get(r["sid"])
         if r["px"]:                                     # 已有成交價:正常顯示
@@ -1111,7 +1121,7 @@ def render():
             + rk_td(r["r30r"], r["d30"]) + rk_td(r["rdr"])
             + rk_td(r["r5"], r["d5"]) + rk_td(r["rh"], r["dh"])
             + _pxtd
-            + _futtd
+            + _fbtd + _fatd
             + _chgtd
             + td(r["day_ret"], "pct2")
             + td(r["r30"], "bps")
@@ -1170,7 +1180,7 @@ def render():
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%</th>
 <th title="30分大戶淨流排名(主尺度)">R30</th><th title="全日大戶淨流排名">R日</th>
 <th title="5分大戶淨流排名">R5</th><th title="5分成交金額排名">R熱</th>
-<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:45~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價;買簿/賣簿盤前亦借顯示試撮買一/賣一">價</th><th title="個股期貨即時價+基差(小字=期貨/現股−1 %,正=期貨溢價)。資料源:個股期貨ws(Phase2上線後才有值,之前顯示—)">期貨</th><th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:45~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">對昨收</th><th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">日內%</th>
+<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:45~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價;買簿/賣簿盤前亦借顯示試撮買一/賣一">價</th><th title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買</th><th title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣</th><th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:45~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">對昨收</th><th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">日內%</th>
 <th class="g30">30分bps</th>
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格">順逆市</th>
 <th class="gd" title="5分大戶淨額(萬)=最短窗">5分大戶</th>
@@ -1389,7 +1399,7 @@ _HELP_GROUPS = [
     ("價格", [
         ("價", "最新成交價。顏色＝對前一交易日收盤:紅漲綠跌(台股慣例,與美股相反)。", "一眼看今日相對昨收是紅是綠。"),
         ("對昨收", "現價−昨收 的金額與%,即專業看盤軟體的主報價。▲紅=漲、▼綠=跌。", "這才是一般人講的『今天漲跌多少』。金額看跳動幅度、%看比例。"),
-        ("期貨", "個股期貨即時價,小字=基差%(期貨/現股−1,正=期貨溢價)。紅=溢價、綠=逆價差。資料源:個股期貨ws(Phase2)——上線前顯示—。", "盤前期現貨背離、盤中基差都看這欄。緊接在『價』旁邊方便對照。"),
+        ("期貨買 / 期貨賣", "個股期貨近月買一/賣一,拆成兩欄:委託價＋委託量(小字×N張)。期貨買=紅(買方掛價側)、期貨賣=綠(賣方掛價側)。滑鼠移上任一欄的 tooltip 顯示期貨成交價與基差%(期貨/現股−1,正=溢價)。資料源:個股期貨 ws books channel(五檔即時推播,取第一檔);獨立 ws session,斷線逾30秒該檔剔除不顯示凍結價。", "買一/賣一價差=期貨即時流動性(價差窄=好成交);委託量=該價位掛單張數(對照『幾分鐘成交量』判牆/真空,勿看買賣比)。基差可看盤前期現貨背離、盤中溢價/逆價差。"),
         ("日內%", "現價/今日開盤−1。盤中相對『開盤』的走勢,與對昨收互補。", "跳空開高後拉回:對昨收仍紅、日內%卻綠=開高走低。兩欄一起讀分辨跳空 vs 盤中動能。"),
         ("盤前試撮(共用欄)", "不另立欄:08:45~09:00 無成交時,試撮價塞進『價』欄、試撮跳空%塞『對昨收』、試撮買一/賣一塞『買簿/賣簿』,皆帶『試』上標;09:00開盤後自動轉為成交資料。", "開盤前看試撮預判開盤;試撮價會被大單掛撤誘導,非確定開盤價。"),
         ("30分bps", "近30分窗價格報酬(1bps=0.01%)。主尺度。", "驗證格(噴後過熱/跌深接/勿追)判斷的價格軸。"),
