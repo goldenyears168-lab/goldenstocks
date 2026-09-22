@@ -17,6 +17,7 @@ import sqlite3
 import sys
 import threading
 import time
+import urllib.parse as urllib_parse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1127,7 +1128,9 @@ def render():
             _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         trs.append(
             f"<tr{_band}>"
-            f"<td class='nm'>{name}<span class='cat'>{r['cat']}</span></td>"
+            f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
+            f"style='color:inherit;text-decoration:none'>{name}</a>"
+            f"<span class='cat'>{r['cat']}</span></td>"
             + vr_td(r)
             + (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
                f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
@@ -1493,6 +1496,287 @@ def render_help():
     return "".join(parts)
 
 
+# ============================ 個股詳情頁（點名稱進入） ============================
+# 逐筆分時圖 + 累計大戶/散戶淨流 + 五檔委託簿。沿用主表同一套判定
+# (BIG_AMT=1000萬 / 散戶=1張<500萬 / side=主動買賣 / 空窗跳量剔除),
+# 資料源=raw_{日}.jsonl(逐筆) + watchlist_books_{日}.jsonl(五檔),兩者皆有歷史,
+# 故同一頁 today=即時、d=過去日=回放,完全共用。per-(sid,日) 增量快取,重繪只讀新增 bytes。
+DETAIL: dict = {}
+
+
+def _stock_series(sid, day):
+    """回傳 {mins:{"HH:MM":{px,vol,big,ret,tot}}, px0, last_px, big_day, ret_day, tot_day}。
+    增量:今天的檔會一路長,只解析新增行;過去日解析一次後快取到 EOF。"""
+    key = (sid, day)
+    st = DETAIL.get(key)
+    if st is None:
+        st = {"off": 0, "lastvol": 0.0, "last_px": None, "last_seen": None,
+              "first_done": False, "px0": None, "mins": {}}
+        DETAIL[key] = st
+    raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{day}.jsonl"
+    if raw.exists():
+        # bytes 大塊讀:seek 到上次 offset,一次讀進新增區段,只保留到最後一個換行(尾行
+        # 未寫完下輪再讀)。bytes 子字串預篩在 C 層跑,冷啟整天(95MB)<1s,遠快於 readline。
+        sidb = sid.encode()
+        with open(raw, "rb") as f:
+            f.seek(st["off"])
+            chunk = f.read()
+        nl = chunk.rfind(b"\n")
+        if nl != -1:
+            st["off"] += nl + 1
+            for line in chunk[:nl].split(b"\n"):
+                if not line or sidb not in line:          # 便宜的子字串預篩(1/36 命中)
+                    continue
+                _stk_trade(sid, line.decode("utf-8", "replace"), st)
+    return st
+
+
+def _stk_trade(sid, line, st):
+    try:
+        rec = json.loads(line)
+    except Exception:
+        return
+    if rec.get("kind") != "message":
+        return
+    msg = rec["payload"]
+    if msg.get("channel") != "trades" or msg.get("event") not in (None, "data"):
+        return
+    d = msg.get("data") or {}
+    if str(d.get("symbol", "")) != sid:
+        return
+    px, vol = d.get("price"), d.get("volume")
+    if px is None or vol is None or d.get("isTrial"):
+        return
+    px, vol = float(px), float(vol)
+    dv = vol - st["lastvol"]
+    st["lastvol"] = vol
+    if dv <= 0 or d.get("isOpen") or d.get("isClose"):
+        return
+    if not st["first_done"]:
+        st["first_done"] = True
+        st["px0"] = px
+        return
+    b, a = d.get("bid"), d.get("ask")
+    side = 1 if (a is not None and px >= float(a)) else (
+        -1 if (b is not None and px <= float(b)) else 0)
+    if side == 0:
+        p = st["last_px"]
+        side = 0 if p is None else (1 if px > p else (-1 if px < p else 0))
+    st["last_px"] = px
+    ts = rec.get("ts")
+    if not ts:
+        return
+    t = datetime.fromisoformat(ts)
+    gap = st["last_seen"] is not None and (t - st["last_seen"]).total_seconds() > GAP_SECONDS
+    st["last_seen"] = t
+    amt = px * dv * 1000
+    m = st["mins"].setdefault(t.strftime("%H:%M"),
+                              {"px": None, "vol": 0.0, "big": 0.0, "ret": 0.0, "tot": 0.0})
+    m["px"] = px
+    if st["px0"] is None:
+        st["px0"] = px
+    if gap and amt >= GAP_JUMP_AMT:                       # 空窗跳量:更新價、不計流量
+        return
+    m["tot"] += amt
+    m["vol"] += dv
+    sgn = 1 if side > 0 else (-1 if side < 0 else 0)
+    if amt >= BIG_AMT:
+        m["big"] += sgn * amt
+    elif dv == 1 and amt < RETAIL_CAP:
+        m["ret"] += sgn * amt
+
+
+def _book_of(sid, day):
+    """該日 sid 最後一筆五檔快照(今天用記憶體 ST.book,過去日讀檔尾)。"""
+    today = datetime.now(TZ).strftime("%Y-%m-%d")
+    if day == today and sid in ST.book:
+        return ST.book[sid]
+    bf = DATA_DIR / "cache" / "watchlist_books" / f"watchlist_books_{day}.jsonl"
+    if not bf.exists():
+        return None
+    last = None
+    with open(bf) as f:
+        for line in f:
+            if sid not in line:
+                continue
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if str(r.get("sym")) == sid:
+                last = r
+    return last
+
+
+def _svg_detail(sid, day, st, pc):
+    """分時價+量+累計大戶/散戶三面板 SVG。x 依實際時鐘(09:00–13:30)。"""
+    mins = st["mins"]
+    if not mins:
+        return "<div class='meta'>今日尚無成交(或該檔今日無資料)</div>"
+    order = sorted(mins.keys())
+
+    def _mod(hm):
+        h, mm = hm.split(":")
+        return int(h) * 60 + int(mm)
+    x0, x1 = 540, 810                          # 09:00–13:30
+    W, PADL, PADR = 940, 52, 12
+    plotW = W - PADL - PADR
+
+    def X(hm):
+        return PADL + max(0.0, min(1.0, (_mod(hm) - x0) / (x1 - x0))) * plotW
+    pxs = [mins[k]["px"] for k in order if mins[k]["px"]]
+    lo, hi = min(pxs), max(pxs)
+    refs = [pc] if pc else []
+    up = dn = None
+    if pc:
+        up, dn = _limits(pc)
+        # 只把在資料範圍附近的漲跌停線納入 y 軸,避免壓扁圖形
+        if up <= hi * 1.02:
+            refs.append(up)
+        if dn >= lo * 0.98:
+            refs.append(dn)
+    ylo, yhi = min([lo] + refs), max([hi] + refs)
+    if yhi - ylo < 1e-9:
+        yhi = ylo + 1
+    pad = (yhi - ylo) * 0.06
+    ylo -= pad
+    yhi += pad
+    HP = 240                                   # 價格面板高
+
+    def Y(v):
+        return 8 + (yhi - v) / (yhi - ylo) * HP
+    parts = [f"<svg viewBox='0 0 {W} 540' style='width:100%;max-width:{W}px;height:auto;background:#0d1117'>"]
+    # 參考線:昨收(灰)/漲停(紅)/跌停(綠)
+    for val, col, lab in [(pc, "#8b949e", "昨收" if day == datetime.now(TZ).strftime('%Y-%m-%d') else "基準"),
+                          (up, "#d1242f", "漲停"), (dn, "#1a7f37", "跌停")]:
+        if val and ylo <= val <= yhi:
+            y = Y(val)
+            parts.append(f"<line x1='{PADL}' y1='{y:.1f}' x2='{W-PADR}' y2='{y:.1f}' stroke='{col}' "
+                         f"stroke-dasharray='4 3' stroke-width='1' opacity='0.7'/>")
+            parts.append(f"<text x='{W-PADR}' y='{y-2:.1f}' fill='{col}' font-size='10' text-anchor='end'>{lab} {val:g}</text>")
+    # 分時價格線
+    pts = " ".join(f"{X(k):.1f},{Y(mins[k]['px']):.1f}" for k in order if mins[k]["px"])
+    parts.append(f"<polyline points='{pts}' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
+    # y 軸刻度(高/低)
+    for v in (yhi, (yhi + ylo) / 2, ylo):
+        parts.append(f"<text x='2' y='{Y(v)+3:.1f}' fill='#8b949e' font-size='10'>{v:.1f}</text>")
+    # 成交量 bars（面板 260–330）
+    VB, VH = 262, 66
+    vmax = max((mins[k]["vol"] for k in order), default=1) or 1
+    for k in order:
+        v = mins[k]["vol"]
+        if v <= 0:
+            continue
+        h = v / vmax * VH
+        parts.append(f"<rect x='{X(k)-1:.1f}' y='{VB+VH-h:.1f}' width='2' height='{h:.1f}' fill='#3b5170'/>")
+    parts.append(f"<text x='2' y='{VB+10:.1f}' fill='#8b949e' font-size='10'>量</text>")
+    # 累計大戶/散戶淨流（面板 345–520,0 線置中,單位萬）
+    FB, FH = 345, 170
+    fmid = FB + FH / 2
+    cb = cr = 0.0
+    cum = []
+    for k in order:
+        cb += mins[k]["big"]
+        cr += mins[k]["ret"]
+        cum.append((k, cb / 1e4, cr / 1e4))          # 萬
+    amax = max((max(abs(b), abs(r)) for _, b, r in cum), default=1) or 1
+
+    def FY(wan):
+        return fmid - (wan / amax) * (FH / 2 - 6)
+    parts.append(f"<line x1='{PADL}' y1='{fmid:.1f}' x2='{W-PADR}' y2='{fmid:.1f}' stroke='#30363d' stroke-width='1'/>")
+    bpts = " ".join(f"{X(k):.1f},{FY(b):.1f}" for k, b, _ in cum)
+    rpts = " ".join(f"{X(k):.1f},{FY(r):.1f}" for k, _, r in cum)
+    parts.append(f"<polyline points='{bpts}' fill='none' stroke='#ff7b72' stroke-width='2'/>")
+    parts.append(f"<polyline points='{rpts}' fill='none' stroke='#58a6ff' stroke-width='1.3' opacity='0.9'/>")
+    parts.append(f"<text x='2' y='{FB+10:.1f}' fill='#ff7b72' font-size='10'>累計大戶淨(萬)</text>")
+    parts.append(f"<text x='2' y='{FB+22:.1f}' fill='#58a6ff' font-size='10'>累計散戶淨</text>")
+    parts.append(f"<text x='{W-PADR}' y='{FB+10:.1f}' fill='#8b949e' font-size='10' text-anchor='end'>±{amax:.0f}萬</text>")
+    # x 軸時間刻度
+    for hm in ("09:00", "10:00", "11:00", "12:00", "13:00", "13:30"):
+        parts.append(f"<text x='{X(hm):.1f}' y='530' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _book_table(bk):
+    if not bk:
+        return "<div class='meta'>無五檔資料</div>"
+    bp, bq = bk.get("bp") or [], bk.get("bq") or []
+    ap, aq = bk.get("ap") or [], bk.get("aq") or []
+    rows = []
+    for i in range(5):                                   # 賣五~賣一 由上而下
+        j = 4 - i
+        ax = f"{ap[j]:g}" if j < len(ap) and ap[j] else "—"
+        aqx = f"{aq[j]:g}" if j < len(aq) and aq[j] else ""
+        rows.append(f"<tr><td class='dim'>賣{j+1}</td><td class='dn'>{ax}</td><td>{aqx}</td></tr>")
+    for i in range(5):                                   # 買一~買五
+        bx = f"{bp[i]:g}" if i < len(bp) and bp[i] else "—"
+        bqx = f"{bq[i]:g}" if i < len(bq) and bq[i] else ""
+        rows.append(f"<tr><td class='dim'>買{i+1}</td><td class='up'>{bx}</td><td>{bqx}</td></tr>")
+    tsline = f"<div class='meta'>五檔快照 {bk.get('t','')} · 委買/委賣量單位:張</div>"
+    return (tsline + "<table class='book'><thead><tr><th></th><th>價</th><th>量(張)</th></tr></thead>"
+            "<tbody>" + "".join(rows) + "</tbody></table>")
+
+
+def render_stock_frag(sid, day):
+    st = _stock_series(sid, day)
+    pc = PREV_CLOSE.get(sid) if day == datetime.now(TZ).strftime("%Y-%m-%d") else st.get("px0")
+    mins = st["mins"]
+    last = None
+    if mins:
+        last = mins[sorted(mins)[-1]]["px"]
+    big_day = sum(m["big"] for m in mins.values())
+    ret_day = sum(m["ret"] for m in mins.values())
+    tot_day = sum(m["tot"] for m in mins.values())
+    chg = ((last / pc - 1) * 100) if (last and pc) else None
+    _cls = _px_class(last, pc, chg) if (last and pc) else ""
+    if last:
+        hdr = (f"<div class='shead'><span class='{_cls}' style='font-size:22px;font-weight:700;padding:2px 6px'>"
+               f"{last:g}</span>")
+    else:
+        hdr = "<div class='shead'><span class='dim'>無成交</span>"
+    if chg is not None:
+        hdr += f"<span class='{'up' if chg>0 else ('dn' if chg<0 else '')}' style='margin-left:10px;font-size:15px'>{chg:+.2f}%</span>"
+    hdr += (f"<span class='dim' style='margin-left:16px'>全日大戶淨 "
+            f"<b class='{'up' if big_day>0 else 'dn'}'>{big_day/1e8:+.2f}億</b> · "
+            f"散戶淨 <b class='{'up' if ret_day>0 else 'dn'}'>{ret_day/1e8:+.2f}億</b> · "
+            f"成交 {tot_day/1e8:.1f}億</span></div>")
+    chart = _svg_detail(sid, day, st, pc)
+    book = _book_table(_book_of(sid, day))
+    return (hdr + "<div class='sgrid'><div class='schart'>" + chart + "</div>"
+            "<div class='sbook'>" + book + "</div></div>")
+
+
+def render_stock(sid, day):
+    name = NAMES.get(sid, sid)
+    cat = SUBCAT.get(sid) or CATS.get(sid, "")
+    amp = AMP20.get(sid)
+    today = datetime.now(TZ).strftime("%Y-%m-%d")
+    live = (day == today)
+    ampx = f" · 振幅{amp:.1f}%" if amp is not None else ""
+    frag = render_stock_frag(sid, day)
+    js = ""
+    if live:
+        js = (f"<script>async function u(){{try{{const r=await fetch('/stockfrag?sid={sid}&d={day}&_='+Date.now());"
+              f"document.getElementById('sd').innerHTML=await r.text();}}catch(e){{}}setTimeout(u,2000);}}setTimeout(u,2000);</script>")
+    return (f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{sid} {name}</title>{ARC_CSS}"
+            "<style>.shead{padding:6px 2px;border-bottom:1px solid #21262d;margin-bottom:8px}"
+            ".sgrid{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}"
+            ".schart{flex:1 1 620px;min-width:320px}.sbook{flex:0 0 220px}"
+            "table.book{border-collapse:collapse}table.book td,table.book th{padding:2px 12px;text-align:right}"
+            ".lup{background:#d1242f;color:#fff;font-weight:700}.ldn{background:#1a7f37;color:#fff;font-weight:700}"
+            ".nlup{color:#ff7b72;font-weight:700}.nldn{color:#3fb950;font-weight:700}"
+            ".cat{color:#8b949e;font-weight:400;font-size:11px}.warnv{color:#e3b341}"
+            "a.bk{color:#79c0ff;text-decoration:none}</style></head><body>"
+            f"<div style='margin-bottom:6px'><a class='bk' href='/'>← 返回總表</a>"
+            f"<span style='font-size:17px;font-weight:700;margin-left:12px'>{sid} {name}</span>"
+            f"<span class='cat' style='margin-left:6px'>{cat}{ampx}</span>"
+            f"{'' if live else ' · <span class=warnv>歷史回放 '+day+'</span>'}</div>"
+            f"<div id='sd'>{frag}</div>{js}</body></html>")
+
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         path, _, qs = self.path.partition("?")
@@ -1505,6 +1789,16 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path in ("/stock", "/stockfrag"):
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            sid = str(q.get("sid", ""))[:8]
+            day = str(q.get("d", ""))[:10] or datetime.now(TZ).strftime("%Y-%m-%d")
+            if sid not in NAMES:
+                body = "<div class='meta'>未知代碼</div>".encode("utf-8")
+            elif path == "/stockfrag":
+                body = render_stock_frag(sid, day).encode("utf-8")
+            else:
+                body = render_stock(sid, day).encode("utf-8")
         else:
             body = SHELL.encode("utf-8")
         self.send_response(200)
