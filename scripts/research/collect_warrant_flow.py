@@ -21,7 +21,7 @@ import os
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -130,7 +130,7 @@ def main():
 
     last_v = {}                                     # sym -> 上輪累計量(張)
     dead = set()
-    buckets = defaultdict(lambda: defaultdict(float))   # bucket_key -> (sid,side) -> amt
+    events = []                                     # (epoch秒, (sid,side), amt) 只留最近30分,算滾動5分/30分窗
     dayamt = defaultdict(float)                     # (sid,side) -> amt
     out = OUT_DIR / f"warrantflow_{today}.json"
     start = _now().strftime("%H:%M:%S")
@@ -144,7 +144,7 @@ def main():
             syms = [s for s in sym_info if s not in dead or sweep % DEAD_EVERY == 0]
         lastamt = defaultdict(float)
         now = _now()
-        bk = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0).strftime("%H:%M")
+        tnow = now.timestamp()
         batches = [syms[i:i + BATCH] for i in range(0, len(syms), BATCH)]
         if smoke:
             batches = batches[:smoke]
@@ -175,22 +175,23 @@ def main():
                 sid, side, _ = sym_info[sym]
                 amt = dv * px * 1000
                 key = (sid, "多" if side in BULL else "空")
-                buckets[bk][key] += amt
+                events.append((tnow, key, amt))
                 dayamt[key] += amt
                 lastamt[key] += amt
-        # 30 分窗 = 最近 6 個 5 分桶(含當前)
-        cutoff = (now - timedelta(minutes=30)).strftime("%H:%M")
-        w30 = defaultdict(float)
-        for k, d in buckets.items():
-            if k > cutoff:
-                for key, a in d.items():
-                    w30[key] += a
+        # 滾動窗:5分 / 30分(以每輪起始時戳計;只保留最近30分的事件)
+        events = [e for e in events if e[0] > tnow - 1800]
+        w5, w30 = defaultdict(float), defaultdict(float)
+        for ts, key, a in events:
+            w30[key] += a
+            if ts > tnow - 300:
+                w5[key] += a
         snap = {"_meta": {"start": start, "sweep": sweep, "t": now.strftime("%H:%M:%S"),
                           "polled": len(syms), "mapped": n_map, "sec": round(time.monotonic() - t0, 1)}}
         for sid in wmap:
             nc = sum(1 for w in wmap[sid] if w["side"] in BULL)
             np_ = sum(1 for w in wmap[sid] if w["side"] in BEAR)
             snap[sid] = {"call_day": dayamt[(sid, "多")], "put_day": dayamt[(sid, "空")],
+                         "call_5": w5[(sid, "多")], "put_5": w5[(sid, "空")],
                          "call_30": w30[(sid, "多")], "put_30": w30[(sid, "空")],
                          "call_last": lastamt[(sid, "多")], "put_last": lastamt[(sid, "空")],
                          "n_call": nc, "n_put": np_, "t": now.strftime("%H:%M:%S")}

@@ -666,6 +666,15 @@ def _limits(pc):
     return math.floor(up / _tick_sz(up)) * _tick_sz(up), math.ceil(dn / _tick_sz(dn)) * _tick_sz(dn)
 
 
+def _wrt_td(c, p, tip):
+    """權證多空一格:購額/售額(萬)+多方占比小字;紅=購>售、綠=售>購、灰=皆0。"""
+    tot = c + p
+    shr = f"{c / tot * 100:.0f}%" if tot > 0 else "—"
+    cls = "up" if c > p else ("dn" if p > c else "dim")
+    return (f"<td class='{cls}' style='font-size:11px' title='{tip} · 購{c/1e4:,.0f}萬/售{p/1e4:,.0f}萬 · 多方占比{shr}'>"
+            f"{c/1e4:,.0f}/{p/1e4:,.0f}<span class='dim' style='font-size:9px'> {shr}</span></td>")
+
+
 def _px_class(px, pc, chg):
     """價格著色類別:漲停紅底白字/跌停綠底白字/接近漲跌停粗字/一般漲跌。"""
     if px and pc:
@@ -1153,20 +1162,15 @@ def render():
         _signum = r["bull_n"] + r["bear_n"]
         _sigtd = (f"<td style='text-align:left{';font-weight:700' if _signum >= 3 else ''}'>"
                   f"{' · '.join(_sig)}</td>" if _sig else "<td class='dim'>—</td>")
-        # 權證多空:30分 購/售 成交額(萬)+ 多方占比;紅=購>售 綠=售>購。描述性、未回測。
+        # 權證多空 5分/30分兩欄:購/售 成交額(萬)+ 多方占比;紅=購>售 綠=售>購。描述性、未回測。
         _w = WRT.get(r["sid"]) if isinstance(WRT.get(r["sid"]), dict) else None
         if _w and (_w.get("n_call") or _w.get("n_put")):
-            _c30, _p30 = _w.get("call_30") or 0.0, _w.get("put_30") or 0.0
-            _cd, _pd = _w.get("call_day") or 0.0, _w.get("put_day") or 0.0
-            _tot30 = _c30 + _p30
-            _shr = f"{_c30 / _tot30 * 100:.0f}%" if _tot30 > 0 else "—"
-            _wcls = "up" if _c30 > _p30 else ("dn" if _p30 > _c30 else "dim")
-            _wrttd = (f"<td class='{_wcls}' style='font-size:11px' title='權證30分 購{_c30/1e4:,.0f}萬/售{_p30/1e4:,.0f}萬 · "
-                      f"多方占比{_shr} · 全日 購{_cd/1e4:,.0f}萬/售{_pd/1e4:,.0f}萬 · "
-                      f"對映 購{_w.get('n_call', 0)}檔/售{_w.get('n_put', 0)}檔 · 更新{_w.get('t', '')}'>"
-                      f"{_c30/1e4:,.0f}/{_p30/1e4:,.0f}<span class='dim' style='font-size:9px'> {_shr}</span></td>")
+            _wtip = (f"全日 購{(_w.get('call_day') or 0)/1e4:,.0f}萬/售{(_w.get('put_day') or 0)/1e4:,.0f}萬 · "
+                     f"對映 購{_w.get('n_call', 0)}檔/售{_w.get('n_put', 0)}檔 · 更新{_w.get('t', '')}")
+            _wrt5td = _wrt_td(_w.get("call_5") or 0.0, _w.get("put_5") or 0.0, "權證5分 " + _wtip)
+            _wrt30td = _wrt_td(_w.get("call_30") or 0.0, _w.get("put_30") or 0.0, "權證30分 " + _wtip)
         else:
-            _wrttd = "<td class='dim'>—</td>"
+            _wrt5td = _wrt30td = "<td class='dim'>—</td>"
         trs.append(
             f"<tr{_band}>"
             f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
@@ -1194,7 +1198,7 @@ def render():
                f"{r['rbuy5']:.1f}%</td>" if (r["rbuy5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell5']:.1f}%</td>" if (r["rsell5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + td(r["retday"], "yi", unm=r["unm"])
-            + _wrttd
+            + _wrt5td + _wrt30td
             + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
                if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
             + (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
@@ -1238,7 +1242,7 @@ def render():
 <th class="g30" title="30分散戶買方參與 − 前一段參與%,即散戶參與度的變化(跳升=散戶湧入)">散戶參與Δ<span class="sub">30分</span></th>
 <th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">bps</span></th><th class="g5" title="5分窗散戶淨額(萬)。散戶=1張且<500萬。">5分散戶<span class="sub">淨額·萬</span></th>
 <th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">5分散買<span class="sub">參與%</span></th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">5分散賣<span class="sub">參與%</span></th><th class="gd" title="全日累計散戶淨額(億)。散戶=1張且<500萬。">全日散戶<span class="sub">淨額·億</span></th>
-<th class="gd" title="權證多空:該標的底下全部權證,近30分 認購(購+牛)成交額 / 認售(售+熊)成交額(萬),小字=多方占比。紅=購>售(偏多)、綠=售>購(偏空)。滑鼠移上看全日與對映檔數。資料源:TWSE MIS 批次輪詢(≈2.5分/輪,不佔富邦額度),權證依名稱前綴對映到標的。⚠描述性、尚未回測,不是訊號">權證多空<span class="sub">30分 購/售·萬</span></th>
+<th class="g5" title="權證5分:該標的底下全部權證,近5分 認購(購+牛)成交額 / 認售(售+熊)成交額(萬),小字=多方占比。紅=購>售(偏多)、綠=售>購(偏空)。滾動窗以每輪掃描時戳計。滑鼠移上看全日與對映檔數。資料源 TWSE MIS 批次輪詢,不佔富邦額度。⚠描述性、尚未回測">權證5分<span class="sub">購/售·萬</span></th><th class="g30" title="權證30分:近30分 認購/認售 成交額(萬),小字=多方占比。紅=購>售、綠=售>購。主尺度。權證依名稱前綴對映到標的(每檔數十~數百檔)。⚠描述性、尚未回測,不是訊號">權證30分<span class="sub">購/售·萬</span></th>
 <th class="gd" title="當日大戶淨流÷成交金額=隔夜排序主鍵(IC+0.097/t7.1)">大戶佔比<span class="sub">÷成交%</span></th>
 <th class="gd" title="現價÷最近12個5分桶均價−1(=近1小時位置)。負=壓著(彈簧),隔夜挑股用;需≥8桶,13:20後最有意義。">壓縮<span class="sub">對1h均%</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
@@ -1457,7 +1461,7 @@ _HELP_GROUPS = [
         ("5分大戶", "最新完成5分窗的大戶淨額(單位萬)。最短窗、最即時。", "看『現在』誰在進出;易反覆,配30分看。"),
         ("30分大戶", "近30分滾動窗大戶淨額(單位萬)。主尺度。", "驗證格的大戶軸。與價格軸(30分bps)交叉:跌×大戶買=跌深接。"),
         ("全日大戶", "開盤一路累加至今的大戶淨額,收盤即全日最終值。單位=億元(NT$)。最重要。", "紅=整天淨買、綠=淨賣。÷成交金額=佔比%(隔夜排序主鍵)。三尺度並排看背離:短窗買∧全日仍賣=誘多/出貨。"),
-        ("權證多空", "該標的底下**全部**權證(上市+上櫃,依名稱前綴對映,每檔數十到數百檔)近30分的 認購(購+牛)成交額 / 認售(售+熊)成交額,單位萬;小字=多方占比。紅=購>售、綠=售>購。tooltip 有全日累計與對映檔數。資料源 TWSE MIS 批次輪詢,一輪≈2.5分,零量權證降頻;不佔富邦連線。", "⚠純描述性、**尚未回測**,不進訊號欄、不進OOS。權證成交主要是散戶投機+造市商,讀法偏『散戶情緒/槓桿資金往哪邊押』;與『散戶參與%』互補(那是現股1張,這是槓桿商品)。要當訊號用得先跑增量回測。"),
+        ("權證5分 / 權證30分", "該標的底下**全部**權證(上市+上櫃,依名稱前綴對映,每檔數十到數百檔)在近5分 / 近30分滾動窗的 認購(購+牛)成交額 / 認售(售+熊)成交額,單位萬;小字=多方占比。紅=購>售、綠=售>購。tooltip 有全日累計與對映檔數。資料源 TWSE MIS 批次輪詢(每輪掃描時戳計滾動窗),零量權證降頻;不佔富邦連線。", "⚠純描述性、**尚未回測**,不進訊號欄、不進OOS。權證成交主要是散戶投機+造市商,讀法偏『散戶情緒/槓桿資金往哪邊押』;5分看即時湧入、30分看主尺度,與『散戶參與%』互補(那是現股1張,這是槓桿商品)。要當訊號用得先跑增量回測。"),
         ("佔比%", "全日大戶淨額 ÷ 成交金額。", "隔夜今收→明開跳空最強預測(IC+0.097/t7.1)。中市值重殺看這欄不看絕對金額(旺矽絕對−5.8億進不了榜、佔比−11%才顯眼)。"),
         ("全日散戶", "全日散戶(1張∧＜500萬)淨額(億)。", "散戶大買常是出貨對手方;參與過高(黃)=毒藥側。"),
     ]),
