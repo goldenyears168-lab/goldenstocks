@@ -72,6 +72,8 @@ _STOP = False
 _LOCK = threading.Lock()
 _RAW = None
 _ACC: dict[str, dict] = {}
+# 盤前試撮快照(08:45~09:00):每檔最新試撮價/買一/賣一/撮合張。純加法,不進 _ACC 流量累積。
+_TRIAL: dict[str, dict] = {}
 _LAST: dict[str, float] = {}
 
 
@@ -106,7 +108,12 @@ def on_message(raw, THR):
     sid, px, vol = str(d.get("symbol", "")), d.get("price"), d.get("volume")
     if not sid or px is None or vol is None:
         return
-    if d.get("isTrial"):                      # 13:25-13:30 試撮不是成交
+    if d.get("isTrial"):                      # 試撮(盤前08:30~09:00、盤末13:25~13:30):不是成交
+        try:                                  # 純加法:記錄試撮快照供盤前試撮欄,不進 _ACC 流量
+            _TRIAL[sid] = {"px": float(px), "bid": d.get("bid"), "ask": d.get("ask"),
+                           "size": d.get("size"), "t": _now().strftime("%H:%M:%S")}
+        except Exception:  # noqa: BLE001
+            pass
         return
     px, vol = float(px), float(vol)
     acc = _ACC.setdefault(sid, {"vol": 0.0, "bb": 0.0, "bs": 0.0, "n": 0,
@@ -618,6 +625,14 @@ def main() -> int:
         hm = _now().strftime("%H:%M")
         if hm >= f"{END_HHMM[0]:02d}:{END_HHMM[1]:02d}":
             break
+        # 盤前試撮快照:08:45~09:00 每輪覆寫,09:00 後不再覆寫=凍結最終試撮(供 dashboard 盤前欄)
+        if hm <= "09:00" and _TRIAL:
+            try:
+                (OUT_DIR / f"preopen_{day}.json").write_text(
+                    json.dumps({"asof": _now().strftime("%H:%M:%S"), "trial": _TRIAL},
+                               ensure_ascii=False), encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                pass
         for t in ["09:00"] + EARLY_MAIL_AT + MAIL_AT:
             if hm >= t and t not in sent:
                 sent.add(t)
