@@ -81,4 +81,19 @@ if [[ -f "${WARRANT_PY}" ]]; then
   echo "warrant flow poller started (pid $!)"
 fi
 
+# 現股五檔 ws 收集(36 檔 books,一條連線)+ z 急殺回彈影子帳(讀 raw 逐筆,不顯示不送單)。
+# 兩者唯讀、各自錯誤處理、13:35 自退;供「被動掛單」回測與 20 日 OOS 累積(2026-09-23)。
+STOCK_BOOKS_PY="${ROOT}/scripts/research/collect_stock_books_ws.py"
+if [[ -f "${STOCK_BOOKS_PY}" ]]; then
+  ( PYTHONPATH="${ROOT}/src" "${PYTHON}" "${STOCK_BOOKS_PY}" \
+      >> "${STATE}/logs/intraday/stock_books_ws_$(date +%Y%m%d).log" 2>&1 ) &
+  echo "stock books ws started (pid $!)"
+fi
+ZSHADOW_PY="${ROOT}/scripts/research/zcrash_shadow.py"
+if [[ -f "${ZSHADOW_PY}" ]]; then
+  ( PYTHONPATH="${ROOT}/src" "${ROOT}/.venv/bin/python" "${ZSHADOW_PY}" \
+      >> "${STATE}/logs/intraday/zcrash_shadow_$(date +%Y%m%d).log" 2>&1 ) &
+  echo "zcrash shadow started (pid $!)"
+fi
+
 exec "${PYTHON}" "${WORKER_PY}" 2>&1 | "${PYTHON}" "${ROTATING_TEE}" "${LOG_PREFIX}"

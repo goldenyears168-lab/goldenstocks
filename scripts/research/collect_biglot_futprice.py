@@ -175,6 +175,15 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"resolve {sid}/{root} 失敗: {exc}", flush=True)
     print(f"解析近月 {len(sym_of)}/{len(uni)} 檔", flush=True)
+    # 台指期(TXF 近月)一併輪詢,寫在 json 的 "TXF" 鍵:供 zcrash_shadow 的台指 1 分逆勢風控
+    # (2026-09-22 停掉 futopt-books-collect 後已無 TXF 即時源)。儀表板按 sid 取值,不受此鍵影響。
+    try:
+        txf = resolve_front(fut, "TXF", today)
+        if txf:
+            sym_of["TXF"] = txf
+            print(f"TXF 近月 {txf}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"resolve TXF 失敗: {exc}", flush=True)
 
     # 背景 WS books 執行緒(獨立 session)
     once = "--once" in sys.argv
