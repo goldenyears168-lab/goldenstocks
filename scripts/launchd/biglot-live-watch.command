@@ -63,4 +63,13 @@ if [[ ! -x "${PYTHON}" ]]; then echo "✗ missing .venv-fubon python: ${PYTHON}"
 ROTATING_TEE="${ROOT}/scripts/launchd/rotating_tee.py"
 LOG_PREFIX="${STATE}/logs/intraday/biglot_live_watch"
 
+# 個股期貨即時價 poller(背景,與現股 collector 同一 job):寫 futprice_{date}.json 供
+# 儀表板「期貨」欄。REST 輪詢、唯讀、獨立錯誤處理;13:45 自退。失敗不影響現股收集。
+FUTPRICE_PY="${ROOT}/scripts/research/collect_biglot_futprice.py"
+if [[ -f "${FUTPRICE_PY}" ]]; then
+  ( PYTHONPATH="${ROOT}/src" "${PYTHON}" "${FUTPRICE_PY}" \
+      >> "${STATE}/logs/intraday/biglot_futprice_$(date +%Y%m%d).log" 2>&1 ) &
+  echo "futprice poller started (pid $!)"
+fi
+
 exec "${PYTHON}" "${WORKER_PY}" 2>&1 | "${PYTHON}" "${ROTATING_TEE}" "${LOG_PREFIX}"

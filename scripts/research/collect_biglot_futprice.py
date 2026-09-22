@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from stock_db import DATA_DIR  # noqa: E402
 from order.fubon_session import connect_fubon  # noqa: E402  (session helper,比照 biglot_live_watch)
 
