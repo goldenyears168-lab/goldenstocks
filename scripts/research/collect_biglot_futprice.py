@@ -33,8 +33,12 @@ CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 OUT_DIR = DATA_DIR.parent / "cache" / "biglot_live_watch"
 INTERVAL = int(os.environ.get("FUTPRICE_INTERVAL", "10"))
 END_HHMM = "13:45"
-#: 買賣簿超過這麼久沒更新就視為 ws 斷線,從輸出剔除(不顯示凍結價)。
+#: 整條 ws feed 超過這麼久沒收到「任何一檔」的推播,才視為斷線、剔除所有買賣簿。
+#: 不再用「單檔簿太久沒更新」判斷——漲停/跌停鎖死的簿本來就不動(南電/欣興漲停時
+#: IRFJ6/LYFJ6 簿幾秒才動一次),per-檔門檻會誤砍掉鎖死檔,造成期貨欄閃爍消失。
 STALE_SEC = float(os.environ.get("FUTBOOK_STALE_SEC", "30"))
+#: 由 ws 背景執行緒維護:最後一次收到「任何」books 推播的 monotonic 時間(feed 活著的心跳)。
+_WS_LAST = {"mono": 0.0}
 #: ws session 主動重連年齡上限(比照 tmf_channel / ccf 收集器的 3500s)。
 SESSION_MAX_AGE_SEC = 3500.0
 RECONNECT_SLEEP_SEC = 5.0
@@ -115,6 +119,7 @@ def _ws_loop(symbols):
                     "mono": time.monotonic(),
                     "t": _now().strftime("%H:%M:%S"),
                 }
+                _WS_LAST["mono"] = time.monotonic()   # feed 心跳(任何檔的推播都算)
 
             def on_disc(code, m):
                 disc["f"] = True
@@ -182,17 +187,27 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"futprice_{today}.json"
     while _now().strftime("%H:%M") < END_HHMM:
+        feed_alive = (time.monotonic() - _WS_LAST["mono"]) <= STALE_SEC
         snap = {}
         for sid, sym in sym_of.items():
             rec = {}
             try:
-                px = _last_px(fut.intraday.quote(symbol=sym))
+                q = fut.intraday.quote(symbol=sym)
+                px = _last_px(q)
                 if px:
                     rec = {"px": px, "sym": sym, "t": _now().strftime("%H:%M:%S")}
+                    fpc = q.get("previousClose") if isinstance(q, dict) else None
+                    if fpc:  # 期貨自身昨結,供儀表板算期貨漲跌停(紅底/綠底)
+                        try:
+                            rec["fpc"] = float(fpc)
+                        except (TypeError, ValueError):
+                            pass
             except Exception:  # noqa: BLE001
                 pass
+            # 只要整條 ws feed 還活著,就沿用該檔最後已知買賣簿(鎖死檔簿不動也保留);
+            # feed 整條斷線(逾 STALE_SEC 沒任何推播)才全部剔除,避免顯示凍結價。
             b = BOOK.get(sym)
-            if b and (time.monotonic() - b["mono"]) <= STALE_SEC:
+            if b and feed_alive:
                 rec.setdefault("sym", sym)
                 rec.update({"bid": b["bid"], "bidsz": b["bidsz"],
                             "ask": b["ask"], "asksz": b["asksz"], "bt": b["t"]})

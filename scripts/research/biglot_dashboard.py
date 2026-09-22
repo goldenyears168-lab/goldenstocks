@@ -1085,13 +1085,20 @@ def render():
             _bastxt = f" · 期貨成交{_futpx:g} 基差{(_futpx / r['px'] - 1) * 100:+.1f}%"
         _fbid = _fp.get("bid") if _fp else None
         _fask = _fp.get("ask") if _fp else None
-        if _fbid is not None:                           # 買一:紅(台股買方側,對齊『紅=買』慣例)
-            _fbtd = (f"<td class='up' title='期貨買一{_bastxt}'>{_fbid:g}"
+        _ffpc = _fp.get("fpc") if _fp else None         # 期貨自身昨結:算期貨漲跌停(紅底/綠底)
+        # 著色:有期貨昨結→用 _px_class(漲停紅底白字/跌停綠底白字/一般紅漲綠跌);
+        # 無昨結時退回買紅賣綠(維持買賣側可辨)。
+        _fbcls = (_px_class(_fbid, _ffpc, (_fbid / _ffpc - 1) * 100) if (_fbid and _ffpc)
+                  else ("up" if _fbid is not None else ""))
+        _facls = (_px_class(_fask, _ffpc, (_fask / _ffpc - 1) * 100) if (_fask and _ffpc)
+                  else ("dn" if _fask is not None else ""))
+        if _fbid is not None:
+            _fbtd = (f"<td class='{_fbcls}' title='期貨買一{_bastxt}'>{_fbid:g}"
                      f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}</span></td>")
         else:
             _fbtd = "<td class='dim'>—</td>"
-        if _fask is not None:                           # 賣一:綠
-            _fatd = (f"<td class='dn' title='期貨賣一{_bastxt}'>{_fask:g}"
+        if _fask is not None:
+            _fatd = (f"<td class='{_facls}' title='期貨賣一{_bastxt}'>{_fask:g}"
                      f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}</span></td>")
         else:
             _fatd = "<td class='dim'>—</td>"
@@ -1399,7 +1406,7 @@ _HELP_GROUPS = [
     ("價格", [
         ("價", "最新成交價。顏色＝對前一交易日收盤:紅漲綠跌(台股慣例,與美股相反)。", "一眼看今日相對昨收是紅是綠。"),
         ("對昨收", "現價−昨收 的金額與%,即專業看盤軟體的主報價。▲紅=漲、▼綠=跌。", "這才是一般人講的『今天漲跌多少』。金額看跳動幅度、%看比例。"),
-        ("期貨買 / 期貨賣", "個股期貨近月買一/賣一,拆成兩欄:委託價＋委託量(小字×N張)。期貨買=紅(買方掛價側)、期貨賣=綠(賣方掛價側)。滑鼠移上任一欄的 tooltip 顯示期貨成交價與基差%(期貨/現股−1,正=溢價)。資料源:個股期貨 ws books channel(五檔即時推播,取第一檔);獨立 ws session,斷線逾30秒該檔剔除不顯示凍結價。", "買一/賣一價差=期貨即時流動性(價差窄=好成交);委託量=該價位掛單張數(對照『幾分鐘成交量』判牆/真空,勿看買賣比)。基差可看盤前期現貨背離、盤中溢價/逆價差。"),
+        ("期貨買 / 期貨賣", "個股期貨近月買一/賣一,拆成兩欄:委託價＋委託量(小字×N張)。著色比照『價』欄以期貨自身昨結為基準:紅漲綠跌,期貨漲停=紅底白字、跌停=綠底白字(漲停時賣方常空→期貨賣顯示—、買一鎖在漲停價;跌停反之)。滑鼠移上 tooltip 顯示期貨成交價與基差%(期貨/現股−1,正=溢價)。資料源:個股期貨 ws books channel(五檔即時推播取第一檔);整條 ws 斷線逾30秒才剔除,鎖死檔簿不動仍保留(不再閃爍消失)。", "買一/賣一價差=期貨即時流動性(價差窄=好成交);委託量=該價位掛單張數(對照『幾分鐘成交量』判牆/真空,勿看買賣比)。期貨先漲停/跌停常領先現股,是搶帽方向的即時線索;基差看盤前期現貨背離與盤中溢價/逆價差。"),
         ("日內%", "現價/今日開盤−1。盤中相對『開盤』的走勢,與對昨收互補。", "跳空開高後拉回:對昨收仍紅、日內%卻綠=開高走低。兩欄一起讀分辨跳空 vs 盤中動能。"),
         ("盤前試撮(共用欄)", "不另立欄:08:45~09:00 無成交時,試撮價塞進『價』欄、試撮跳空%塞『對昨收』、試撮買一/賣一塞『買簿/賣簿』,皆帶『試』上標;09:00開盤後自動轉為成交資料。", "開盤前看試撮預判開盤;試撮價會被大單掛撤誘導,非確定開盤價。"),
         ("30分bps", "近30分窗價格報酬(1bps=0.01%)。主尺度。", "驗證格(噴後過熱/跌深接/勿追)判斷的價格軸。"),
