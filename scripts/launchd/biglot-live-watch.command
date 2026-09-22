@@ -72,4 +72,13 @@ if [[ -f "${FUTPRICE_PY}" ]]; then
   echo "futprice poller started (pid $!)"
 fi
 
+# 權證多空 poller(背景,同一 job):TWSE MIS 批次輪詢該宇宙底下全部權證,寫 warrantflow_{date}.json
+# 供儀表板「權證多空」欄。SDK 只在啟動時列權證清單一次即 logout,不佔盤中富邦額度;13:35 自退。
+WARRANT_PY="${ROOT}/scripts/research/collect_warrant_flow.py"
+if [[ -f "${WARRANT_PY}" ]]; then
+  ( PYTHONPATH="${ROOT}/src" "${PYTHON}" "${WARRANT_PY}" \
+      >> "${STATE}/logs/intraday/biglot_warrant_$(date +%Y%m%d).log" 2>&1 ) &
+  echo "warrant flow poller started (pid $!)"
+fi
+
 exec "${PYTHON}" "${WORKER_PY}" 2>&1 | "${PYTHON}" "${ROTATING_TEE}" "${LOG_PREFIX}"
