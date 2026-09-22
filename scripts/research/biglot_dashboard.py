@@ -132,6 +132,31 @@ def _load_hist():
 HIST_BIG, PREV_CLOSE, Y_PMLOW, UNI5 = _load_hist()
 
 
+def _load_prev_close_db():
+    """昨收改抓官方 stock_daily_bars 的收盤競價價(權威),取代 EOD 快照的『最後一筆 tick』。
+    快照 tick 收盤與官方收盤常差 1~2 檔,會讓漲跌%失真——南電 2026-09-21 快照 1055 vs
+    官方 1060,今日漲停 1165 就被算成 +10.4%(超過±10%上限,不可能)。用『<今日的最近交易日』
+    避免抓到今日盤中殘影;雙來源同價,取一筆即可。"""
+    out = {}
+    try:
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        for sid in NAMES:
+            row = conn.execute(
+                "SELECT close FROM stock_daily_bars WHERE stock_id=? AND trade_date<? "
+                "AND close IS NOT NULL ORDER BY trade_date DESC LIMIT 1",
+                (sid, today)).fetchone()
+            if row and row[0]:
+                out[sid] = float(row[0])
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+PREV_CLOSE.update(_load_prev_close_db())   # 官方收盤優先,快照昨收僅作 fallback
+
+
 def _load_daily_trend():
     """每檔日線趨勢(截至最近日收盤):站上5日均線? 5日動能%。
     回測(127日隔夜候選池):壓縮∧站上5日線 +93.8bps/t5.10 vs 跌破 +30/t1.65,
@@ -510,6 +535,7 @@ def ingest():
         _refresh_vol_risk_if_needed()
         global DAILY_TREND
         DAILY_TREND = _load_daily_trend()
+        PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
         with open(raw) as f:
