@@ -810,6 +810,7 @@ def render():
         weak_open = tongmai and (r["cmp1h"] is not None and r["cmp1h"] > 0)
         r["stamp"] = ("連3買" if streak_ok else "") + ("⚠同賣" if tongmai else "") + ("↓弱開" if weak_open else "")
         ypl = Y_PMLOW.get(sid)
+        r["pmlow"] = ypl                             # 昨日午後低=防線價(供破昨防線標註)
         r["pmlow_warn"] = (ypl is not None and last_price is not None and last_price <= ypl * 1.002)
         # VWAP 與委託簿
         tv = sum(v["vol"] for v in m.values())
@@ -917,7 +918,7 @@ def render():
         if "⚠同賣" in r["stamp"]:
             bear.append("同賣")        # 大戶賣∧散戶賣 隔夜-28bps/t-6
         if r.get("pmlow_warn"):
-            bear.append("破昨防線")      # 觸昨日午後低點 -125bps/73%貫穿
+            bear.append(f"破昨防線@{r['pmlow']:g}" if r.get("pmlow") else "破昨防線")  # 觸昨日午後低=主力尾盤防守位 -125bps/73%貫穿
         bull = []
         if (r.get("big30") is not None and r["big30"] >= 3e7
                 and (par30 is None or par30 < 45)):
@@ -1135,7 +1136,7 @@ def render():
                 + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
                 + "</td>")
                if r.get("dtrend") else "<td class='dim'>—</td>")
-            + f"<td class='flag'>{r['stamp']}{'🔻破昨防線' if r.get('pmlow_warn') else ''}</td>"
+            + f"<td class='flag'>{r['stamp']}{(f'🔻破昨防線@' + format(r['pmlow'], 'g')) if r.get('pmlow_warn') and r.get('pmlow') else ('🔻破昨防線' if r.get('pmlow_warn') else '')}</td>"
             + (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
             + td(r["lu_dist"], "pct2", False)
