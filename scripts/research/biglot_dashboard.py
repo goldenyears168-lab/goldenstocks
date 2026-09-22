@@ -1078,9 +1078,11 @@ def render():
         _band = " class='band'" if r["sid"] in grpend else ""     # 產業交界粗線
         _cc = r.get("chg_amt")                          # 對昨收漲跌:紅漲綠跌(台股慣例)
         _qcls = _px_class(r.get("px"), PREV_CLOSE.get(r["sid"]), r.get("chg_pct"))
+        # 對昨收:只用一般紅漲綠跌字色(不要紅底白字——紅底只留給「價」欄)
+        _ccls = "up" if (_cc is not None and _cc > 0) else ("dn" if (_cc is not None and _cc < 0) else "")
         if _cc is not None:
             _arrow = "▲" if _cc > 0 else ("▼" if _cc < 0 else "")
-            _chgtd = f"<td class='{_qcls}'>{_arrow}{abs(_cc):g} {r['chg_pct']:+.2f}%</td>"
+            _chgtd = f"<td class='{_ccls}'>{_arrow}{abs(_cc):g} {r['chg_pct']:+.2f}%</td>"
         else:
             _chgtd = "<td class='dim'>—</td>"
         # 個股期貨即時價 + 基差%(期貨/現股−1)
