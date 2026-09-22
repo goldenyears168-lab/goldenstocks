@@ -1097,8 +1097,7 @@ def render():
             _tpx = _tr["px"]
             _gap = ((_tpx / _tpc - 1) * 100) if _tpc else None
             _gtxt = (f"<span class='dim' style='font-size:9px'> {_gap:+.1f}%</span>" if _gap is not None else "")
-            _trtd = (f"<td class='{'up' if (_gap or 0) > 0 else ('dn' if (_gap or 0) < 0 else '')}'>"
-                     f"{_tpx:g}{_gtxt}</td>")
+            _trtd = f"<td class='{_px_class(_tpx, _tpc, _gap)}'>{_tpx:g}{_gtxt}</td>"
             _trbktd = (f"<td style='font-size:10px'>{_tr.get('bid')}/{_tr.get('ask')}"
                        f"<span class='dim'>×{_tr.get('size') or 0}</span></td>")
         else:
