@@ -130,6 +130,19 @@ def _side(px, bid, ask, last_px):
     return 1 if px > last_px else (-1 if px < last_px else 0)
 
 
+def _wrt_snap(w):
+    """權證多空快照(萬;bull/bear = 簽號多方/空方成交額;share = 多方占比)。無資料 → None。"""
+    if not w:
+        return None
+    g = lambda k: round(float(w.get(k) or 0.0) / 1e4, 1)  # noqa: E731
+    out = {k: g(k) for k in ("call_5", "put_5", "bull_5", "bear_5", "call_30", "put_30", "bull_30", "bear_30", "call_day", "put_day")}
+    for h in ("5", "30"):
+        tot = out[f"bull_{h}"] + out[f"bear_{h}"]
+        out[f"share_{h}"] = round(out[f"bull_{h}"] / tot, 3) if tot > 0 else None
+    out["t"] = w.get("t")
+    return out
+
+
 def book_sample(st, S):
     """S 時點的五檔指標(見檔頭);資料不足的欄位為 None。"""
     i1 = bisect.bisect_right(st.t, S)
@@ -317,6 +330,11 @@ def main():
         elif not tx_warned and _now().strftime("%H:%M") > "09:05":
             print(f"{_now():%H:%M:%S} ⚠ futprice 無 TXF 鍵,台指風控停用", flush=True)
             tx_warned = True
+        # ---- 權證多空快照來源(warrantflow_{date}.json,collect_warrant_ws 每 5s 覆寫;缺則 None)----
+        try:
+            wrt_all = json.loads((BD / f"warrantflow_{today}.json").read_text())
+        except Exception:  # noqa: BLE001
+            wrt_all = {}
         hm = _now().strftime("%H:%M")
         changed = False
         # ---- 觸發偵測(逐筆) ----
@@ -347,7 +365,8 @@ def main():
                 ev = {"sid": sid, "name": names[sid], "side": side, "T": datetime.fromtimestamp(T, TZ).strftime("%H:%M:%S"), "T_ts": T,
                       "trig_px": st.px[i], "move_bps": round(mv * 1e4, 1), "sigma_bps": round(sig * 1e4, 1), "z": round(abs(mv) / sig, 2),
                       "entry_t": None, "entry_px": None, "exit_t": None, "exit_px": None, "reason": None, "ret_bps": None,
-                      "hold_sec": None, "tx_z_exit": None, "scan_from": i + 1}
+                      "hold_sec": None, "tx_z_exit": None, "scan_from": i + 1,
+                      "wrt": _wrt_snap(wrt_all.get(sid))}   # 觸發時刻權證多空(條件變數,純記錄:誰在被殺/被拉)
                 events.append(ev)
                 opened.append(ev)
                 changed = True
@@ -384,7 +403,7 @@ def main():
                 if reason:
                     ev.update({"exit_t": datetime.fromtimestamp(tk, TZ).strftime("%H:%M:%S"), "exit_px": p, "reason": reason,
                                "ret_bps": round(-side * (p / pe - 1) * 1e4, 1), "hold_sec": int(el), "tx_z_exit": None if tx_z is None else round(tx_z, 2),
-                               "exit_ts": tk})
+                               "exit_ts": tk, "wrt_exit": _wrt_snap(wrt_all.get(ev["sid"]))})
                     ev.pop("scan_from", None)
                     # 出場前最後補齊五檔樣本(只記錄,不影響出場判定);exit_ts 保留供 book_update_event 截止
                     try:
