@@ -74,10 +74,17 @@ fi
 
 # 權證多空 poller(背景,同一 job):TWSE MIS 批次輪詢該宇宙底下全部權證,寫 warrantflow_{date}.json
 # 供儀表板「權證多空」欄。SDK 只在啟動時列權證清單一次即 logout,不佔盤中富邦額度;13:35 自退。
-# 2026-09-23 v2:改走富邦 REST 活躍子集(前一日成交額前 1000 檔,8 req/s),**不再碰 TWSE MIS**
-# (v1 全掃 7.5k 檔曾把 MIS IP 封鎖一小時、打掛生產 collect_watchlist_books)。RUN_WARRANT_FLOW=0 可停。
+# 權證多空:v3 = 富邦 ws 逐筆(前一日成交額前 600 檔、2 條連線×300,單線上限 300 實測)。
+# v2 REST(300 檔/2 req/s,受富邦持續配額限制)保留為備援,預設不啟動(RUN_WARRANT_FLOW=1 才開;
+# 兩者寫同一份 json,勿同時開)。v1 MIS 已廢(封鎖事故)。
+WARRANT_WS_PY="${ROOT}/scripts/research/collect_warrant_ws.py"
+if [[ "${RUN_WARRANT_WS:-1}" == "1" && -f "${WARRANT_WS_PY}" ]]; then
+  ( PYTHONPATH="${ROOT}/src" "${PYTHON}" "${WARRANT_WS_PY}" \
+      >> "${STATE}/logs/intraday/biglot_warrant_ws_$(date +%Y%m%d).log" 2>&1 ) &
+  echo "warrant ws collector started (pid $!)"
+fi
 WARRANT_PY="${ROOT}/scripts/research/collect_warrant_flow.py"
-if [[ "${RUN_WARRANT_FLOW:-1}" == "1" && -f "${WARRANT_PY}" ]]; then
+if [[ "${RUN_WARRANT_FLOW:-0}" == "1" && -f "${WARRANT_PY}" ]]; then
   ( PYTHONPATH="${ROOT}/src" "${PYTHON}" "${WARRANT_PY}" \
       >> "${STATE}/logs/intraday/biglot_warrant_$(date +%Y%m%d).log" 2>&1 ) &
   echo "warrant flow poller started (pid $!)"
