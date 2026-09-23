@@ -1314,7 +1314,7 @@ def render():
             + (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                f"style='font-size:11px'>{r['mkt_ctx']}</td>"
                if r.get("mkt_ctx") else "<td class='dim'>—</td>")
-            + td(r["big5_r"], "wan") + td(r["big30_r"], "wan") + td(r["bigday"], "yi")
+            + td(r["big5_r"], "wan") + td(r["big30_r"], "wan") + td(r["bigday"], "wan")
             + (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}'>{r['rbuy30_r']:.1f}%</td>"
                if (r.get("rbuy30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell30_r']:.1f}%</td>"
@@ -1324,7 +1324,7 @@ def render():
             + (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}'>"
                f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + (f"<td>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + td(r["retday"], "yi", unm=r["unm"])
+            + td(r["retday"], "wan", unm=r["unm"])
             + _wrt5td + _wrt30td
             + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
                if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
@@ -1354,7 +1354,7 @@ def render():
 {stale_bar}
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
-紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
+紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
@@ -1367,12 +1367,12 @@ def render():
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格。門檻:個股|30分|≥20bps∧市場≥5bps才標。">順逆大盤</th>
 <th class="gd" title="近5分大戶淨額(萬),每秒滾動(往回300秒)。大戶=單筆成交≥1000萬,按主動方向計正負。訊號標籤用完成5分桶版。">5分大戶<span class="sub">淨額·萬·滾動</span></th>
 <th class="g30" title="近30分大戶淨額(萬),每秒滾動(往回1800秒)。大戶=單筆≥1000萬。主尺度;訊號標籤用完成5分桶版。">30分大戶<span class="sub">淨額·萬·滾動</span></th>
-<th class="gd" title="全日累計大戶淨額(億)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶<span class="sub">淨額·億</span></th>
+<th class="gd" title="全日累計大戶淨額(萬)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶<span class="sub">淨額·萬</span></th>
 <th class="g30" title="30分散戶買方參與(毒藥側,≥5%標黃)。散戶=1張且<500萬。">30分散買<span class="sub">參與%</span></th>
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">30分散賣<span class="sub">參與%</span></th>
 <th class="g30" title="30分散戶買方參與 − 前一段參與%,即散戶參與度的變化(跳升=散戶湧入)">散戶參與Δ<span class="sub">30分</span></th>
 <th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">bps</span></th><th class="g5" title="5分窗散戶淨額(萬)。散戶=1張且<500萬。">5分散戶<span class="sub">淨額·萬</span></th>
-<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">5分散買<span class="sub">參與%</span></th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">5分散賣<span class="sub">參與%</span></th><th class="gd" title="全日累計散戶淨額(億)。散戶=1張且<500萬。">全日散戶<span class="sub">淨額·億</span></th>
+<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">5分散買<span class="sub">參與%</span></th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">5分散賣<span class="sub">參與%</span></th><th class="gd" title="全日累計散戶淨額(萬)。散戶=1張且<500萬。">全日散戶<span class="sub">淨額·萬</span></th>
 <th class="g5" title="權證5分:該標的底下全部權證近5分。數字=認購/認售 成交額(活動量,萬);小字=簽號後『多方占比』=(主動買認購+主動賣認售)÷全部主動額;顏色依簽號淨額:紅=多方>空方、綠=空方>多方。主動方以成交價對買一/賣一判定(一輪內近似)。資料源 TWSE MIS 批次輪詢,不佔富邦額度。⚠描述性、尚未回測">權證5分<span class="sub">購/售·萬 (多方%)</span></th><th class="g30" title="權證30分:近30分 認購/認售 成交額(萬),小字=簽號後多方占比,顏色依簽號淨額。主尺度。權證依名稱前綴對映到標的(每檔數十~數百檔)。⚠描述性、尚未回測,不是訊號;『權證做多』看小字與顏色,不看購/售活動量">權證30分<span class="sub">購/售·萬 (多方%)</span></th>
 <th class="gd" title="當日大戶淨流÷成交金額=隔夜排序主鍵(IC+0.097/t7.1)">大戶佔比<span class="sub">÷成交%</span></th>
 <th class="gd" title="現價÷最近12個5分桶均價−1(=近1小時位置)。負=壓著(彈簧),隔夜挑股用;需≥8桶,13:20後最有意義。">壓縮<span class="sub">對1h均%</span></th>
@@ -1588,10 +1588,10 @@ _HELP_GROUPS = [
         ("即時RS", "個股日內% − 宇宙日內%(百分點)。負(綠)=相對壓著(彈簧);＞+1(黃)=已彈開。", "隔夜挑股:壓著的彈簧優先。軟否決:日線弱∧已彈=毒格−31bps。"),
     ]),
     ("大戶三尺度(單筆≥1000萬;全系統核心)", [
-        ("大戶淨額三尺度", "大戶=單筆成交≥1000萬;每筆按主動方向(價≥賣一→買、≤買一→賣)計正負,累加成淨額。單位:5分/30分=萬、全日=億。", "三尺度=不同記憶長度的同一件事。"),
+        ("大戶淨額三尺度", "大戶=單筆成交≥1000萬;每筆按主動方向(價≥賣一→買、≤買一→賣)計正負,累加成淨額。單位一律=萬(5分/30分/全日)。5分/30分為每秒滾動窗;訊號標籤用完成5分桶版。", "三尺度=不同記憶長度的同一件事。"),
         ("5分大戶", "最新完成5分窗的大戶淨額(單位萬)。最短窗、最即時。", "看『現在』誰在進出;易反覆,配30分看。"),
         ("30分大戶", "近30分滾動窗大戶淨額(單位萬)。主尺度。", "驗證格的大戶軸。與價格軸(30分bps)交叉:跌×大戶買=跌深接。"),
-        ("全日大戶", "開盤一路累加至今的大戶淨額,收盤即全日最終值。單位=億元(NT$)。最重要。", "紅=整天淨買、綠=淨賣。÷成交金額=佔比%(隔夜排序主鍵)。三尺度並排看背離:短窗買∧全日仍賣=誘多/出貨。"),
+        ("全日大戶", "開盤一路累加至今的大戶淨額,收盤即全日最終值。單位=萬元(NT$),與 5分/30分 同尺。最重要。", "紅=整天淨買、綠=淨賣。÷成交金額=佔比%(隔夜排序主鍵)。三尺度並排看背離:短窗買∧全日仍賣=誘多/出貨。"),
         ("權證5分 / 權證30分", "該標的底下**全部**權證(上市+上櫃,依名稱前綴對映,每檔數十到數百檔)近5分 / 近30分滾動窗。數字=認購/認售**成交額(活動量)**,單位萬——這只代表多方商品/空方商品有多熱,**散戶倒認購也算認購成交**,不帶方向。小字=**簽號後多方占比**:主動方以成交價對買一/賣一判定(≥賣一=主動買、≤買一=主動賣、中間用tick rule),多方=主動買認購+主動賣認售、空方=主動賣認購+主動買認售,占比=多方÷(多方+空方);顏色依簽號淨額(紅=偏多、綠=偏空)。tooltip 列出活動量與簽號兩套數字、全日、對映檔數。資料源 TWSE MIS 批次輪詢,零量權證降頻;不佔富邦連線。", "⚠純描述性、**尚未回測**,不進訊號欄。**『權證做多』看小字占比與顏色,不看購/售活動量。**機制假說:散戶主動買認購→造市商賣認購並買現股避險(機械性買盤),可能與中實桶有交集;反面它也可能只是散戶追價放大鏡——方向待影子帳驗(『大戶5分≥3千萬∧散買%<5%』對照組每窗自動記錄權證欄位與5/30分/收盤結果)。"),
         ("佔比%", "全日大戶淨額 ÷ 成交金額。", "隔夜今收→明開跳空最強預測(IC+0.097/t7.1)。中市值重殺看這欄不看絕對金額(旺矽絕對−5.8億進不了榜、佔比−11%才顯眼)。"),
         ("全日散戶", "全日散戶(1張∧＜500萬)淨額(億)。", "散戶大買常是出貨對手方;參與過高(黃)=毒藥側。"),
@@ -1900,9 +1900,9 @@ def render_stock_frag(sid, day):
     if chg is not None:
         hdr += f"<span class='{'up' if chg>0 else ('dn' if chg<0 else '')}' style='margin-left:10px;font-size:15px'>{chg:+.2f}%</span>"
     hdr += (f"<span class='dim' style='margin-left:16px'>全日大戶淨 "
-            f"<b class='{'up' if big_day>0 else 'dn'}'>{big_day/1e8:+.2f}億</b> · "
-            f"散戶淨 <b class='{'up' if ret_day>0 else 'dn'}'>{ret_day/1e8:+.2f}億</b> · "
-            f"成交 {tot_day/1e8:.1f}億</span></div>")
+            f"<b class='{'up' if big_day>0 else 'dn'}'>{big_day/1e4:+,.0f}萬</b> · "
+            f"散戶淨 <b class='{'up' if ret_day>0 else 'dn'}'>{ret_day/1e4:+,.0f}萬</b> · "
+            f"成交 {tot_day/1e4:,.0f}萬</span></div>")
     chart = _svg_detail(sid, day, st, pc)
     book = _book_table(_book_of(sid, day))
     return (hdr + "<div class='sgrid'><div class='schart'>" + chart + "</div>"
