@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 import urllib.parse as urllib_parse
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -517,6 +517,9 @@ class S:
         self.day = defaultdict(lambda: {"big": 0., "ret": 0., "ret2": 0., "mid": 0.,
                                         "tot": 0., "big_pm": 0., "px0": None})
         self.book = {}                          # sid -> latest snapshot
+        # 每檔最近 ~60 分鐘逐筆 (ts, px, amt, sgn, is_big, is_retail):供 5分/30分 欄位**每秒滾動窗**
+        # (2026-09-23 jack 要求)。標籤/旗標仍依完成的 5 分桶判定(=127 日回測定義),不走這裡。
+        self.recent = defaultdict(deque)
 
 
 ST = S()
@@ -628,6 +631,12 @@ def _ingest_trade(line):
     if gap and amt >= GAP_JUMP_AMT:
         return
     row["tot"] += amt
+    _q = ST.recent[sid]
+    _sgn = 1 if side > 0 else (-1 if side < 0 else 0)
+    _q.append((t.timestamp(), px, amt, _sgn, amt >= BIG_AMT, (dv == 1 and amt < RETAIL_CAP)))
+    _cut = t.timestamp() - 3700
+    while _q and _q[0][0] < _cut:
+        _q.popleft()
     row["vol"] += dv
     row["pxvol"] += px * dv
     ds["tot"] += amt
@@ -645,6 +654,61 @@ def _ingest_trade(line):
     else:
         row["midn"] += sgn * amt
         ds["mid"] += sgn * amt
+
+
+def _rolling(sid, nts):
+    """每秒滾動窗:5分=(now−300s, now]、30分=(now−1800s, now]、參與Δ=本30分 − 前30分。
+    只供欄位顯示;標籤照舊用完成的 5 分桶。無逐筆時回 None。"""
+    out = {k: None for k in ("big5_r", "big30_r", "retn5_r", "rbuy5_r", "rsell5_r",
+                             "rbuy30_r", "rsell30_r", "dsh30_r", "w_ret_r", "r30_r")}
+    q = ST.recent.get(sid)
+    if not q:
+        return out
+    t5, t30, t60 = nts - 300, nts - 1800, nts - 3600
+    big5 = big30 = tot5 = tot30 = retn5 = ret2_5 = retn30 = ret2_30 = 0.0
+    tot_p = ret2_p = 0.0
+    px5 = px30 = None
+    for ts, px, amt, sgn, isbig, isret in q:
+        if ts <= t60:
+            continue
+        if ts <= t30:
+            px30 = px
+            tot_p += amt
+            if isret:
+                ret2_p += amt
+            continue
+        tot30 += amt
+        if isbig:
+            big30 += sgn * amt
+        if isret:
+            ret2_30 += amt
+            retn30 += sgn * amt
+        if ts <= t5:
+            px5 = px
+        else:
+            tot5 += amt
+            if isbig:
+                big5 += sgn * amt
+            if isret:
+                ret2_5 += amt
+                retn5 += sgn * amt
+    pxnow = q[-1][1]
+    if px5 is None:
+        px5 = px30
+    out["big5_r"], out["big30_r"], out["retn5_r"] = big5, big30, retn5
+    if tot5 > 0:
+        out["rbuy5_r"] = (ret2_5 + retn5) / 2 / tot5 * 100
+        out["rsell5_r"] = (ret2_5 - retn5) / 2 / tot5 * 100
+    if tot30 > 0:
+        out["rbuy30_r"] = (ret2_30 + retn30) / 2 / tot30 * 100
+        out["rsell30_r"] = (ret2_30 - retn30) / 2 / tot30 * 100
+        if tot_p > 0:
+            out["dsh30_r"] = ret2_30 / tot30 * 100 - ret2_p / tot_p * 100
+    if px5:
+        out["w_ret_r"] = (pxnow / px5 - 1) * 10000
+    if px30:
+        out["r30_r"] = (pxnow / px30 - 1) * 10000
+    return out
 
 
 def _fmt(v, unit=1e4, dec=0, plus=True):
@@ -848,6 +912,7 @@ def render():
             r["tot30"] = r["big30p"] = r["dsh30"] = None
         # 全日
         last_price = ST.last_px.get(sid)
+        r.update(_rolling(sid, time.time()))            # 5分/30分 欄位每秒滾動(顯示用)
         r["px"] = last_price
         _pc = PREV_CLOSE.get(sid)                       # 前一交易日收盤(專業看盤主報價基準)
         r["chg_amt"] = (last_price - _pc) if (_pc and last_price) else None
@@ -1245,20 +1310,20 @@ def render():
             + _fbtd + _fatd
             + _chgtd
             + td(r["day_ret"], "pct2")
-            + td(r["r30"], "bps")
+            + td(r["r30_r"], "bps")
             + (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                f"style='font-size:11px'>{r['mkt_ctx']}</td>"
                if r.get("mkt_ctx") else "<td class='dim'>—</td>")
-            + td(r["big5"], "wan") + td(r["big30"], "wan") + td(r["bigday"], "yi")
-            + (f"<td class='{'warnv' if (r['rbuy30'] or 0) >= 5 else ''}'>{r['rbuy30']:.1f}%</td>"
-               if (r.get("rbuy30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + (f"<td>{r['rsell30']:.1f}%</td>"
-               if (r.get("rsell30") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + td(r["dsh30"], "bps", True, r["unm"]).replace("bps", "")
-            + td(r["w_ret"], "bps") + td(r["retn5"], "wan", unm=r["unm"])
-            + (f"<td class='{'warnv' if (r['rbuy5'] or 0) >= 5 else ''}'>"
-               f"{r['rbuy5']:.1f}%</td>" if (r["rbuy5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + (f"<td>{r['rsell5']:.1f}%</td>" if (r["rsell5"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
+            + td(r["big5_r"], "wan") + td(r["big30_r"], "wan") + td(r["bigday"], "yi")
+            + (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}'>{r['rbuy30_r']:.1f}%</td>"
+               if (r.get("rbuy30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
+            + (f"<td>{r['rsell30_r']:.1f}%</td>"
+               if (r.get("rsell30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
+            + td(r["dsh30_r"], "bps", True, r["unm"]).replace("bps", "")
+            + td(r["w_ret_r"], "bps") + td(r["retn5_r"], "wan", unm=r["unm"])
+            + (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}'>"
+               f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
+            + (f"<td>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
             + td(r["retday"], "yi", unm=r["unm"])
             + _wrt5td + _wrt30td
             + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
@@ -1289,7 +1354,7 @@ def render():
 {stale_bar}
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
-紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · 簿深≥10分=牆(紫) <3分=真空(灰) ·
+紅=正/買 綠=負/賣 · 淨流單位:5分=萬、全日=億 · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
 <div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
@@ -1298,10 +1363,10 @@ def render():
 <th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
 <th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:45~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價">現價</th><th title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買<span class="sub">買一價×量</span></th><th title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th><th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:45~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th><th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
-<th class="g30" title="近30分鐘價格報酬,單位bps(1bps=0.01%)。主尺度。">近30分漲跌<span class="sub">bps</span></th>
+<th class="g30" title="近30分鐘價格報酬,單位bps(1bps=0.01%)。主尺度。每秒滾動(現價 vs 1800秒前成交價);訊號標籤用完成5分桶版">近30分漲跌<span class="sub">bps·滾動</span></th>
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格。門檻:個股|30分|≥20bps∧市場≥5bps才標。">順逆大盤</th>
-<th class="gd" title="5分大戶淨額(萬)=最短窗。大戶=單筆成交≥1000萬,按主動方向計正負。">5分大戶<span class="sub">淨額·萬</span></th>
-<th class="g30" title="30分大戶淨額(萬)=滾動窗。大戶=單筆≥1000萬。主尺度。">30分大戶<span class="sub">淨額·萬</span></th>
+<th class="gd" title="近5分大戶淨額(萬),每秒滾動(往回300秒)。大戶=單筆成交≥1000萬,按主動方向計正負。訊號標籤用完成5分桶版。">5分大戶<span class="sub">淨額·萬·滾動</span></th>
+<th class="g30" title="近30分大戶淨額(萬),每秒滾動(往回1800秒)。大戶=單筆≥1000萬。主尺度;訊號標籤用完成5分桶版。">30分大戶<span class="sub">淨額·萬·滾動</span></th>
 <th class="gd" title="全日累計大戶淨額(億)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶<span class="sub">淨額·億</span></th>
 <th class="g30" title="30分散戶買方參與(毒藥側,≥5%標黃)。散戶=1張且<500萬。">30分散買<span class="sub">參與%</span></th>
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">30分散賣<span class="sub">參與%</span></th>
