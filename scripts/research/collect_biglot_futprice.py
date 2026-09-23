@@ -226,6 +226,14 @@ def main():
             out.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
             print(f"寫檔失敗: {exc}", flush=True)
+        # TXF 10s 樣本落地(2026-09-23:futopt-books-collect 停掉後無 TXF 逐筆檔;籃子 vs 台指等分析需要時序)
+        if snap.get("TXF", {}).get("px"):
+            try:
+                with (OUT_DIR / f"txf_10s_{today}.jsonl").open("a", encoding="utf-8") as tf:
+                    tf.write(json.dumps({"t": snap["TXF"]["t"], "px": snap["TXF"]["px"],
+                                         "bid": snap["TXF"].get("bid"), "ask": snap["TXF"].get("ask")}) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
         nb = sum(1 for v in snap.values() if "bid" in v)
         print(f"{_now():%H:%M:%S} 期貨 px {len(snap)}/{len(sym_of)} · 買賣簿 {nb} 檔", flush=True)
         if once:

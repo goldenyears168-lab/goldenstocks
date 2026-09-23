@@ -215,7 +215,8 @@ def main():
                 el = tk - te
                 sp = ev["sigma_bps"] / 1e4 * pe
                 reason = None
-                if tx_z is not None and tx_z <= TX_Z_CUT:
+                # 與回測一致:台指逆勢風控自進場 30 秒後才開始檢查(2026-09-23 首日 9/10 筆在 0~4 秒被砍=實作偏差)
+                if tx_z is not None and tx_z <= TX_Z_CUT and el >= 30:
                     reason = "台指逆勢"
                 elif el >= MAXH:
                     reason = "到期"
