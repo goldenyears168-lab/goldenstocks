@@ -60,6 +60,13 @@ SUBCAT = {
     "2313": "PCB-HDI", "2308": "電源供應", "1802": "玻璃基板", "3231": "伺服器代工", "3481": "面板",
 }
 RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= RETAIL_CAP}
+# 公司描述/看盤標籤(純靜態;主表名稱 hover 提示 + 詳情頁區塊)。查無則不顯示。
+try:
+    from biglot_stock_info import INFO as STOCK_INFO, BLOCKS as STOCK_BLOCKS, tooltip as _stock_tip
+except Exception:  # noqa: BLE001 -- 資料檔缺失不影響儀表板
+    STOCK_INFO, STOCK_BLOCKS = {}, {}
+    def _stock_tip(_sid):
+        return ""
 # 高波動分數 = 20日日均振幅%((高−低)/收) ,來自 calib;越高越適合本系統的日內波段
 AMP20 = {r["sid"]: r.get("amp20") for r in _cal["universe"]}
 PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector preopen_*.json,08:45~09:00)
@@ -1313,6 +1320,7 @@ def render():
         trs.append(
             f"<tr{_band}>"
             f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
+            f"title=\"{html_mod.escape(_stock_tip(r['sid']), quote=True).replace(chr(10), '&#10;')}\" "
             f"style='color:inherit;text-decoration:none'>{name}</a>"
             f"<span class='cat'>{r['cat']}</span></td>"
             + vr_td(r)
@@ -1948,7 +1956,26 @@ def render_stock(sid, day):
             f"<span style='font-size:17px;font-weight:700;margin-left:12px'>{sid} {name}</span>"
             f"<span class='cat' style='margin-left:6px'>{cat}{ampx}</span>"
             f"{'' if live else ' · <span class=warnv>歷史回放 '+day+'</span>'}</div>"
+            f"{_stock_info_block(sid)}"
             f"<div id='sd'>{frag}</div>{js}</body></html>")
+
+
+def _stock_info_block(sid):
+    """詳情頁:公司描述 + 看盤標籤 + 族群看盤核心(靜態,不含訊號)。"""
+    rec = STOCK_INFO.get(sid)
+    if not rec:
+        return ""
+    block, desc, tags = rec
+    tag_html = "".join(f"<span class='tag'>{html_mod.escape(t)}</span>" for t in tags)
+    return ("<div class='sinfo'>"
+            f"<span class='blk'>{html_mod.escape(block)}</span>{tag_html}"
+            f"<div class='desc'>{html_mod.escape(desc)}</div>"
+            f"<div class='core'>族群看盤核心:{html_mod.escape(STOCK_BLOCKS.get(block, ''))}</div></div>"
+            "<style>.sinfo{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;"
+            "margin-bottom:8px;font-size:12px;line-height:1.6}"
+            ".sinfo .blk{color:#d2a8ff;font-weight:700;margin-right:8px}"
+            ".sinfo .tag{display:inline-block;background:#21262d;color:#79c0ff;border-radius:4px;padding:0 6px;margin-right:4px;font-size:11px}"
+            ".sinfo .desc{color:#e6edf3;margin-top:2px}.sinfo .core{color:#8b949e;font-size:11px}</style>")
 
 
 class H(BaseHTTPRequestHandler):
