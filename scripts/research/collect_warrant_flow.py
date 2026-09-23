@@ -33,8 +33,10 @@ CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 OUT_DIR = DATA_DIR.parent / "cache" / "biglot_live_watch"
 WD = DATA_DIR.parent / "scratch" / "warrant_daily"
 END_HHMM = "13:35"
-TOPN = int(os.environ.get("WARRANT_TOPN", "1000"))
-RATE = float(os.environ.get("WARRANT_RATE", "8"))        # req/s
+# 2026-09-23 實測:8 req/s(+期貨 poller 3.7)約 5 分後撞富邦 REST 持續配額(Rate limit exceeded);
+# 15 req/s 只是短 burst。安全預設 300 檔 / 2 req/s(一輪 ~150s)。更大覆蓋走 ws(見 fubon-warrant-feed-options-probe)。
+TOPN = int(os.environ.get("WARRANT_TOPN", "300"))
+RATE = float(os.environ.get("WARRANT_RATE", "2"))        # req/s
 DEAD_EVERY = 4
 ALIAS = {"2449": ["京元電"]}
 BULL = {"購", "牛"}
