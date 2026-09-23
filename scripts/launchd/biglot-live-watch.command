@@ -74,8 +74,11 @@ fi
 
 # 權證多空 poller(背景,同一 job):TWSE MIS 批次輪詢該宇宙底下全部權證,寫 warrantflow_{date}.json
 # 供儀表板「權證多空」欄。SDK 只在啟動時列權證清單一次即 logout,不佔盤中富邦額度;13:35 自退。
+# ⚠ 2026-09-23 事故:開盤對 MIS 掃 7,526 檔權證 → IP 被 TWSE MIS 封鎖(337 次 RemoteDisconnected),
+# 連帶打掛生產的 collect_watchlist_books(08:46 起斷檔)。重新設計(只掃活躍子集、降速、09:05 後暖機)
+# 前**停用**;要重啟請把 RUN_WARRANT_FLOW=1 放進 .env。
 WARRANT_PY="${ROOT}/scripts/research/collect_warrant_flow.py"
-if [[ -f "${WARRANT_PY}" ]]; then
+if [[ "${RUN_WARRANT_FLOW:-0}" == "1" && -f "${WARRANT_PY}" ]]; then
   ( PYTHONPATH="${ROOT}/src" "${PYTHON}" "${WARRANT_PY}" \
       >> "${STATE}/logs/intraday/biglot_warrant_$(date +%Y%m%d).log" 2>&1 ) &
   echo "warrant flow poller started (pid $!)"
