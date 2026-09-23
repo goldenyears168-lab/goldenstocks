@@ -22,7 +22,13 @@
   bid_cancel / ask_cancel  30 秒內 max(0, 掛單減少 − 被吃量) ÷ 期初掛單量(= 撤單、非成交消失的比例)
   bge  買深 ≥ 賣深 旗標
 另記 trough_t/trough_px(觸發後最低價時點)與 exh_t(首次 sell_pct≤0.40 ∧ bid_refill≥1 連兩樣本 ∧ bid_min≥5)。
-候選定義來自 09-23 n=20 案例解剖,≥20 日後才檢定;--smoke SID HH:MM:SS 可離線重放單一事件驗算。
+候選定義來自 09-23 n=20 案例解剖,≥20 日後才檢定;--smoke SID HH:MM:SS [short] 可離線重放單一事件驗算。
+
+2026-09-24 追加 **鏡像:急拉做空**(預先登記,回測 OOS +11/t2.5,對應同一記憶;與急殺做多各自獨立記分):
+- 事件:3 分報酬 ≥ +3σ 且創 3 分新高、絕對幅度 ≥0.8%;其餘(σ、冷卻、時窗)同急殺。ev["side"] = +1(做空)/ −1(做多)。
+- 出場:盤整 且持倉獲利(做空 = 價 < 進場價);到期 10 分;風控鏡像 = 台指 1 分報酬 ≥ +1σ_TX → 出。
+- 報酬 = −side × (出場/進場 − 1)。
+- 五檔指標鏡像:crest_t/crest_px(觸發後最高價)、exh_t = 首次 sell_pct ≥ 0.60(主動買 ≤40%)∧ ask_refill ≥1 連兩樣本 ∧ ask_min ≥5。
 """
 import bisect
 import json
@@ -42,7 +48,7 @@ CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 BD = DATA_DIR.parent / "cache" / "biglot_live_watch"
 Z, MINABS, LOOK, SAMP, COOL, DELAY = 3.0, 0.008, 180, 30, 300, 5
 FRAC, WIN, MINH, MAXH = 0.5, 60, 60, 600
-TX_Z_CUT = -1.0
+TX_Z_CUT = -1.0            # 急殺做多:台指 1 分 z ≤ −1 → 砍;急拉做空鏡像 = z ≥ +1
 START_HM, END_ENTRY_HM, END_HM = "09:15", "13:00", "13:35"
 LOOP_SEC = float(os.environ.get("ZSHADOW_LOOP", "2"))
 BOOKS_DIR = DATA_DIR.parent / "cache" / "stock_books_ws"
@@ -163,24 +169,28 @@ def book_update_event(ev, st, now_ts):
     ev.setdefault("book", [])
     nxt = ev.get("bk_next") or (ev["T_ts"] + BK_SAMP)
     end = ev.get("exit_ts") or now_ts - 2
+    side = ev.get("side", -1)                      # −1 急殺做多(找賣方竭盡) / +1 急拉做空(找買方竭盡)
+    ext_px, ext_t = ("trough_px", "trough_t") if side < 0 else ("crest_px", "crest_t")
+    rk, mk = ("bid_refill", "bid_min") if side < 0 else ("ask_refill", "ask_min")
     while nxt <= min(end, now_ts - 2):
         s = book_sample(st, nxt)
         ev["book"].append(s)
-        # 最低價(觸發後)
+        # 觸發後極值(做多記最低價、做空記最高價)
         i0 = bisect.bisect_left(st.t, ev["T_ts"])
         i1 = bisect.bisect_right(st.t, nxt)
         if i1 > i0:
-            k = min(range(i0, i1), key=lambda j: st.px[j])
-            if ev.get("trough_px") is None or st.px[k] < ev["trough_px"]:
-                ev["trough_px"], ev["trough_t"] = st.px[k], datetime.fromtimestamp(st.t[k], TZ).strftime("%H:%M:%S")
-        # 竭盡候選:sell_pct≤0.40 ∧ bid_refill≥1 連兩樣本 ∧ bid_min≥5
-        # 補單率 None = 30 秒內沒人打到買方(攻方停手),視為補單條件成立;sell_pct None(無成交)同理
+            k = (min if side < 0 else max)(range(i0, i1), key=lambda j: st.px[j])
+            if ev.get(ext_px) is None or (st.px[k] < ev[ext_px] if side < 0 else st.px[k] > ev[ext_px]):
+                ev[ext_px], ev[ext_t] = st.px[k], datetime.fromtimestamp(st.t[k], TZ).strftime("%H:%M:%S")
+        # 竭盡候選:攻方占比≤0.40 ∧ 守方補單率≥1 連兩樣本 ∧ 守方深度≥5 分
+        # (做多:攻方=主動賣、守方=買簿;做空:攻方=主動買 ⇔ sell_pct≥0.60、守方=賣簿)
+        # 補單率 None = 30 秒內沒人打到守方(攻方停手),視為成立;sell_pct None(無成交)同理
         if ev.get("exh_t") is None and len(ev["book"]) >= 2:
             a, b = ev["book"][-1], ev["book"][-2]
-            _ref = lambda s: s["bid_refill"] is None or s["bid_refill"] >= EXH_REFILL  # noqa: E731
-            if ((a["sell_pct"] is None or a["sell_pct"] <= EXH_SELL)
-                    and _ref(a) and _ref(b)
-                    and (a["bid_min"] or 0) >= EXH_MIN):
+            _ref = lambda s: s[rk] is None or s[rk] >= EXH_REFILL  # noqa: E731
+            atk_ok = (a["sell_pct"] is None or
+                      (a["sell_pct"] <= EXH_SELL if side < 0 else a["sell_pct"] >= 1 - EXH_SELL))
+            if atk_ok and _ref(a) and _ref(b) and (a[mk] or 0) >= EXH_MIN:
                 ev["exh_t"] = a["t"]
         nxt += BK_SAMP
         changed = True
@@ -321,23 +331,27 @@ def main():
                     continue
                 lo = bisect.bisect_left(st.t, T - LOOK)
                 w = st.px[lo:i + 1]
-                if st.px[i] > min(w):
+                # 急殺(創 3 分新低,做多 side=−1)/ 急拉(創 3 分新高,做空 side=+1)鏡像
+                if st.px[i] <= min(w):
+                    side, mv = -1, st.px[i] / max(w) - 1
+                elif st.px[i] >= max(w):
+                    side, mv = +1, st.px[i] / min(w) - 1
+                else:
                     continue
-                mv = st.px[i] / max(w) - 1
-                if mv > -MINABS:
+                if abs(mv) < MINABS:
                     continue
                 sig = st.sigma(T)
                 if sig is None or abs(mv) < Z * sig:
                     continue
                 st.last_ev = T
-                ev = {"sid": sid, "name": names[sid], "T": datetime.fromtimestamp(T, TZ).strftime("%H:%M:%S"), "T_ts": T,
+                ev = {"sid": sid, "name": names[sid], "side": side, "T": datetime.fromtimestamp(T, TZ).strftime("%H:%M:%S"), "T_ts": T,
                       "trig_px": st.px[i], "move_bps": round(mv * 1e4, 1), "sigma_bps": round(sig * 1e4, 1), "z": round(abs(mv) / sig, 2),
                       "entry_t": None, "entry_px": None, "exit_t": None, "exit_px": None, "reason": None, "ret_bps": None,
                       "hold_sec": None, "tx_z_exit": None, "scan_from": i + 1}
                 events.append(ev)
                 opened.append(ev)
                 changed = True
-                print(f"{_now():%H:%M:%S} 觸發 {sid}{names[sid]} {ev['T']} 幅{ev['move_bps']} z{ev['z']}", flush=True)
+                print(f"{_now():%H:%M:%S} 觸發 {sid}{names[sid]} {'急拉做空' if side > 0 else '急殺做多'} {ev['T']} 幅{ev['move_bps']} z{ev['z']}", flush=True)
             st.scan = len(st.t)
         # ---- 持倉管理 ----
         for ev in list(opened):
@@ -351,22 +365,25 @@ def main():
                         changed = True
                     continue
                 pe, te = ev["entry_px"], ev["entry_ts"]
+                side = ev.get("side", -1)
                 el = tk - te
                 sp = ev["sigma_bps"] / 1e4 * pe
                 reason = None
                 # 與回測一致:台指逆勢風控自進場 30 秒後才開始檢查(2026-09-23 首日 9/10 筆在 0~4 秒被砍=實作偏差)
-                if tx_z is not None and tx_z <= TX_Z_CUT and el >= 30:
+                # 做多:台指 z ≤ −1 逆勢;做空鏡像:台指 z ≥ +1
+                tx_adverse = tx_z is not None and ((tx_z <= TX_Z_CUT) if side < 0 else (tx_z >= -TX_Z_CUT))
+                if tx_adverse and el >= 30:
                     reason = "台指逆勢"
                 elif el >= MAXH:
                     reason = "到期"
                 elif el >= MINH:
                     w0 = bisect.bisect_left(st.t, tk - WIN)
                     seg = st.px[w0:k + 1]
-                    if max(seg) - min(seg) <= FRAC * sp and p > pe:
+                    if max(seg) - min(seg) <= FRAC * sp and (p > pe if side < 0 else p < pe):
                         reason = "盤整"
                 if reason:
                     ev.update({"exit_t": datetime.fromtimestamp(tk, TZ).strftime("%H:%M:%S"), "exit_px": p, "reason": reason,
-                               "ret_bps": round((p / pe - 1) * 1e4, 1), "hold_sec": int(el), "tx_z_exit": None if tx_z is None else round(tx_z, 2),
+                               "ret_bps": round(-side * (p / pe - 1) * 1e4, 1), "hold_sec": int(el), "tx_z_exit": None if tx_z is None else round(tx_z, 2),
                                "exit_ts": tk})
                     ev.pop("scan_from", None)
                     # 出場前最後補齊五檔樣本(只記錄,不影響出場判定);exit_ts 保留供 book_update_event 截止
@@ -394,7 +411,8 @@ def main():
                 st = stocks[ev["sid"]]
                 if ev["entry_px"] and st.px:
                     p = st.px[-1]
-                    ev.update({"exit_t": hm, "exit_px": p, "reason": "收盤", "ret_bps": round((p / ev["entry_px"] - 1) * 1e4, 1),
+                    ev.update({"exit_t": hm, "exit_px": p, "reason": "收盤",
+                               "ret_bps": round(-ev.get("side", -1) * (p / ev["entry_px"] - 1) * 1e4, 1),
                                "hold_sec": int(st.t[-1] - ev["entry_ts"]), "exit_ts": st.t[-1]})
                     ev.pop("bk_next", None)
                     opened.remove(ev)
@@ -404,9 +422,10 @@ def main():
             lastwrite = time.time()
         time.sleep(LOOP_SEC)
     write()
-    n = [e for e in events if e.get("ret_bps") is not None]
-    if n:
-        print(f"{_now():%H:%M:%S} 今日 {len(n)} 筆,均 {sum(e['ret_bps'] for e in n)/len(n):+.1f}bps", flush=True)
+    for side, lab in ((-1, "急殺做多"), (1, "急拉做空")):
+        n = [e for e in events if e.get("ret_bps") is not None and e.get("side", -1) == side]
+        if n:
+            print(f"{_now():%H:%M:%S} 今日 {lab} {len(n)} 筆,均 {sum(e['ret_bps'] for e in n)/len(n):+.1f}bps", flush=True)
     return 0
 
 
@@ -438,9 +457,11 @@ def smoke(sid, hms, day=None):
             ts = datetime.fromisoformat(b["ts"]).timestamp()
             if T - BK_SAMP - 5 <= ts <= T + MAXH + BK_SAMP:
                 st.add_book(ts, b.get("bids") or [], b.get("asks") or [])
-    ev = {"sid": sid, "T_ts": T, "exit_ts": T + MAXH}
+    side = 1 if "short" in sys.argv else -1
+    ev = {"sid": sid, "side": side, "T_ts": T, "exit_ts": T + MAXH}
     book_update_event(ev, st, T + MAXH + BK_SAMP)
-    print(f"{sid} 觸發 {hms} 觸發價 {st.px_at(T)} 最低 {ev.get('trough_px')}@{ev.get('trough_t')} 竭盡候選 {ev.get('exh_t')}")
+    ext = f"最低 {ev.get('trough_px')}@{ev.get('trough_t')}" if side < 0 else f"最高 {ev.get('crest_px')}@{ev.get('crest_t')}"
+    print(f"{sid} {'急拉做空' if side > 0 else '急殺做多'} 觸發 {hms} 觸發價 {st.px_at(T)} {ext} 竭盡候選 {ev.get('exh_t')}")
     print(f"{'t':9s}{'px':>8s}{'sell%':>7s}{'bidMin':>8s}{'askMin':>8s}{'bRef':>7s}{'aRef':>7s}{'bCan':>6s}{'aCan':>6s} bge")
     for s in ev["book"]:
         f = lambda x, w: (f"{x:{w}}" if x is not None else f"{'—':>{w}}")
@@ -450,5 +471,6 @@ def smoke(sid, hms, day=None):
 if __name__ == "__main__":
     if "--smoke" in sys.argv:
         i = sys.argv.index("--smoke")
-        sys.exit(smoke(sys.argv[i + 1], sys.argv[i + 2], sys.argv[i + 3] if len(sys.argv) > i + 3 else None))
+        _day = next((a for a in sys.argv[i + 3:] if len(a) == 10 and a[4] == "-"), None)
+        sys.exit(smoke(sys.argv[i + 1], sys.argv[i + 2], _day))
     sys.exit(main())
