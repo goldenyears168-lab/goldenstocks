@@ -667,17 +667,28 @@ def _rolling(sid, nts):
     """每秒滾動窗:5分=(now−300s, now]、30分=(now−1800s, now]、參與Δ=本30分 − 前30分。
     只供欄位顯示;標籤照舊用完成的 5 分桶。無逐筆時回 None。"""
     out = {k: None for k in ("big5_r", "big30_r", "retn5_r", "rbuy5_r", "rsell5_r",
-                             "rbuy30_r", "rsell30_r", "dsh30_r", "w_ret_r", "r30_r")}
+                             "rbuy30_r", "rsell30_r", "dsh30_r", "w_ret_r", "r30_r",
+                             "tot5_r", "tot30_r", "big5p_r", "bigp30_r", "share5_r", "dshare5_r")}
     q = ST.recent.get(sid)
     if not q:
         return out
     t5, t30, t60 = nts - 300, nts - 1800, nts - 3600
+    t10, t35 = nts - 600, nts - 2100          # 前一個 5 分窗 / 「本 5 分之前的 30 分」(純機構的逆大戶條件)
     big5 = big30 = tot5 = tot30 = retn5 = ret2_5 = retn30 = ret2_30 = 0.0
     tot_p = ret2_p = 0.0
+    big5p = tot5p = ret2_5p = bigp30 = 0.0
     px5 = px30 = None
     for ts, px, amt, sgn, isbig, isret in q:
         if ts <= t60:
             continue
+        if t35 < ts <= t5 and isbig:
+            bigp30 += sgn * amt
+        if t10 < ts <= t5:
+            tot5p += amt
+            if isbig:
+                big5p += sgn * amt
+            if isret:
+                ret2_5p += amt
         if ts <= t30:
             px30 = px
             tot_p += amt
@@ -703,9 +714,13 @@ def _rolling(sid, nts):
     if px5 is None:
         px5 = px30
     out["big5_r"], out["big30_r"], out["retn5_r"] = big5, big30, retn5
+    out["tot5_r"], out["tot30_r"], out["big5p_r"], out["bigp30_r"] = tot5, tot30, big5p, bigp30
     if tot5 > 0:
         out["rbuy5_r"] = (ret2_5 + retn5) / 2 / tot5 * 100
         out["rsell5_r"] = (ret2_5 - retn5) / 2 / tot5 * 100
+        out["share5_r"] = ret2_5 / tot5 * 100                      # 5 分散戶參與(買+賣)
+        if tot5p > 0:
+            out["dshare5_r"] = out["share5_r"] - ret2_5p / tot5p * 100   # 參與 Δ(本 5 分 − 前 5 分,pp)
     if tot30 > 0:
         out["rbuy30_r"] = (ret2_30 + retn30) / 2 / tot30 * 100
         out["rsell30_r"] = (ret2_30 - retn30) / 2 / tot30 * 100
@@ -835,6 +850,121 @@ def _px_class(px, pc, chg):
     return "up" if chg > 0 else ("dn" if chg < 0 else "")
 
 
+#: 即時標籤引擎(2026-09-24):盤中 7 格改吃每秒滾動窗、條件連續成立 TAG_HOLD_SEC 秒才「首次觸發」,
+#: 觸發後顯示經過分鐘、到基準率時距自動熄(30 分格 1800s / 5 分格 300s),滾動數反向加 ✗,13:00 後觸發加「尾」。
+#: 每次觸發落地 tag_events_{date}.jsonl 供事後對照 127 日(完成桶版)基準率。日級格(蓄勢隔夜/同賣/連3買/破昨/弱開)不變。
+TAG_HOLD_SEC = 10
+TAG_STATE: dict = {}          # (sid, tag) -> {"pend": ts|None, "t0": ts|None, "hz": sec, "dead": bool, "tail": bool, "txt": str}
+TAG_LOG_DAY = {"d": None}
+#: (tag, 方向, 時距秒, 條件(r)->bool|None, 反向失效(r)->bool, 顯示名(r)->str)
+def _par30(r):
+    return None if (r.get("rbuy30_r") is None or r["unm"]) else (r["rbuy30_r"] + r["rsell30_r"])
+def _b30n(r):
+    return (r["big30_r"] / r["tot30_r"] * 100) if (r.get("big30_r") is not None and r.get("tot30_r")) else None
+def _b5n(r):
+    return (r["big5_r"] / r["tot5_r"] * 100) if (r.get("big5_r") is not None and r.get("tot5_r")) else None
+TAG_DEFS = [
+    ("主力點火", "bull", 1800,
+     lambda r: (r.get("big30_r") or 0) >= 3e7 and (_par30(r) is None or _par30(r) < 45),
+     lambda r: (r.get("big30_r") or 0) < 0, lambda r: "主力點火"),
+    ("機構暗退", "bear", 1800,
+     lambda r: (r.get("big30_r") or 0) <= -3e7 and (_par30(r) is None or _par30(r) < 15),
+     lambda r: (r.get("big30_r") or 0) > 0, lambda r: "機構暗退"),
+    ("噴後過熱", "bear", 1800,
+     lambda r: (r.get("r30_r") or 0) >= 150,
+     lambda r: (r.get("r30_r") or 0) < 50, lambda r: "噴後過熱"),
+    ("勿追30", "bear", 1800,
+     lambda r: (r.get("r30_r") or 0) > 30 and (((r.get("dsh30_r") or 0) > 10 and not r["unm"]) or (_b30n(r) is not None and _b30n(r) < -5)),
+     lambda r: (r.get("r30_r") or 0) < 0, lambda r: "勿追"),
+    ("勿追5m", "bear", 300,
+     lambda r: (r.get("w_ret_r") or 0) > 20 and (((r.get("dshare5_r") or 0) > 5 and not r["unm"]) or (_b5n(r) is not None and _b5n(r) < -5)),
+     lambda r: (r.get("w_ret_r") or 0) < 0,
+     lambda r: "勿追5m(枯量)" if (r.get("rvol5_r") is not None and r["rvol5_r"] < 1.0) else "勿追5m"),
+    ("深接30", "bull", 1800,
+     lambda r: (r.get("r30_r") or 0) < -30 and _b30n(r) is not None and _b30n(r) > 5,
+     lambda r: (r.get("big30_r") or 0) < 0, lambda r: "深接"),
+    ("深接5m", "bull", 300,
+     lambda r: (r.get("w_ret_r") or 0) < -20 and _b5n(r) is not None and _b5n(r) > 5 and (r.get("rvol5_r") or 0) >= 0.5,
+     lambda r: (r.get("big5_r") or 0) < 0, lambda r: "深接5m"),
+    ("虛胖接刀", "ex", 300,
+     lambda r: (r.get("w_ret_r") or 0) < -20 and _b5n(r) is not None and _b5n(r) > 5 and r.get("rvol5_r") is not None and r["rvol5_r"] < 0.5,
+     lambda r: False, lambda r: "▫虛胖接刀(枯量)"),
+    ("散戶虛拉", "bear", 300,
+     lambda r: (r.get("w_ret_r") or 0) > 20 and (r.get("rbuy5_r") or 0) >= 5 and not r["unm"],
+     lambda r: (r.get("w_ret_r") or 0) < 0, lambda r: "散戶虛拉"),
+    ("純機構", "bull", 1800,
+     lambda r: (_b5n(r) or 0) > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not r["unm"]
+     and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0,
+     lambda r: (r.get("big5_r") or 0) < 0,
+     lambda r: "巨資機構" if (r.get("big5_r") or 0) >= 3e7 else "純機構"),
+]
+
+
+def _tag_engine(rows, nts, now):
+    """回傳 sid -> {"bull":[txt...], "bear":[...], "ex":[...]};同時維護 TAG_STATE 並落地觸發事件。"""
+    day = now.strftime("%Y-%m-%d")
+    statep = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"tag_state_{day}.json"
+    if TAG_LOG_DAY["d"] != day:
+        TAG_STATE.clear()
+        TAG_LOG_DAY["d"] = day
+        try:                                   # 同日重啟:接續既有觸發時刻(不然全部歸零變 0′)
+            for k, v in json.loads(statep.read_text()).items():
+                sid, tag = k.split("|", 1)
+                TAG_STATE[(sid, tag)] = {"pend": None, "t0": v["t0"], "hz": v["hz"], "dead": v["dead"], "tail": v["tail"], "txt": v["txt"]}
+        except Exception:  # noqa: BLE001
+            pass
+    logp = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"tag_events_{day}.jsonl"
+    fired = False
+    hm = now.strftime("%H:%M")
+    out = {}
+    for r in rows:
+        sid = r["sid"]
+        res = {"bull": [], "bear": [], "ex": []}
+        for tag, kind, hz, cond, dead, name in TAG_DEFS:
+            st = TAG_STATE.setdefault((sid, tag), {"pend": None, "t0": None, "hz": hz, "dead": False, "tail": False, "txt": ""})
+            try:
+                ok = bool(cond(r))
+            except Exception:  # noqa: BLE001
+                ok = False
+            active = st["t0"] is not None and nts - st["t0"] < hz
+            if ok:
+                if st["pend"] is None:
+                    st["pend"] = nts
+                if not active and nts - st["pend"] >= TAG_HOLD_SEC:
+                    st.update({"t0": nts, "dead": False, "tail": hm >= "13:00" and hz >= 1800, "txt": name(r)})
+                    active = True
+                    fired = True
+                    try:
+                        with logp.open("a", encoding="utf-8") as f:
+                            f.write(json.dumps({"t": now.strftime("%H:%M:%S"), "sid": sid, "name": r["name"], "tag": tag, "txt": st["txt"],
+                                                "px": r.get("px"), "big30_r": r.get("big30_r"), "big5_r": r.get("big5_r"),
+                                                "par30": _par30(r), "r30_r": r.get("r30_r"), "w_ret_r": r.get("w_ret_r"),
+                                                "rvol5_r": r.get("rvol5_r")}, ensure_ascii=False) + "\n")
+                    except Exception:  # noqa: BLE001
+                        pass
+            else:
+                st["pend"] = None
+            if active:
+                try:
+                    if dead(r):
+                        st["dead"] = True
+                except Exception:  # noqa: BLE001
+                    pass
+                age = int((nts - st["t0"]) // 60)
+                txt = f"{st['txt']}{age}′" + ("✗" if st["dead"] else "") + ("尾" if st["tail"] else "")
+                if age < 5 and not st["dead"]:
+                    txt = f"<b>{txt}</b>"                      # ≤5 分 = 最佳狀態(粗體)
+                res[kind].append(txt)
+        out[sid] = res
+    if fired:
+        try:
+            statep.write_text(json.dumps({f"{s}|{t}": {"t0": v["t0"], "hz": v["hz"], "dead": v["dead"], "tail": v["tail"], "txt": v["txt"]}
+                                          for (s, t), v in TAG_STATE.items() if v["t0"] is not None}, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 def render():
     now = datetime.now(TZ)
     all_bks = sorted({bk for m in ST.buckets.values() for bk in m})
@@ -931,7 +1061,9 @@ def render():
             r["tot30"] = r["big30p"] = r["dsh30"] = None
         # 全日
         last_price = ST.last_px.get(sid)
-        r.update(_rolling(sid, time.time()))            # 5分/30分 欄位每秒滾動(顯示用)
+        r.update(_rolling(sid, time.time()))            # 5分/30分 欄位每秒滾動(顯示用 + 即時標籤引擎)
+        r["rvol5_r"] = ((r["tot5_r"] / rb[bk_lbl]) if (r.get("tot5_r") and bk_lbl in rb and rb[bk_lbl] > 0)
+                        else None)                        # 滾動 5 分量能倍數(對同時段基準)
         r["px"] = last_price
         _pc = PREV_CLOSE.get(sid)                       # 前一交易日收盤(專業看盤主報價基準)
         r["chg_amt"] = (last_price - _pc) if (_pc and last_price) else None
@@ -1097,6 +1229,18 @@ def render():
             bull.append("連3買")       # 持續章(確認格)
         r["bear_n"], r["bear_txt"] = len(bear), "·".join(bear)
         r["bull_n"], r["bull_txt"] = len(bull), "·".join(bull)
+    # ---- 即時標籤引擎覆寫盤中 7 格(完成桶版仍算,供 flagbar/舊欄);日級格照舊接在後面 ----
+    try:
+        _tg = _tag_engine(rows, time.time(), now)
+        for r in rows:
+            g = _tg.get(r["sid"], {"bull": [], "bear": [], "ex": []})
+            bull = g["bull"] + [t for t in r["bull_txt"].split("·") if t in ("蓄勢隔夜", "連3買")]
+            bear = g["bear"] + [t for t in r["bear_txt"].split("·") if t == "同賣" or t.startswith("破昨防線")]
+            r["bull_n"], r["bull_txt"] = len(bull), "·".join(bull)
+            r["bear_n"], r["bear_txt"] = len(bear), "·".join(bear)
+            r["ex_txt"] = " ".join(g["ex"])
+    except Exception as _e:  # noqa: BLE001 -- 引擎失敗退回完成桶版標籤
+        print(f"[tag_engine] {_e!r}", file=sys.stderr)
 
     # 固定產業鏈排序(不隨大戶流跳位);查無者(理論上不會有)排最後、依big30
     rows.sort(key=lambda r: (SORT_INDEX.get(r["sid"], 999), -(r["big30"] or 0)))
@@ -1299,7 +1443,9 @@ def render():
         _ex = []
         if "↓弱開" in r["stamp"]:
             _ex.append("↓弱開")
-        if "虛胖接刀" in r["flag"]:
+        if r.get("ex_txt"):
+            _ex.append(r["ex_txt"])
+        elif "ex_txt" not in r and "虛胖接刀" in r["flag"]:
             _ex.append("▫虛胖接刀(枯量,超額≈0)")
         if _ex:
             _sig.append(f"<span class='warnv'>{' '.join(_ex)}</span>")
@@ -1398,7 +1544,7 @@ def render():
 <th class="gd" title="現價÷最近12個5分桶均價−1(=近1小時位置)。負=壓著(彈簧),隔夜挑股用;需≥8桶,13:20後最有意義。">壓縮<span class="sub">對1h均%</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th><th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
-<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記</span></th>
+<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
