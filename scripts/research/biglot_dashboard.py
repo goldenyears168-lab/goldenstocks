@@ -609,7 +609,7 @@ async function tick(){{
     const r=await fetch('/frag?_='+Date.now());
     const t=await r.text();
     const ae=document.activeElement;
-    if(ae && ae.classList && ae.classList.contains('ne')){{setTimeout(tick,R);return;}}   // 正在編輯個股筆記:暫停換表,離開格子後恢復
+    if(window.__noteEditing || (ae && ae.classList && ae.classList.contains('ne'))){{setTimeout(tick,R);return;}}   // 正在編輯個股筆記:暫停換表,離開格子後恢復
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
     const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
     const c=document.getElementById('closed');
@@ -628,13 +628,18 @@ tick();
 }})();
 // 個股筆記:事件委派到 #app(表格每秒重繪);input 去抖 1.5s / blur / Ctrl+S → POST /stocknote,回傳最後編輯時間寫進同格小字
 (function(){{
-  const app=document.getElementById('app'); const tm={{}};
+  const app=document.getElementById('app'); const tm={{}}; window.__noteEditing=false;
+  // 按下格子的瞬間就鎖住重繪(避免 fetch 回應剛好在 mousedown 與 focus 之間把格子換掉);focusout 解鎖
+  app.addEventListener('mousedown',e=>{{if(e.target.closest&&e.target.closest('td.snote')){{window.__noteEditing=true;}}}});
+  app.addEventListener('focusin',e=>{{if(e.target.closest&&e.target.closest('.ne')){{window.__noteEditing=true;}}}});
+  app.addEventListener('click',e=>{{const td=e.target.closest&&e.target.closest('td.snote'); if(!td) return;
+    const el=td.querySelector('.ne'); if(el && document.activeElement!==el){{el.focus();}}}});   // 點到格子空白處也進入編輯
   const save=async el=>{{const sid=el.dataset.sid; const nt=el.nextElementSibling;
     try{{const r=await fetch('/stocknote',{{method:'POST',body:JSON.stringify({{sid:sid,txt:el.innerText}})}});
       const j=await r.json(); if(nt){{nt.textContent=j.t;}}}}catch(e){{if(nt){{nt.textContent='儲存失敗';}}}}}};
   app.addEventListener('input',e=>{{const el=e.target.closest('.ne'); if(!el) return; const sid=el.dataset.sid;
     const nt=el.nextElementSibling; if(nt){{nt.textContent='編輯中…';}} clearTimeout(tm[sid]); tm[sid]=setTimeout(()=>save(el),1500);}});
-  app.addEventListener('focusout',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return; clearTimeout(tm[el.dataset.sid]); save(el);}});
+  app.addEventListener('focusout',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return; clearTimeout(tm[el.dataset.sid]); save(el); setTimeout(()=>{{window.__noteEditing=false;}},200);}});
   app.addEventListener('keydown',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return;
     if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm[el.dataset.sid]);save(el);}}
     if(e.key==='Escape'){{el.blur();}}}});
