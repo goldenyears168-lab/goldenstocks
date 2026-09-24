@@ -73,6 +73,17 @@ PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector pre
 FUT_PX: dict = {}    # 個股期貨即時 sid->{px,sym,t,bid,bidsz,ask,asksz,bt}(futprice_*.json;bid/ask 來自 ws books)
 WRT: dict = {}       # 權證多空 sid->{call_30,put_30,call_day,put_day,...}(warrantflow_*.json;MIS 輪詢,描述性未回測)
 TX_SER: dict = {"day": None, "t": [], "px": [], "off": 0}   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
+#: 頁首可編輯筆記(2026-09-24):存在資料目錄,不進 git;沒有檔案時顯示預設紀律條
+NOTES_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "dashboard_notes.html"
+DEFAULT_NOTES = "（自由書寫的筆記區：點這裡開始輸入；Enter 換行，停止輸入 1.5 秒自動儲存，Ctrl/Cmd+S 立即儲存。紀律條全文見 📖 欄位說明。）"
+
+
+def _load_notes():
+    try:
+        s = NOTES_PATH.read_text(encoding="utf-8")
+        return s if s.strip() else DEFAULT_NOTES
+    except Exception:  # noqa: BLE001
+        return DEFAULT_NOTES
 
 
 def _tx_panel(now):
@@ -544,24 +555,17 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .txp{{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6;position:relative}}
 #txtip{{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}}
 #txline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
+#notes{{outline:none;min-height:60px;padding:2px 4px;border-radius:4px}} #notes:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}}
+#nstat{{color:#8b949e;font-size:10px;text-align:right}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a></h3>
 <div style="display:flex;gap:14px;align-items:stretch">
-<details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📏 發言紀律（每日必看·避免盤中過度預測）</summary>
-<span class="ok">✓ 可預測（有 edge，只在收盤下判斷）</span>：隔夜今收→明開階梯（大戶佔比+壓縮，IC t7.1）·
-同賣勿抱（大戶賣∧散戶賣，隔夜−28/t−6）· 漲停排隊撐滿30分 · 處置20分盤大戶方向。<br>
-<span class="no">✗ 死區（已證偽/硬幣，盤中禁下方向判斷）</span>：盤中30分價格方向（單窗流量轉向勝率50.3%）·
-壓縮抄底（20格全滅）· 開盤累計預測09:30後（自相關假象）· 午後大戶 · streak · 跳檔動能。<br>
-<b>盤中30分方向規則（可喊·但要有根據）</b>：只在<b>已驗證格觸發</b>時喊方向，且必附
-數字＋基準＋t——⚠勿追（漲×參與跳升或大戶賣，下跌趨勢日−9.6bps/續跌，V轉日反向）·
-跌深大戶接（跌30分×大戶買×RVOL≥0.5，+11~14bps/t3.4）·噴後過熱（30分漲≥150後均−32）·
-主力點火（大戶買∧散戶<45%，健康首發，唯一正格）。<b>無驗證格觸發的窗＝棄權（不硬喊）</b>。
-自由心證的「我覺得會漲/跌」＝禁止；喊完要標這是條件式基準率、非確定。<br>
-<b>每日進步</b>：昨日自評=分析76/30分預測58（見 docs/biglot-broadcast-protocol.md）。
-教訓：主升段連喊「接近高點」早1小時＝等於錯；日線滤網連兩日做多側全空倉（OOS影子驗證中）。</details>
+<details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
+<div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
+<div id="nstat">未編輯</div></details>
 <div id="txp" class="txp"><div id="txbody"><span class="dim">台指近月 載入中…</span></div><div id="txtip"></div><div id="txline"></div></div>
 </div>
 <div id="app"><div class="meta">載入中…</div></div>
@@ -582,6 +586,14 @@ async function tick(){{
   setTimeout(tick,R);
 }}
 tick();
+// 頁首筆記:contenteditable,停止輸入 1.5 秒或 Ctrl/Cmd+S 自動 POST /notes 存檔
+(function(){{
+  const n=document.getElementById('notes'), st=document.getElementById('nstat'); if(!n) return; let tm=null;
+  const save=async()=>{{try{{const r=await fetch('/notes',{{method:'POST',body:n.innerHTML}});
+    st.textContent=(r.ok?'已儲存 ':'儲存失敗 ')+new Date().toTimeString().slice(0,8);}}catch(e){{st.textContent='儲存失敗';}}}};
+  n.addEventListener('input',()=>{{st.textContent='編輯中…';clearTimeout(tm);tm=setTimeout(save,1500);}});
+  n.addEventListener('keydown',e=>{{if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm);save();}}}});
+}})();
 // 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
 (function(){{
   const box=document.getElementById('txp'), tip=document.getElementById('txtip'), ln=document.getElementById('txline');
@@ -2267,7 +2279,7 @@ class H(BaseHTTPRequestHandler):
             else:
                 body = render_stock(sid, day).encode("utf-8")
         else:
-            body = SHELL.encode("utf-8")
+            body = SHELL.replace("{NOTES}", _load_notes()).encode("utf-8")   # SHELL 是 f-string,{{NOTES}} 已成 {NOTES}
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -2276,6 +2288,27 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        """/notes:儲存頁首可編輯筆記(本機/Tailscale 私網用,內容原樣存 HTML,不做權限控制)。"""
+        path, _, _ = self.path.partition("?")
+        if path == "/notes":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n).decode("utf-8", "replace")[:200_000]
+                NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
+                NOTES_PATH.write_text(raw, encoding="utf-8")
+                body = b"ok"
+                code = 200
+            except Exception as exc:  # noqa: BLE001
+                body, code = f"err {exc!r}".encode(), 500
+        else:
+            body, code = b"not found", 404
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
