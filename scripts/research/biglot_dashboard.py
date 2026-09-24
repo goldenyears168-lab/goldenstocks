@@ -1332,15 +1332,16 @@ def _score_rows(rows, mkt30, nts):
         r["sc_ov_items"], r["sc_in_items"] = ovi, sci
 
 
+SC_HIST: dict = {}   # sid -> deque[(ts, score)] 近 60 分盤中分歷史(V2.2「近60分極端分」用)
+
+
 def _score_v2(r, mkt30, hm=None):
-    """盤中分 V2.1(bps 制;2026-09-24 sweep 定案;即時狀態計分,時距標 60 分):
-    散戶側[散戶虛拉 −8(5分漲>50 −10) / 勿追5m −8]同源取一次 · 噴後過熱 30分 ≥150/200/300/400 → −10/−13/−18/−21,≥600 歸零(近漲停) ·
-    急跌 30分 ≤−200/−300/−400/−600 → +6/+14/+22/+46(暫) · 順漲 −3(僅 10–12 時) · 逆弱 ≤−20/−50/−100 → +6/+8/+11 ·
-    對開盤 >+3%/+5% → −9/−15 · 純機構/巨資 +25【暫定,10:00 後】· 權證/委託簿竭盡 ±5【暫定】。
-    時段:09:30 前不計分;09:30–10:00 全部 ×0.5。主力點火/深接/機構暗退/破昨/勿追30 = 0(四時段皆負)。"""
+    """盤中分 V2.2(bps;2026-09-24):V2.1 分層 + 四個鏡像項(逆強 −7、順跌 +3、對開盤<−3/−5% +8/+12暫、散戶接跌 +4)、
+    暫定項權重對半(純機構 +12、急跌≤−600 +23、權證/委託簿 ±3)、噴後過熱 400→600 線性淡出、|分| 上限 40。
+    時段:09:30 前不計;09:30–10:00 ×0.5。主力點火/深接/機構暗退/破昨/勿追30 = 0。"""
     hm = hm or datetime.now(TZ).strftime("%H:%M")
     if hm < "09:30":
-        return 0.0, [("09:30 前不計分(開盤價格發現,兩側皆負)", 0)]
+        return 0.0, [("09:30 前不計分", 0)]
     fac = 0.5 if hm < "10:00" else 1.0
     sc, it = 0.0, []
     def add(v, name):
@@ -1348,7 +1349,6 @@ def _score_v2(r, mkt30, hm=None):
         v = round(v * fac, 1); sc += v; it.append((name + (" ×0.5" if fac < 1 else ""), v))
     w5 = r.get("w_ret_r"); r30 = r.get("r30_r"); rb5 = r.get("rbuy5_r"); unm = r["unm"]
     b5n = _b5n(r)
-    # 散戶側同源取一次
     ret_items = []
     if w5 is not None and w5 > 20 and rb5 is not None and rb5 >= 5 and not unm:
         ret_items.append((-10 if w5 > 50 else -8, "散戶虛拉" + ("(5分>0.5%)" if w5 > 50 else "")))
@@ -1356,18 +1356,22 @@ def _score_v2(r, mkt30, hm=None):
         ret_items.append((-8, "勿追5m"))
     if ret_items:
         v, nm = min(ret_items); add(v, "散戶側[" + "·".join(n for _, n in ret_items) + "]取一次")
+    if w5 is not None and w5 < -20 and rb5 is not None and rb5 >= 5 and not unm:
+        add(4, "散戶接跌(鏡像)")
     if r30 is not None:
         if r30 >= 600:
             it.append(("噴後過熱≥600 近漲停,歸零", 0))
-        elif r30 >= 400: add(-21, "噴後過熱≥400")
+        elif r30 >= 400: add(-21 * (600 - r30) / 200, f"噴後過熱≥400 淡出({r30:.0f})")
         elif r30 >= 300: add(-18, "噴後過熱≥300")
         elif r30 >= 200: add(-13, "噴後過熱≥200")
         elif r30 >= 150: add(-10, "噴後過熱≥150")
-        if r30 <= -600: add(46, "急跌≤−600(暫)")
+        if r30 <= -600: add(23, "急跌≤−600(暫,對半)")
         elif r30 <= -400: add(22, "急跌≤−400")
         elif r30 <= -300: add(14, "急跌≤−300")
         elif r30 <= -200: add(6, "急跌≤−200")
         if mkt30 >= 5 and r30 >= 20 and "10:00" <= hm < "12:00": add(-3, "順漲")
+        if mkt30 <= -5 and r30 <= -20: add(3, "順跌(鏡像)")
+        if mkt30 <= -5 and r30 >= 20: add(-7, "逆強(鏡像)")
         if mkt30 >= 5:
             if r30 <= -100: add(11, "逆弱≤−100")
             elif r30 <= -50: add(8, "逆弱≤−50")
@@ -1376,21 +1380,32 @@ def _score_v2(r, mkt30, hm=None):
     if dr is not None:
         if dr > 5: add(-15, "對開盤>+5%")
         elif dr > 3: add(-9, "對開盤>+3%")
+        elif dr < -5: add(12, "對開盤<−5%(鏡像,暫)")
+        elif dr < -3: add(8, "對開盤<−3%(鏡像,暫)")
     if (hm >= "10:00" and b5n is not None and b5n > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not unm
             and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0):
-        add(25, "巨資機構(暫)" if (r.get("big5_r") or 0) >= 3e7 else "純機構(暫)")
+        add(12, "巨資機構(暫,對半)" if (r.get("big5_r") or 0) >= 3e7 else "純機構(暫,對半)")
     w = WRT.get(r["sid"]) if isinstance(WRT.get(r["sid"]), dict) else None
     if w:
         wt = (w.get("call_30") or 0) + (w.get("put_30") or 0); b_, s_ = (w.get("bull_30") or 0), (w.get("bear_30") or 0)
         sh = b_ / (b_ + s_) if (b_ + s_) > 0 else None; b30 = r.get("big30_r") or 0
         if wt >= 1e6 and sh is not None:
-            if sh >= 0.6 and (r30 or 0) > 0: add(-5, "權證偏多∧價漲(暫)")
-            elif sh >= 0.6 and b30 <= -3e7: add(-5, "權證偏多∧大戶賣(暫)")
-            elif sh <= 0.4 and b30 >= 3e7: add(5, "權證偏空∧大戶買(暫)")
+            if sh >= 0.6 and (r30 or 0) > 0: add(-3, "權證偏多∧價漲(暫)")
+            elif sh >= 0.6 and b30 <= -3e7: add(-3, "權證偏多∧大戶賣(暫)")
+            elif sh <= 0.4 and b30 >= 3e7: add(3, "權證偏空∧大戶買(暫)")
     sp = r.get("sell30s_r"); bm, am = r.get("bid_min"), r.get("ask_min")
     if sp is not None and w5 is not None:
-        if w5 <= -20 and sp <= 0.40 and (bm or 0) >= 3: add(5, "賣盤竭盡候選(暫)")
-        elif w5 >= 20 and sp >= 0.60 and (am or 0) >= 3: add(-5, "買盤竭盡候選(暫)")
+        if w5 <= -20 and sp <= 0.40 and (bm or 0) >= 3: add(3, "賣盤竭盡候選(暫)")
+        elif w5 >= 20 and sp >= 0.60 and (am or 0) >= 3: add(-3, "買盤竭盡候選(暫)")
+    if abs(sc) > 40:
+        it.append((f"上限 ±40(原 {sc:+.0f})", 0)); sc = 40.0 if sc > 0 else -40.0
+    # 近 60 分極端分
+    from collections import deque as _dq
+    hq = SC_HIST.setdefault(r["sid"], _dq()); nts = time.time(); hq.append((nts, round(sc, 1)))
+    while hq and hq[0][0] < nts - 3600:
+        hq.popleft()
+    pk = max(hq, key=lambda x: abs(x[1])) if hq else (nts, sc)
+    r["sc_v2_peak"] = (pk[1], datetime.fromtimestamp(pk[0], TZ).strftime("%H:%M"))
     return round(sc, 1), it
 
 
@@ -1403,7 +1418,7 @@ def _score_td(r):
         return "up" if v > 0 else ("dn" if v < 0 else "dim")
     v2 = r.get("sc_v2"); v2i = r.get("sc_v2_items") or []
     tip = ("隔夜分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_ov_items"]) or "無") +
-           " ‖ 盤中分V2.1(bps,60分時距,即時狀態):" + (" · ".join(f"{k} {v:+.1f}" for k, v in v2i) or "無") +
+           " ‖ 盤中分V2.2(bps,60分時距,即時狀態,上限±40):" + (" · ".join(f"{k} {v:+.1f}" for k, v in v2i) or "無") +
            " ‖ 盤中分V1(0/±1/±2,標籤×衰減,並列20日):" + (" · ".join(f"{k} {v:+.1f}" for k, v in r["sc_in_items"]) or "無") +
            f" = {sc:+.1f}" +
            (f" ‖ 高波動日 ×(今日振幅 {r['amp_ratio']:.1f}x 20日均:同分對應更大 bps,分數不變)" if (r.get("amp_ratio") or 0) >= 1.5 else "") +
@@ -1413,9 +1428,12 @@ def _score_td(r):
     big_ov = " style='font-size:13px'" if abs(ov) >= 3 else ""
     v2s = v2 if v2 is not None else 0.0
     big_sc = " style='font-size:13px'" if abs(v2s) >= 15 else ""
+    pk = r.get("sc_v2_peak")
+    pk_html = (f" <span class='dim' style='font-size:9px'>峰<span class='{_c(pk[0])}'>{pk[0]:+.0f}</span>@{pk[1]}</span>"
+               if (pk and abs(pk[0]) >= 15 and abs(pk[0]) > abs(v2s)) else "")
     return (f"<td style='text-align:left;white-space:nowrap;{bg}' title='{html_mod.escape(tip, quote=True)}'>"
             f"<span class='dim'>隔</span><b class='{_c(ov)}'{big_ov}>{ov:+d}</b> "
-            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span></td>")
+            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}</td>")
 
 
 def render():
@@ -2079,7 +2097,7 @@ def render():
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
 <th title="今日振幅倍數 = (今高−今低)/昨收% ÷ 20日均振幅%。波動聚集:預測明日振幅為真、方向 IC≈0(tick排列/籌碼分數兩線驗過)→ 不投票、不進淨分;≥1.5x 黃粗=高波動日:同樣淨分對應更大 bps、急殺z 砍尾閾值可放寬、部位縮小。">今日振幅<span class="sub">÷20日均 x</span></th>
 <th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
-<th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.1(未來60分,bps 制)分開計。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1。盤中V2.1(127日統一口徑 sweep 定案,即時狀態):散戶側[散戶虛拉 −8/−10(5分>0.5%)·勿追5m −8]取一次 · 噴後過熱 ≥150/200/300/400 −10/−13/−18/−21、≥600 歸零 · 急跌 ≤−200/−300/−400/−600 +6/+14/+22/+46(暫) · 順漲 −3(10–12時) · 逆弱 ≤−20/−50/−100 +6/+8/+11 · 對開盤 >3%/5% −9/−15 · 純機構 +25(暫,10:00後) · 權證/委託簿竭盡 ±5(暫)。時段:09:30 前不計、09:30–10:00 ×0.5。主力點火/深接/機構暗退/破昨/勿追30 = 0。效應隨持有期放大到 60 分(慢漂移),30 分固定出場會留錢。V1 保留在 tooltip。灰底=台指1分|z|≥1。">淨分<span class="sub">隔夜 · 盤中V2.1 60分 bps</span></th>
+<th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.2(未來60分,bps 制,|分|≤40)分開計。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1。盤中V2.2:散戶側[散戶虛拉 −8/−10·勿追5m −8]取一次 · 散戶接跌 +4 · 噴後過熱 ≥150/200/300 −10/−13/−18、400→600 線性淡出、≥600 歸零 · 急跌 ≤−200/−300/−400 +6/+14/+22、≤−600 +23(暫) · 順漲 −3(10–12時)/順跌 +3 · 逆強 −7/逆弱 ≤−20/−50/−100 +6/+8/+11 · 對開盤 >3%/5% −9/−15、<−3%/−5% +8/+12(暫) · 純機構 +12(暫,10:00後) · 權證/委託簿竭盡 ±3(暫)。時段:09:30 前不計、09:30–10:00 ×0.5。主力點火/深接/機構暗退/破昨/勿追30 = 0。「峰」= 近60分內最極端分數與時刻(效應持續60分)。127日:IC +0.08~+0.10、≥+20 箱 60分超額 +41/+51、≤−20 箱 −35/−25、延遲5分進場仍存活。">淨分<span class="sub">隔夜 · 盤中V2.2 bps · 峰</span></th>
 <th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
