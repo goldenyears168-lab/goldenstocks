@@ -109,7 +109,7 @@ def _tx_panel(now):
     zcls = " style='background:#6e1a1a;color:#ffb3b3;padding:0 4px'" if (z is not None and z <= -1) else (
         " style='background:#1a4d2e;color:#b3ffcc;padding:0 4px'" if (z is not None and z >= 1) else "")
     # SVG:固定 08:45→13:45 時間軸,y 含昨結
-    W, H, L, R = 330, 64, 4, 4
+    W, H, L, R = 676, 150, 4, 4
     t0 = datetime.fromisoformat(f"{TX_SER['day']}T08:45:00+08:00").timestamp(); t1 = t0 + 5 * 3600
     ys = px + ([fpc] if fpc else [])
     lo, hi = min(ys), max(ys)
@@ -127,14 +127,14 @@ def _tx_panel(now):
            + f"<text x='{L}' y='10' font-size='9' fill='#8b949e'>{hi:,.0f}</text>"
            + f"<text x='{L}' y='{H-1}' font-size='9' fill='#8b949e'>{lo:,.0f}</text></svg>")
     f = lambda v: f"{v:+.0f}" if v is not None else "—"  # noqa: E731
-    return (f"<div class='txp'><div><b>台指近月</b> <span class='{cls}' style='font-size:15px;font-weight:700'>{last:,.0f}</span> "
+    return (f"<div id='txsrc' hidden><div><b>台指近月</b> <span class='{cls}' style='font-size:20px;font-weight:700'>{last:,.0f}</span> "
             + (f"<span class='{cls}'>{last - fpc:+,.0f} ({chg:+.2f}%)</span>" if fpc else "")
             + f" <span class='dim'>{tx.get('t', '')}</span></div>"
             f"<div>5分 <b>{f(b5)}</b>bps · 30分 <b>{f(b30)}</b>bps · 1分z <b{zcls}>{z:+.1f}</b>"
             + (f" · 買{tx.get('bid')}/賣{tx.get('ask')}" if tx.get("bid") else "")
             + "<span class='dim' style='margin-left:6px'>校準:z≤−1 紅=急殺做多砍尾中 · z≥+1 綠=急拉做空砍尾中</span></div>"
             + svg + "</div>") if z is not None else (
-            f"<div class='txp'><div><b>台指近月</b> <span class='{cls}' style='font-size:15px;font-weight:700'>{last:,.0f}</span>"
+            f"<div id='txsrc' hidden><div><b>台指近月</b> <span class='{cls}' style='font-size:20px;font-weight:700'>{last:,.0f}</span>"
             + (f" <span class='{cls}'>{chg:+.2f}%</span>" if chg is not None else "") + "</div>" + svg + "</div>")
 # 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
 # 產業交界畫粗線(band)。查無的股票排最後。
@@ -536,13 +536,14 @@ th .sub{{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1p
 border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .disc b{{color:#e6edf3}} .disc .ok{{color:#3fb950}} .disc .no{{color:#ff7b72}}
 .disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
-.txp{{float:right;width:340px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px 8px;margin:0 0 6px 12px;font-size:11px;line-height:1.5}}
+.txp{{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a></h3>
-<details class="disc" open><summary>📏 發言紀律（每日必看·避免盤中過度預測）</summary>
+<div style="display:flex;gap:14px;align-items:stretch">
+<details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📏 發言紀律（每日必看·避免盤中過度預測）</summary>
 <span class="ok">✓ 可預測（有 edge，只在收盤下判斷）</span>：隔夜今收→明開階梯（大戶佔比+壓縮，IC t7.1）·
 同賣勿抱（大戶賣∧散戶賣，隔夜−28/t−6）· 漲停排隊撐滿30分 · 處置20分盤大戶方向。<br>
 <span class="no">✗ 死區（已證偽/硬幣，盤中禁下方向判斷）</span>：盤中30分價格方向（單窗流量轉向勝率50.3%）·
@@ -554,6 +555,8 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 自由心證的「我覺得會漲/跌」＝禁止；喊完要標這是條件式基準率、非確定。<br>
 <b>每日進步</b>：昨日自評=分析76/30分預測58（見 docs/biglot-broadcast-protocol.md）。
 教訓：主升段連喊「接近高點」早1小時＝等於錯；日線滤網連兩日做多側全空倉（OOS影子驗證中）。</details>
+<div id="txp" class="txp"><span class="dim">台指近月 載入中…</span></div>
+</div>
 <div id="app"><div class="meta">載入中…</div></div>
 <script>
 const R={REFRESH_SEC}000;
@@ -565,6 +568,7 @@ async function tick(){{
     const r=await fetch('/frag?_='+Date.now());
     const t=await r.text();
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
+    const s=document.getElementById('txsrc'); if(s){{document.getElementById('txp').innerHTML=s.innerHTML;}}   // 台指面板搬到右上
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1'){{setTimeout(tick,30000);return;}}   // 非交易時段改 30s 慢輪詢,08:30 自動恢復(不必重載頁面)
   }}catch(e){{}}
