@@ -592,7 +592,8 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
-<a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a></h3>
+<a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
+<a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ 36檔圖形總覽</a></h3>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
 <div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
@@ -1702,6 +1703,8 @@ def render():
     except Exception as _e:  # noqa: BLE001
         _txp = ""
         print(f"[tx_panel] {_e!r}", file=sys.stderr)
+    PAGE["rows"] = rows
+    PAGE["in_mkt"] = in_mkt
     PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
 {_txp}{stale_bar}
 <div class="meta" hidden>更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
@@ -2283,6 +2286,98 @@ HOVER_JS = """<script>(function(){
 #sline{position:fixed;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:8}</style>"""
 
 
+def _svg_mini(st, pc):
+    """6×6 總覽用迷你疊圖:價(黃)+昨收虛線 + 累計大戶(紅)/散戶(藍)右軸 + 量(底部面積)。無文字、座標取整、preserveAspectRatio=none 拉滿格子。"""
+    mins = st["mins"]
+    if not mins:
+        return "<svg viewBox='0 0 320 170' preserveAspectRatio='none' style='width:100%;height:100%'></svg>"
+    order = sorted(mins.keys())
+    W, H = 320, 170
+
+    def _mod(hm):
+        h, mm = hm.split(":")
+        return int(h) * 60 + int(mm)
+
+    def X(hm):
+        return max(0.0, min(1.0, (_mod(hm) - 540) / 270)) * W
+    pxs = [mins[k]["px"] for k in order if mins[k]["px"]]
+    lo, hi = min(pxs), max(pxs)
+    if pc:
+        lo, hi = min(lo, pc), max(hi, pc)
+    if hi - lo < 1e-9:
+        hi = lo + 1
+    pad = (hi - lo) * 0.06
+    lo -= pad; hi += pad
+
+    def Y(v):
+        return 4 + (hi - v) / (hi - lo) * (H - 8)
+    parts = [f"<svg viewBox='0 0 {W} {H}' preserveAspectRatio='none' style='width:100%;height:100%;display:block'>"]
+    vmax = max((mins[k]["vol"] for k in order), default=1) or 1
+    VH = H * 0.22
+    area = " ".join(f"{X(k):.0f},{H - mins[k]['vol'] / vmax * VH:.0f}" for k in order)
+    if area:
+        parts.append(f"<polygon points='{X(order[0]):.0f},{H} {area} {X(order[-1]):.0f},{H}' fill='#3b5170' opacity='0.45'/>")
+    cb = cr = 0.0; cum = []
+    for k in order:
+        cb += mins[k]["big"]; cr += mins[k]["ret"]; cum.append((k, cb, cr))
+    amax = max((max(abs(b), abs(r)) for _, b, r in cum), default=1) or 1
+    mid = H / 2
+    FY = lambda v: mid - (v / amax) * (H / 2 - 6)  # noqa: E731
+    parts.append(f"<line x1='0' y1='{mid:.0f}' x2='{W}' y2='{mid:.0f}' stroke='#30363d' stroke-width='1'/>")
+    parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{FY(b):.0f}" for k, b, _ in cum) + "' fill='none' stroke='#ff7b72' stroke-width='1.4' opacity='0.85'/>")
+    parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{FY(r):.0f}" for k, _, r in cum) + "' fill='none' stroke='#58a6ff' stroke-width='1.1' opacity='0.85'/>")
+    if pc:
+        parts.append(f"<line x1='0' y1='{Y(pc):.0f}' x2='{W}' y2='{Y(pc):.0f}' stroke='#8b949e' stroke-dasharray='3 3' opacity='0.7'/>")
+    parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{Y(mins[k]['px']):.0f}" for k in order if mins[k]["px"]) + "' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_grid_frag(sort="ind"):
+    """36 檔 6×6 迷你圖(每 5 秒由 loop 重建快取)。sort: ind=產業鏈固定 / big=全日大戶淨 / chg=漲跌%。"""
+    rows = PAGE.get("rows") or []
+    if not rows:
+        return "<div class='meta'>初始化中…</div>"
+    day = ST.date
+    key = {"big": lambda r: -(r.get("bigday") or 0), "chg": lambda r: -(r.get("chg_pct") or 0)}.get(sort, lambda r: SORT_INDEX.get(r["sid"], 999))
+    cells = []
+    for r in sorted(rows, key=key):
+        sid = r["sid"]
+        st = _stock_series(sid, day)
+        pc = PREV_CLOSE.get(sid)
+        px = r.get("px"); chg = r.get("chg_pct")
+        cls = "up" if (chg or 0) > 0 else ("dn" if (chg or 0) < 0 else "")
+        pxs = f"<span class='{cls}' style='font-weight:700'>{px:g}</span> <span class='{cls}'>{chg:+.2f}%</span>" if (px and chg is not None) else "<span class='dim'>—</span>"
+        bd = r.get("bigday") or 0; rd = r.get("retday") if r.get("retday") is not None else (st.get("ret_day") or 0)
+        tags = (r.get("bull_txt") or "").split("·")[:1] + (r.get("bear_txt") or "").split("·")[:1]
+        tagh = "".join(f"<span class='{'sigup' if i == 0 else 'sigdn'}'>{t}</span>" for i, t in enumerate(tags) if t)
+        cells.append(f"<a class='cell' href='/stock?sid={sid}' target='_blank'>"
+                     f"<div class='ch'><b>{sid} {NAMES.get(sid, '')}</b> {pxs} · 大戶 <span class='{'up' if bd > 0 else 'dn'}'>{bd/1e4:+,.0f}</span>"
+                     f" 散 <span class='{'up' if rd > 0 else 'dn'}'>{rd/1e4:+,.0f}</span> {tagh}</div>"
+                     f"<div class='cc'>{_svg_mini(st, pc)}</div></a>")
+    return f"<div class='meta' style='margin:0 0 2px'>更新 {datetime.now(TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 底=量 · 點格子開詳情</div>" + "".join(cells)
+
+
+GRID_SHELL = """<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>36檔圖形總覽</title><style>
+html,body{height:100%;margin:0;background:#0d1117;color:#c9d1d9;font:11px/1.35 -apple-system,'PingFang TC',monospace}
+#g{display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(6,1fr);gap:4px;height:calc(100vh - 22px);padding:2px 4px 4px}
+#g .meta{grid-column:1/-1;height:16px;color:#8b949e;font-size:10px}
+.cell{display:flex;flex-direction:column;min-height:0;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:2px 4px;color:inherit;text-decoration:none}
+.cell:hover{border-color:#58a6ff}
+.ch{flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cc{flex:1 1 auto;min-height:0}
+.up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.sigup{color:#ff7b72;margin-left:4px}.sigdn{color:#3fb950;margin-left:4px}
+</style></head><body>
+<div id='g'><div class='meta'>載入中…</div></div>
+<script>
+const Q=new URLSearchParams(location.search).get('sort')||'ind';
+async function t(){try{const r=await fetch('/gridfrag?sort='+Q+'&_='+Date.now());document.getElementById('g').innerHTML=await r.text();}catch(e){}
+  setTimeout(t,(document.getElementById('g').dataset.closed==='1')?30000:5000);}
+t();
+</script></body></html>"""
+
+
 def render_stock(sid, day):
     name = NAMES.get(sid, sid)
     cat = SUBCAT.get(sid) or CATS.get(sid, "")
@@ -2342,6 +2437,11 @@ class H(BaseHTTPRequestHandler):
             body = render_history().encode("utf-8")
         elif path == "/help":
             body = render_help().encode("utf-8")
+        elif path == "/grid":
+            body = GRID_SHELL.encode("utf-8")
+        elif path == "/gridfrag":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = (PAGE.get("grid") or render_grid_frag(str(q.get("sort", "ind"))[:4])).encode("utf-8") if str(q.get("sort", "ind")) == "ind" else render_grid_frag(str(q.get("sort", "ind"))[:4]).encode("utf-8")
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
@@ -2418,6 +2518,12 @@ def loop():
                 ingest()
                 render()
                 done_close = False
+                if time.time() - PAGE.get("grid_t", 0) >= 5:
+                    try:
+                        PAGE["grid"] = render_grid_frag("ind")
+                    except Exception as _ge:  # noqa: BLE001
+                        print(f"[grid] {_ge!r}", file=sys.stderr)
+                    PAGE["grid_t"] = time.time()
             elif not done_close:
                 ingest()          # 收盤後補跑一次定格,之後停工
                 render()
