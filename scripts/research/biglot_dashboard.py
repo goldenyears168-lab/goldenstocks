@@ -2123,7 +2123,7 @@ def _book_of(sid, day):
 
 
 def _svg_detail(sid, day, st, pc):
-    """分時價+量+累計大戶/散戶三面板 SVG。x 依實際時鐘(09:00–13:30)。"""
+    """單圖疊合(2026-09-24):分時價(左軸)+ 成交量(底部淡色柱)+ 累計大戶/散戶淨(右軸,0 線置中)。x 依實際時鐘 09:00–13:30。"""
     mins = st["mins"]
     if not mins:
         return "<div class='meta'>今日尚無成交(或該檔今日無資料)</div>"
@@ -2133,8 +2133,8 @@ def _svg_detail(sid, day, st, pc):
         h, mm = hm.split(":")
         return int(h) * 60 + int(mm)
     x0, x1 = 540, 810                          # 09:00–13:30
-    W, PADL, PADR = 940, 52, 12
-    plotW = W - PADL - PADR
+    W, H, PADL, PADR, PADT, PADB = 940, 380, 52, 64, 10, 22
+    plotW, plotH = W - PADL - PADR, H - PADT - PADB
 
     def X(hm):
         return PADL + max(0.0, min(1.0, (_mod(hm) - x0) / (x1 - x0))) * plotW
@@ -2144,7 +2144,6 @@ def _svg_detail(sid, day, st, pc):
     up = dn = None
     if pc:
         up, dn = _limits(pc)
-        # 只把在資料範圍附近的漲跌停線納入 y 軸,避免壓扁圖形
         if up <= hi * 1.02:
             refs.append(up)
         if dn >= lo * 0.98:
@@ -2155,11 +2154,38 @@ def _svg_detail(sid, day, st, pc):
     pad = (yhi - ylo) * 0.06
     ylo -= pad
     yhi += pad
-    HP = 240                                   # 價格面板高
 
-    def Y(v):
-        return 8 + (yhi - v) / (yhi - ylo) * HP
-    parts = [f"<svg viewBox='0 0 {W} 540' style='width:100%;max-width:{W}px;height:auto;background:#0d1117'>"]
+    def Y(v):                                  # 價格:左軸,佔整個繪圖區
+        return PADT + (yhi - v) / (yhi - ylo) * plotH
+    parts = [f"<svg viewBox='0 0 {W} {H}' style='width:100%;max-width:{W}px;height:auto;background:#0d1117'>"]
+    # 成交量:底部 22% 高度的淡色柱(先畫,壓在最底層)
+    VH = plotH * 0.22
+    vmax = max((mins[k]["vol"] for k in order), default=1) or 1
+    for k in order:
+        v = mins[k]["vol"]
+        if v <= 0:
+            continue
+        h = v / vmax * VH
+        parts.append(f"<rect x='{X(k)-1:.1f}' y='{PADT+plotH-h:.1f}' width='2' height='{h:.1f}' fill='#3b5170' opacity='0.55'/>")
+    # 累計大戶/散戶淨:右軸,0 線置中,單位萬
+    cb = cr = 0.0
+    cum = []
+    for k in order:
+        cb += mins[k]["big"]
+        cr += mins[k]["ret"]
+        cum.append((k, cb / 1e4, cr / 1e4))
+    amax = max((max(abs(b), abs(r)) for _, b, r in cum), default=1) or 1
+    fmid = PADT + plotH / 2
+
+    def FY(wan):
+        return fmid - (wan / amax) * (plotH / 2 - 8)
+    parts.append(f"<line x1='{PADL}' y1='{fmid:.1f}' x2='{W-PADR}' y2='{fmid:.1f}' stroke='#30363d' stroke-width='1'/>")
+    bpts = " ".join(f"{X(k):.1f},{FY(b):.1f}" for k, b, _ in cum)
+    rpts = " ".join(f"{X(k):.1f},{FY(r):.1f}" for k, _, r in cum)
+    parts.append(f"<polyline points='{bpts}' fill='none' stroke='#ff7b72' stroke-width='1.8' opacity='0.85'/>")
+    parts.append(f"<polyline points='{rpts}' fill='none' stroke='#58a6ff' stroke-width='1.3' opacity='0.85'/>")
+    for wan, y in ((amax, FY(amax)), (0, fmid), (-amax, FY(-amax))):
+        parts.append(f"<text x='{W-PADR+4}' y='{y+3:.1f}' fill='#8b949e' font-size='10'>{wan:+,.0f}萬</text>")
     # 參考線:昨收(灰)/漲停(紅)/跌停(綠)
     for val, col, lab in [(pc, "#8b949e", "昨收" if day == datetime.now(TZ).strftime('%Y-%m-%d') else "基準"),
                           (up, "#d1242f", "漲停"), (dn, "#1a7f37", "跌停")]:
@@ -2167,47 +2193,19 @@ def _svg_detail(sid, day, st, pc):
             y = Y(val)
             parts.append(f"<line x1='{PADL}' y1='{y:.1f}' x2='{W-PADR}' y2='{y:.1f}' stroke='{col}' "
                          f"stroke-dasharray='4 3' stroke-width='1' opacity='0.7'/>")
-            parts.append(f"<text x='{W-PADR}' y='{y-2:.1f}' fill='{col}' font-size='10' text-anchor='end'>{lab} {val:g}</text>")
-    # 分時價格線
+            parts.append(f"<text x='{W-PADR-2}' y='{y-2:.1f}' fill='{col}' font-size='10' text-anchor='end'>{lab} {val:g}</text>")
+    # 分時價格線(最上層)
     pts = " ".join(f"{X(k):.1f},{Y(mins[k]['px']):.1f}" for k in order if mins[k]["px"])
-    parts.append(f"<polyline points='{pts}' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
-    # y 軸刻度(高/低)
+    parts.append(f"<polyline points='{pts}' fill='none' stroke='#e3b341' stroke-width='1.6'/>")
     for v in (yhi, (yhi + ylo) / 2, ylo):
-        parts.append(f"<text x='2' y='{Y(v)+3:.1f}' fill='#8b949e' font-size='10'>{v:.1f}</text>")
-    # 成交量 bars（面板 260–330）
-    VB, VH = 262, 66
-    vmax = max((mins[k]["vol"] for k in order), default=1) or 1
-    for k in order:
-        v = mins[k]["vol"]
-        if v <= 0:
-            continue
-        h = v / vmax * VH
-        parts.append(f"<rect x='{X(k)-1:.1f}' y='{VB+VH-h:.1f}' width='2' height='{h:.1f}' fill='#3b5170'/>")
-    parts.append(f"<text x='2' y='{VB+10:.1f}' fill='#8b949e' font-size='10'>量</text>")
-    # 累計大戶/散戶淨流（面板 345–520,0 線置中,單位萬）
-    FB, FH = 345, 170
-    fmid = FB + FH / 2
-    cb = cr = 0.0
-    cum = []
-    for k in order:
-        cb += mins[k]["big"]
-        cr += mins[k]["ret"]
-        cum.append((k, cb / 1e4, cr / 1e4))          # 萬
-    amax = max((max(abs(b), abs(r)) for _, b, r in cum), default=1) or 1
-
-    def FY(wan):
-        return fmid - (wan / amax) * (FH / 2 - 6)
-    parts.append(f"<line x1='{PADL}' y1='{fmid:.1f}' x2='{W-PADR}' y2='{fmid:.1f}' stroke='#30363d' stroke-width='1'/>")
-    bpts = " ".join(f"{X(k):.1f},{FY(b):.1f}" for k, b, _ in cum)
-    rpts = " ".join(f"{X(k):.1f},{FY(r):.1f}" for k, _, r in cum)
-    parts.append(f"<polyline points='{bpts}' fill='none' stroke='#ff7b72' stroke-width='2'/>")
-    parts.append(f"<polyline points='{rpts}' fill='none' stroke='#58a6ff' stroke-width='1.3' opacity='0.9'/>")
-    parts.append(f"<text x='2' y='{FB+10:.1f}' fill='#ff7b72' font-size='10'>累計大戶淨(萬)</text>")
-    parts.append(f"<text x='2' y='{FB+22:.1f}' fill='#58a6ff' font-size='10'>累計散戶淨</text>")
-    parts.append(f"<text x='{W-PADR}' y='{FB+10:.1f}' fill='#8b949e' font-size='10' text-anchor='end'>±{amax:.0f}萬</text>")
-    # x 軸時間刻度
+        parts.append(f"<text x='2' y='{Y(v)+3:.1f}' fill='#e3b341' font-size='10'>{v:.1f}</text>")
+    # 圖例
+    parts.append(f"<text x='{PADL+4}' y='{PADT+11}' fill='#e3b341' font-size='10'>— 價(左軸)</text>")
+    parts.append(f"<text x='{PADL+80}' y='{PADT+11}' fill='#ff7b72' font-size='10'>— 累計大戶淨(右軸·萬)</text>")
+    parts.append(f"<text x='{PADL+210}' y='{PADT+11}' fill='#58a6ff' font-size='10'>— 累計散戶淨</text>")
+    parts.append(f"<text x='{PADL+300}' y='{PADT+11}' fill='#3b5170' font-size='10'>▮ 量(底部)</text>")
     for hm in ("09:00", "10:00", "11:00", "12:00", "13:00", "13:30"):
-        parts.append(f"<text x='{X(hm):.1f}' y='530' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
+        parts.append(f"<text x='{X(hm):.1f}' y='{H-6}' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
     parts.append("</svg>")
     return "".join(parts)
 
