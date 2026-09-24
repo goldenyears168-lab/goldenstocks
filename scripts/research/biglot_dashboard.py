@@ -2686,11 +2686,17 @@ t();
  tip.id='gtip'; ln.id='gline'; document.body.appendChild(tip); document.body.appendChild(ln);
  g.addEventListener('mousemove',e=>{const svg=e.target.closest&&e.target.closest('svg[data-pts]'); if(!svg){tip.style.display='none';ln.style.display='none';return;}
   if(!svg._pts){try{svg._pts=JSON.parse(svg.dataset.pts);}catch(_){return;}}
-  const r=svg.getBoundingClientRect(); const idx=(e.clientX-r.left)/r.width*270; let best=null,bd=1e9;
-  for(const p of svg._pts){const d=Math.abs(p[0]-idx); if(d<bd){bd=d;best=p;}}
-  if(!best||bd>3){tip.style.display='none';ln.style.display='none';return;}
-  const m=540+best[0], hm=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
-  tip.textContent=hm+'  '+best[1]; tip.style.display='block'; const lx=r.left+best[0]/270*r.width;
+  const r=svg.getBoundingClientRect(); let best=null,bd=1e9,hm='',val='',lx=0;
+  if(svg.closest('.txrow')){   // 頂部台指圖:data-pts=[x像素,y,時間,價](無 viewBox,x 直接是像素)
+    const x=e.clientX-r.left; for(const p of svg._pts){const d=Math.abs(p[0]-x); if(d<bd){bd=d;best=p;}}
+    if(!best||bd>12){tip.style.display='none';ln.style.display='none';return;}
+    hm=best[2]; val=best[3].toLocaleString(); lx=r.left+best[0];
+  }else{                      // 個股迷你圖:data-pts=[分鐘序,價],viewBox 320 寬
+    const idx=(e.clientX-r.left)/r.width*270; for(const p of svg._pts){const d=Math.abs(p[0]-idx); if(d<bd){bd=d;best=p;}}
+    if(!best||bd>3){tip.style.display='none';ln.style.display='none';return;}
+    const m=540+best[0]; hm=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); val=best[1]; lx=r.left+best[0]/270*r.width;
+  }
+  tip.textContent=hm+'  '+val; tip.style.display='block';
   ln.style.left=lx+'px'; ln.style.top=r.top+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
   tip.style.left=Math.min(lx+8,window.innerWidth-110)+'px'; tip.style.top=(r.top+4)+'px';});
  g.addEventListener('mouseleave',()=>{tip.style.display='none';ln.style.display='none';});})();
