@@ -168,12 +168,13 @@ def _tx_panel(now):
            + f"<text x='{L}' y='10' font-size='9' fill='#8b949e'>{hi:,.0f}</text>"
            + f"<text x='{L}' y='{H-1}' font-size='9' fill='#8b949e'>{lo:,.0f}</text></svg>")
     f = lambda v: f"{v:+.0f}" if v is not None else "—"  # noqa: E731
+    fp = lambda v: f"{v/100:+.2f}%" if v is not None else "—"  # noqa: E731  # 統一用 %
     # 左文右圖:文字欄固定 200px 直排,圖吃剩餘寬度、高度拉滿
     left = (f"<div><b>台指近月</b> <span class='dim'>{tx.get('t', '')}</span></div>"
             f"<div><span class='{cls}' style='font-size:24px;font-weight:700'>{last:,.0f}</span></div>"
             + (f"<div class='{cls}'>{last - fpc:+,.0f} ({chg:+.2f}%) <span class='dim'>對昨結 {fpc:,.0f}</span></div>" if fpc else ""))
     if z is not None:
-        left += (f"<div>5分 <b>{f(b5)}</b>bps · 30分 <b>{f(b30)}</b>bps</div>"
+        left += (f"<div>5分 <b>{fp(b5)}</b> · 30分 <b>{fp(b30)}</b></div>"
                  f"<div>1分z <b{zcls}>{z:+.1f}</b>"
                  + (f" · 買{tx.get('bid')}/賣{tx.get('ask')}" if tx.get("bid") else "") + "</div>"
                  "<div class='dim' style='font-size:10px;line-height:1.3'>校準:z≤−1 紅=急殺做多砍尾中<br>z≥+1 綠=急拉做空砍尾中</div>")
@@ -1653,7 +1654,7 @@ def render():
         c_amp = (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
                  f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
         c_open = td(r["day_ret"], "pct2")
-        c_r30 = td(r["r30_r"], "bps")
+        c_r30 = td(r["r30_r"] / 100 if r["r30_r"] is not None else None, "pct2")   # 統一用 %(2026-09-24)
         c_ctx = (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                  f"style='font-size:11px'>{r['mkt_ctx']}</td>" if r.get("mkt_ctx") else "<td class='dim'>—</td>")
         c_big5, c_big30, c_bigday = td(r["big5_r"], "wan"), td(r["big30_r"], "wan"), td(r["bigday"], "wan")
@@ -1662,7 +1663,7 @@ def render():
         c_rs30 = (f"<td>{r['rsell30_r']:.1f}%</td>"
                   if (r.get("rsell30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
         c_dsh = td(r["dsh30_r"], "bps", True, r["unm"]).replace("bps", "")
-        c_w5 = td(r["w_ret_r"], "bps")
+        c_w5 = td(r["w_ret_r"] / 100 if r["w_ret_r"] is not None else None, "pct2")
         c_ret5 = td(r["retn5_r"], "wan", unm=r["unm"])
         c_rb5 = (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}'>"
                  f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
@@ -1729,8 +1730,8 @@ def render():
 <th title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th>
 <th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:30~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th>
 <th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
-<th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">bps</span></th>
-<th class="g30" title="近30分鐘價格報酬,單位bps(1bps=0.01%)。主尺度。每秒滾動(現價 vs 1800秒前成交價);訊號標籤用完成5分桶版">近30分漲跌<span class="sub">bps·滾動</span></th>
+<th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">%</span></th>
+<th class="g30" title="近30分鐘價格報酬,單位bps(1bps=0.01%)。主尺度。每秒滾動(現價 vs 1800秒前成交價);訊號標籤用完成5分桶版">近30分漲跌<span class="sub">%·滾動</span></th>
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格。門檻:個股|30分|≥20bps∧市場≥5bps才標。">順逆大盤</th>
 <th class="gd" title="近5分大戶淨額(萬),每秒滾動(往回300秒)。大戶=單筆成交≥1000萬,按主動方向計正負。訊號標籤用完成5分桶版。">5分大戶<span class="sub">淨額·萬·滾動</span></th>
 <th class="g5" title="5分窗散戶淨額(萬)。散戶=1張且<500萬。">5分散戶<span class="sub">淨額·萬</span></th>
