@@ -109,7 +109,7 @@ def _tx_panel(now):
     zcls = " style='background:#6e1a1a;color:#ffb3b3;padding:0 4px'" if (z is not None and z <= -1) else (
         " style='background:#1a4d2e;color:#b3ffcc;padding:0 4px'" if (z is not None and z >= 1) else "")
     # SVG:固定 08:45→13:45 時間軸,y 含昨結
-    W, H, L, R = 470, 190, 4, 4          # 左文右圖後,圖高拉到 190
+    W, H, L, R = 470, 250, 4, 4          # 頂部說明文字隱藏後,圖高拉到 250
     t0 = datetime.fromisoformat(f"{TX_SER['day']}T08:45:00+08:00").timestamp(); t1 = t0 + 5 * 3600
     ys = px + ([fpc] if fpc else [])
     lo, hi = min(ys), max(ys)
@@ -118,9 +118,12 @@ def _tx_panel(now):
     def X(ts): return L + (ts - t0) / (t1 - t0) * (W - L - R)
     def Y(v): return 6 + (hi - v) / (hi - lo) * (H - 12)
     step = max(1, len(t) // 600)
-    pts = " ".join(f"{X(a):.1f},{Y(b):.1f}" for a, b in list(zip(t, px))[::step])
+    samp = list(zip(t, px))[::step]
+    pts = " ".join(f"{X(a):.1f},{Y(b):.1f}" for a, b in samp)
+    # hover 用:每個取樣點的 (x 像素, y 像素, 時間, 價),前端找最近 x 顯示
+    hov = json.dumps([[round(X(a), 1), round(Y(b), 1), datetime.fromtimestamp(a, TZ).strftime("%H:%M:%S"), b] for a, b in samp])
     col = "#ff7b72" if (chg or 0) > 0 else "#3fb950"
-    svg = (f"<svg width='{W}' height='{H}' style='display:block'>"
+    svg = (f"<svg width='{W}' height='{H}' style='display:block' data-pts='{hov}'>"
            + (f"<line x1='{L}' y1='{Y(fpc):.1f}' x2='{W-R}' y2='{Y(fpc):.1f}' stroke='#8b949e' stroke-dasharray='3,3'/>" if fpc else "")
            + f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.2'/>"
            + f"<circle cx='{X(nts):.1f}' cy='{Y(last):.1f}' r='2.5' fill='{col}'/>"
@@ -538,7 +541,9 @@ th .sub{{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1p
 border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .disc b{{color:#e6edf3}} .disc .ok{{color:#3fb950}} .disc .no{{color:#ff7b72}}
 .disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
-.txp{{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6}}
+.txp{{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6;position:relative}}
+#txtip{{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}}
+#txline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
@@ -557,7 +562,7 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 自由心證的「我覺得會漲/跌」＝禁止；喊完要標這是條件式基準率、非確定。<br>
 <b>每日進步</b>：昨日自評=分析76/30分預測58（見 docs/biglot-broadcast-protocol.md）。
 教訓：主升段連喊「接近高點」早1小時＝等於錯；日線滤網連兩日做多側全空倉（OOS影子驗證中）。</details>
-<div id="txp" class="txp"><span class="dim">台指近月 載入中…</span></div>
+<div id="txp" class="txp"><div id="txbody"><span class="dim">台指近月 載入中…</span></div><div id="txtip"></div><div id="txline"></div></div>
 </div>
 <div id="app"><div class="meta">載入中…</div></div>
 <script>
@@ -570,13 +575,29 @@ async function tick(){{
     const r=await fetch('/frag?_='+Date.now());
     const t=await r.text();
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
-    const s=document.getElementById('txsrc'); if(s){{document.getElementById('txp').innerHTML=s.innerHTML;}}   // 台指面板搬到右上
+    const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1'){{setTimeout(tick,30000);return;}}   // 非交易時段改 30s 慢輪詢,08:30 自動恢復(不必重載頁面)
   }}catch(e){{}}
   setTimeout(tick,R);
 }}
 tick();
+// 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
+(function(){{
+  const box=document.getElementById('txp'), tip=document.getElementById('txtip'), ln=document.getElementById('txline');
+  box.addEventListener('mousemove',e=>{{
+    const svg=box.querySelector('svg'); if(!svg){{tip.style.display='none';ln.style.display='none';return;}}
+    if(!svg._pts){{try{{svg._pts=JSON.parse(svg.dataset.pts);}}catch(_){{return;}}}}
+    const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect(), x=e.clientX-r.left;
+    if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
+    let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
+    if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
+    tip.textContent=best[2]+'  '+best[3].toLocaleString(); tip.style.display='block';
+    const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
+    tip.style.left=Math.min(lx+8,b.width-110)+'px'; tip.style.top=(r.top-b.top+best[1]-22)+'px';
+  }});
+  box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
+}})();
 </script>
 </body></html>"""
 
@@ -1617,12 +1638,12 @@ def render():
         print(f"[tx_panel] {_e!r}", file=sys.stderr)
     PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
 {_txp}{stale_bar}
-<div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
+<div class="meta" hidden>更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
-<div class="flagbar">{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
+<div class="flagbar" hidden>{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th class="stk">股票<span class="sub">點名稱看詳情</span></th>
 <th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
