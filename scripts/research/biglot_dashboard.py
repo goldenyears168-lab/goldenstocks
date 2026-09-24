@@ -501,7 +501,7 @@ async function tick(){{
     const t=await r.text();
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
     const c=document.getElementById('closed');
-    if(c && c.dataset.closed==='1') return;        // 收盤後停止輪詢
+    if(c && c.dataset.closed==='1'){{setTimeout(tick,30000);return;}}   // 非交易時段改 30s 慢輪詢,08:30 自動恢復(不必重載頁面)
   }}catch(e){{}}
   setTimeout(tick,R);
 }}
@@ -1147,7 +1147,7 @@ def render():
     if not flag_bar:
         flag_bar = "<span class='dim'>本窗無旗標</span>"
     raw_path = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{ST.date}.jsonl"
-    in_mkt = now.weekday() < 5 and "09:00" <= now.strftime("%H:%M") <= "13:32"
+    in_mkt = now.weekday() < 5 and "08:30" <= now.strftime("%H:%M") <= "13:32"   # 含 08:30 起盤前試撮
     stale_bar = ""
     if in_mkt:
         try:
@@ -2019,7 +2019,8 @@ class H(BaseHTTPRequestHandler):
 
 def _in_market():
     n = datetime.now(TZ)
-    return n.weekday() < 5 and "08:55" <= n.strftime("%H:%M") <= "13:35"
+    # 08:30 起 = 期貨/現貨盤前試撮(2026-09-24:launchd 也提前到 08:30),試撮價要即時跳動
+    return n.weekday() < 5 and "08:30" <= n.strftime("%H:%M") <= "13:35"
 
 
 def loop():
