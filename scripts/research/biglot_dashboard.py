@@ -109,7 +109,7 @@ def _tx_panel(now):
     zcls = " style='background:#6e1a1a;color:#ffb3b3;padding:0 4px'" if (z is not None and z <= -1) else (
         " style='background:#1a4d2e;color:#b3ffcc;padding:0 4px'" if (z is not None and z >= 1) else "")
     # SVG:固定 08:45→13:45 時間軸,y 含昨結
-    W, H, L, R = 676, 150, 4, 4
+    W, H, L, R = 470, 190, 4, 4          # 左文右圖後,圖高拉到 190
     t0 = datetime.fromisoformat(f"{TX_SER['day']}T08:45:00+08:00").timestamp(); t1 = t0 + 5 * 3600
     ys = px + ([fpc] if fpc else [])
     lo, hi = min(ys), max(ys)
@@ -127,15 +127,17 @@ def _tx_panel(now):
            + f"<text x='{L}' y='10' font-size='9' fill='#8b949e'>{hi:,.0f}</text>"
            + f"<text x='{L}' y='{H-1}' font-size='9' fill='#8b949e'>{lo:,.0f}</text></svg>")
     f = lambda v: f"{v:+.0f}" if v is not None else "—"  # noqa: E731
-    return (f"<div id='txsrc' hidden><div><b>台指近月</b> <span class='{cls}' style='font-size:20px;font-weight:700'>{last:,.0f}</span> "
-            + (f"<span class='{cls}'>{last - fpc:+,.0f} ({chg:+.2f}%)</span>" if fpc else "")
-            + f" <span class='dim'>{tx.get('t', '')}</span></div>"
-            f"<div>5分 <b>{f(b5)}</b>bps · 30分 <b>{f(b30)}</b>bps · 1分z <b{zcls}>{z:+.1f}</b>"
-            + (f" · 買{tx.get('bid')}/賣{tx.get('ask')}" if tx.get("bid") else "")
-            + "<span class='dim' style='margin-left:6px'>校準:z≤−1 紅=急殺做多砍尾中 · z≥+1 綠=急拉做空砍尾中</span></div>"
-            + svg + "</div>") if z is not None else (
-            f"<div id='txsrc' hidden><div><b>台指近月</b> <span class='{cls}' style='font-size:20px;font-weight:700'>{last:,.0f}</span>"
-            + (f" <span class='{cls}'>{chg:+.2f}%</span>" if chg is not None else "") + "</div>" + svg + "</div>")
+    # 左文右圖:文字欄固定 200px 直排,圖吃剩餘寬度、高度拉滿
+    left = (f"<div><b>台指近月</b> <span class='dim'>{tx.get('t', '')}</span></div>"
+            f"<div><span class='{cls}' style='font-size:24px;font-weight:700'>{last:,.0f}</span></div>"
+            + (f"<div class='{cls}'>{last - fpc:+,.0f} ({chg:+.2f}%) <span class='dim'>對昨結 {fpc:,.0f}</span></div>" if fpc else ""))
+    if z is not None:
+        left += (f"<div>5分 <b>{f(b5)}</b>bps · 30分 <b>{f(b30)}</b>bps</div>"
+                 f"<div>1分z <b{zcls}>{z:+.1f}</b>"
+                 + (f" · 買{tx.get('bid')}/賣{tx.get('ask')}" if tx.get("bid") else "") + "</div>"
+                 "<div class='dim' style='font-size:10px;line-height:1.3'>校準:z≤−1 紅=急殺做多砍尾中<br>z≥+1 綠=急拉做空砍尾中</div>")
+    return (f"<div id='txsrc' hidden><div style='display:flex;gap:10px;align-items:stretch'>"
+            f"<div style='flex:0 0 200px'>{left}</div><div style='flex:1 1 auto'>{svg}</div></div></div>")
 # 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
 # 產業交界畫粗線(band)。查無的股票排最後。
 _CLUSTERS = [
