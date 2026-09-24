@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# 45 檔個股期貨五檔深度（期交所 MIS 輪詢）· 平日 08:45–13:45 · **唯讀，無送單路徑**。
+# 45 檔個股期貨五檔深度（期交所 MIS 輪詢）· 平日 08:29–13:45 · **唯讀，無送單路徑**。
 #
 # 為什麼走 MIS 而不是 Fubon ws books：補齊 45 檔要 34 root × 4 訂閱 = 136 個訂閱、
 # 得再開 3 條 ws 連線。mini 已掛 11 個 job，含唯一 live order-capable 的 tmf-channel-poll；
 # futopt-books-collect-stocks.command 檔頭記著 2026-08-21「108 訂閱擠一條連線 → 日盤掉
 # 157/300 分鐘」的事故。MIS 是純 HTTP、不佔連線額度，一次請求就回 45 檔完整五檔。
+#
+# 2026-09-19 提早到 08:29 + 試撮窗加密輪詢：08:30–08:45 委託建簿期的五檔常跟真開盤方向
+# 不一致（肉眼案例：大立光期貨 08:42:55 試撮顯示 -9.92%、成交 0，08:48:51 真開盤 +1.33%），
+# 舊版 08:44 起收、60s 一輪根本來不及捕捉這段。08:45 前改用 MIS_DEPTH_PREOPEN_INTERVAL
+# （預設 5s，貼齊 MIS 自身更新頻率），之後沿用原本的 MIS_DEPTH_INTERVAL（預設 60s）。
 #
 # 安裝（一次性）：
 #   PLIST=~/Library/LaunchAgents/com.jackm4.goldenstocks.futopt-mis-depth-collect.plist
@@ -44,4 +49,6 @@ _src "${APP_SUPPORT}/order.env"; _src "${STATE}/.env"
 PY="${ROOT}/.venv/bin/python"
 LOG="${STATE}/logs/intraday/futopt_mis_depth_$(date '+%Y%m%d').log"
 exec "${PY}" "${ROOT}/scripts/research/collect_futopt_mis_depth.py" \
-     --interval "${MIS_DEPTH_INTERVAL:-60}" --until "${MIS_DEPTH_UNTIL:-13:45}" >>"${LOG}" 2>&1
+     --interval "${MIS_DEPTH_INTERVAL:-60}" --until "${MIS_DEPTH_UNTIL:-13:45}" \
+     --preopen-until "${MIS_DEPTH_PREOPEN_UNTIL:-08:45}" \
+     --preopen-interval "${MIS_DEPTH_PREOPEN_INTERVAL:-5}" >>"${LOG}" 2>&1
