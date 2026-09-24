@@ -72,7 +72,8 @@ AMP20 = {r["sid"]: r.get("amp20") for r in _cal["universe"]}
 PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector preopen_*.json,08:30~09:00)
 FUT_PX: dict = {}    # 個股期貨即時 sid->{px,sym,t,bid,bidsz,ask,asksz,bt}(futprice_*.json;bid/ask 來自 ws books)
 WRT: dict = {}       # 權證多空 sid->{call_30,put_30,call_day,put_day,...}(warrantflow_*.json;MIS 輪詢,描述性未回測)
-TX_SER: dict = {"day": None, "t": [], "px": [], "off": 0}   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
+TX_SER: dict = {"day": None, "t": [], "px": [], "off": 0}
+TX_LAST: dict = {"z": None}   # 台指 1 分 z 最近值(_tx_panel 每秒更新,淨分欄用)   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
 #: 頁首可編輯筆記(2026-09-24):存在資料目錄,不進 git;沒有檔案時顯示預設紀律條
 NOTES_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "dashboard_notes.html"
 DEFAULT_NOTES = "（自由書寫的筆記區：點這裡開始輸入；Enter 換行，停止輸入 1.5 秒自動儲存，Ctrl/Cmd+S 立即儲存。紀律條全文見 📖 欄位說明。）"
@@ -143,6 +144,7 @@ def _tx_panel(now):
             if sd > 0 and p60:
                 z = (last / p60 - 1) / sd
     chg = (last / fpc - 1) * 100 if fpc else None
+    TX_LAST["z"] = z
     cls = "up" if (chg or 0) > 0 else ("dn" if (chg or 0) < 0 else "")
     zcls = " style='background:#6e1a1a;color:#ffb3b3;padding:0 4px'" if (z is not None and z <= -1) else (
         " style='background:#1a4d2e;color:#b3ffcc;padding:0 4px'" if (z is not None and z >= 1) else "")
@@ -1147,6 +1149,97 @@ def _tag_engine(rows, nts, now):
     return out
 
 
+def _active_tags(sid, nts):
+    """即時標籤引擎目前有效(時距內且未 ✗)的標籤名集合。"""
+    out = set()
+    for (s_, tag), st in TAG_STATE.items():
+        if s_ == sid and st["t0"] is not None and nts - st["t0"] < st["hz"] and not st["dead"]:
+            out.add(tag)
+    return out
+
+
+def _score_rows(rows, mkt30, nts):
+    """隔夜分 / 盤中分:各項權重只用 0/±1/±2,依 127 日基準率;權證依 jack 要求納入盤中分(±1,未驗證)。
+    寫入 r["sc_ov"], r["sc_in"], r["sc_ov_items"], r["sc_in_items"], r["sc_in_nowrt"]。"""
+    for r in rows:
+        sid = r["sid"]
+        ds = ST.day.get(sid) or {}
+        tot = ds.get("tot") or 0
+        bs = r.get("bigsh_d")                      # 全日大戶佔比 %
+        rp = (r["retday"] / tot * 100) if (tot and r.get("retday") is not None and not r["unm"]) else None
+        cmp_ = r.get("cmp1h")
+        ov, ovi = 0, []
+        if bs is not None and bs >= 10:
+            ov += 2; ovi.append(("大戶佔比≥+10%", +2))
+            if rp is not None and rp >= 5:
+                ov -= 1; ovi.append(("散戶佔比≥5%(B格)", -1))
+            if cmp_ is not None and cmp_ > 1.0:
+                ov -= 1; ovi.append(("壓縮>+1% 彈開", -1))
+            if r.get("rvol_day") is not None and r["rvol_day"] >= 1.5:
+                ov += 1; ovi.append(("全日量能≥1.5x", +1))
+        elif bs is not None and bs <= -10:
+            ov -= 2; ovi.append(("大戶佔比≤−10%", -2))
+            if cmp_ is not None and cmp_ > 0.3:
+                ov -= 1; ovi.append(("大戶賣∧壓縮>+0.3%", -1))
+        if "同賣" in (r.get("stamp") or ""):
+            ov -= 1; ovi.append(("同賣", -1))
+        dt = r.get("dtrend") or {}
+        if dt.get("above_ma5"):
+            ov += 1; ovi.append(("日線↑多", +1))
+        elif r.get("rs_live") is not None and r["rs_live"] > 1 and dt:
+            ov -= 1; ovi.append(("相對強弱>+1∧日線↓空", -1))
+        # ---- 盤中分 ----
+        act = _active_tags(sid, nts)
+        sc, sci = 0, []
+        for tag, pts in (("主力點火", 2), ("純機構", 2), ("深接30", 1), ("深接5m", 1), ("機構暗退", -2), ("噴後過熱", -2), ("散戶虛拉", -1)):
+            if tag in act:
+                sc += pts; sci.append((tag, pts))
+        if ("勿追30" in act or "勿追5m" in act):
+            if mkt30 > 0:
+                sci.append(("勿追(市場30分>0,記0)", 0))
+            else:
+                sc -= 1; sci.append(("勿追", -1))
+        if r.get("pmlow_warn"):
+            sc -= 1; sci.append(("破昨防線", -1))
+        sc_nowrt = sc
+        # 權證(jack 要求納入;未驗證,±1):30 分認購+認售 ≥100 萬才判
+        w = WRT.get(sid) if isinstance(WRT.get(sid), dict) else None
+        if w:
+            wt = (w.get("call_30") or 0) + (w.get("put_30") or 0)
+            b_, s_ = (w.get("bull_30") or 0), (w.get("bear_30") or 0)
+            sh = b_ / (b_ + s_) if (b_ + s_) > 0 else None
+            b30 = r.get("big30_r") or 0
+            if wt >= 1e6 and sh is not None:
+                if sh >= 0.6 and (r.get("r30_r") or 0) > 0:
+                    sc -= 1; sci.append(("權證偏多∧價漲(槓桿散戶追價)", -1))
+                elif sh >= 0.6 and b30 <= -3e7:
+                    sc -= 1; sci.append(("權證偏多∧大戶賣(散戶接貨)", -1))
+                elif sh <= 0.4 and b30 >= 3e7:
+                    sc += 1; sci.append(("權證偏空∧大戶買(散戶倒·大戶接)", +1))
+        r["sc_ov"], r["sc_in"], r["sc_in_nowrt"] = ov, sc, sc_nowrt
+        r["sc_ov_items"], r["sc_in_items"] = ovi, sci
+
+
+def _score_td(r):
+    ov, sc = r.get("sc_ov"), r.get("sc_in")
+    if ov is None or sc is None:
+        return "<td class='dim'>—</td>"
+
+    def _c(v):
+        return "up" if v > 0 else ("dn" if v < 0 else "dim")
+    tip = ("隔夜分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_ov_items"]) or "無") +
+           " ‖ 盤中分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_in_items"]) or "無") +
+           f" ‖ 盤中分(不含權證) {r.get('sc_in_nowrt', 0):+d}" +
+           " ‖ 權重依127日基準率 0/±1/±2;加總分未驗證,累20日算IC")
+    z = TX_LAST.get("z")
+    bg = " background:#21262d;" if (z is not None and abs(z) >= 1) else ""
+    big_ov = " style='font-size:13px'" if abs(ov) >= 3 else ""
+    big_sc = " style='font-size:13px'" if abs(sc) >= 3 else ""
+    return (f"<td style='text-align:left;white-space:nowrap;{bg}' title='{html_mod.escape(tip, quote=True)}'>"
+            f"<span class='dim'>隔</span><b class='{_c(ov)}'{big_ov}>{ov:+d}</b> "
+            f"<span class='dim'>盤</span><b class='{_c(sc)}'{big_sc}>{sc:+d}</b></td>")
+
+
 def render():
     now = datetime.now(TZ)
     all_bks = sorted({bk for m in ST.buckets.values() for bk in m})
@@ -1190,6 +1283,9 @@ def render():
             r["rvol30"] = t30v / b30 if b30 > 0 else None
         else:
             r["rvol30"] = None
+        # 全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總),供淨分 +1(127日:成交÷20日均額 控佔比後 +13.8/t2.64)
+        _exp = sum(rb.get(bk.strftime("%H:%M"), 0) for bk in done)
+        r["rvol_day"] = (ds["tot"] / _exp) if (ds and ds.get("tot") and _exp > 0) else None
         share = a["ret2"] / a["tot"] * 100 if (a and a["tot"]) else None
         share_p = p["ret2"] / p["tot"] * 100 if (p and p["tot"]) else None
         r["share5"] = share
@@ -1423,6 +1519,11 @@ def render():
             r["ex_txt"] = " ".join(g["ex"])
     except Exception as _e:  # noqa: BLE001 -- 引擎失敗退回完成桶版標籤
         print(f"[tag_engine] {_e!r}", file=sys.stderr)
+    # ---- 淨分(2026-09-24 設計,加總分未驗證;各項權重依 127 日基準率 0/±1/±2)----
+    try:
+        _score_rows(rows, mkt30, time.time())
+    except Exception as _e:  # noqa: BLE001
+        print(f"[score] {_e!r}", file=sys.stderr)
 
     # 固定產業鏈排序(不隨大戶流跳位);查無者(理論上不會有)排最後、依big30
     rows.sort(key=lambda r: (SORT_INDEX.get(r["sid"], 999), -(r["big30"] or 0)))
@@ -1718,14 +1819,16 @@ def render():
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
                   f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
+        c_rvd = (f"<td class='{'wall' if r['rvol_day'] >= 1.5 else ('dim' if r['rvol_day'] < 0.7 else '')}'>{r['rvol_day']:.2f}x</td>"
+                 if r.get("rvol_day") is not None else "<td class='dim'>—</td>")
         trs.append(
             f"<tr{_band}>" + c_nm
             + _pxtd + _fbtd + _fatd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價)
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td             # ③ 30分
             + c_bigday + c_retday + c_diff + c_bigsh                   # ④ 全日
-            + c_cmp + c_dtr + c_rs + c_rvol + c_vr + c_amp             # ⑤ 結構/隔夜
-            + _sigtd + _stock_note_td(r["sid"])                        # ⑥ 訊號·筆記(最末)
+            + c_cmp + c_dtr + c_rs + c_rvol + c_rvd + c_vr + c_amp     # ⑤ 結構/隔夜(+全日量能)
+            + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
     try:
@@ -1777,9 +1880,11 @@ def render():
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
+<th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
 <th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
 <th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
+<th title="淨分 = 隔夜分(收盤→明開)與盤中分(未來30分)分開計,不混加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1。盤中(只算時距內未✗的即時標籤):主力點火/純機構 +2 · 深接 +1 · 機構暗退/噴後過熱 −2 · 散戶虛拉/破昨防線 −1 · 勿追 −1(市場30分>0 時記0)· 權證30分≥100萬:偏多∧價漲 −1、偏多∧大戶賣 −1、偏空∧大戶買 +1(未驗證)。權重依127日基準率 0/±1/±2;加總分本身未驗證,累20日算IC。灰底=台指1分|z|≥1 砍尾中。滑鼠移上看逐項。">淨分<span class="sub">隔夜 · 盤中</span></th>
 <th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
