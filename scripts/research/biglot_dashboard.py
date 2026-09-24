@@ -2290,7 +2290,7 @@ def _svg_mini(st, pc):
     """6×6 總覽用迷你疊圖:價(黃)+昨收虛線 + 累計大戶(紅)/散戶(藍)右軸 + 量(底部面積)。無文字、座標取整、preserveAspectRatio=none 拉滿格子。"""
     mins = st["mins"]
     if not mins:
-        return "<svg viewBox='0 0 320 170' preserveAspectRatio='none' style='width:100%;height:100%'></svg>"
+        return "<svg viewBox='0 0 320 170' preserveAspectRatio='none' style='width:100%;height:100%'></svg>", 1
     order = sorted(mins.keys())
     W, H = 320, 170
 
@@ -2311,7 +2311,8 @@ def _svg_mini(st, pc):
 
     def Y(v):
         return 4 + (hi - v) / (hi - lo) * (H - 8)
-    parts = [f"<svg viewBox='0 0 {W} {H}' preserveAspectRatio='none' style='width:100%;height:100%;display:block'>"]
+    hov = json.dumps([[_mod(k) - 540, mins[k]["px"]] for k in order if mins[k]["px"]], separators=(",", ":"))
+    parts = [f"<svg viewBox='0 0 {W} {H}' preserveAspectRatio='none' style='width:100%;height:100%;display:block' data-pts='{hov}'>"]
     vmax = max((mins[k]["vol"] for k in order), default=1) or 1
     VH = H * 0.22
     area = " ".join(f"{X(k):.0f},{H - mins[k]['vol'] / vmax * VH:.0f}" for k in order)
@@ -2330,7 +2331,7 @@ def _svg_mini(st, pc):
         parts.append(f"<line x1='0' y1='{Y(pc):.0f}' x2='{W}' y2='{Y(pc):.0f}' stroke='#8b949e' stroke-dasharray='3 3' opacity='0.7'/>")
     parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{Y(mins[k]['px']):.0f}" for k in order if mins[k]["px"]) + "' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
     parts.append("</svg>")
-    return "".join(parts)
+    return "".join(parts), amax
 
 
 def render_grid_frag(sort="ind"):
@@ -2351,10 +2352,12 @@ def render_grid_frag(sort="ind"):
         bd = r.get("bigday") or 0; rd = r.get("retday") if r.get("retday") is not None else (st.get("ret_day") or 0)
         tags = (r.get("bull_txt") or "").split("·")[:1] + (r.get("bear_txt") or "").split("·")[:1]
         tagh = "".join(f"<span class='{'sigup' if i == 0 else 'sigdn'}'>{t}</span>" for i, t in enumerate(tags) if t)
+        svg, amax = _svg_mini(st, pc)
         cells.append(f"<a class='cell' href='/stock?sid={sid}' target='_blank'>"
                      f"<div class='ch'><b>{sid} {NAMES.get(sid, '')}</b> {pxs} · 大戶 <span class='{'up' if bd > 0 else 'dn'}'>{bd/1e4:+,.0f}</span>"
-                     f" 散 <span class='{'up' if rd > 0 else 'dn'}'>{rd/1e4:+,.0f}</span> {tagh}</div>"
-                     f"<div class='cc'>{_svg_mini(st, pc)}</div></a>")
+                     f" 散 <span class='{'up' if rd > 0 else 'dn'}'>{rd/1e4:+,.0f}</span> {tagh}"
+                     f"<span class='dim' style='float:right'>尺±{amax/1e4:,.0f}萬</span></div>"
+                     f"<div class='cc'>{svg}</div></a>")
     return f"<div class='meta' style='margin:0 0 2px'>更新 {datetime.now(TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 底=量 · 點格子開詳情</div>" + "".join(cells)
 
 
@@ -2368,6 +2371,8 @@ html,body{height:100%;margin:0;background:#0d1117;color:#c9d1d9;font:11px/1.35 -
 .ch{flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cc{flex:1 1 auto;min-height:0}
 .up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.sigup{color:#ff7b72;margin-left:4px}.sigdn{color:#3fb950;margin-left:4px}
+#gtip{position:fixed;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:9;white-space:nowrap}
+#gline{position:fixed;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:8}
 </style></head><body>
 <div id='g'><div class='meta'>載入中…</div></div>
 <script>
@@ -2375,6 +2380,19 @@ const Q=new URLSearchParams(location.search).get('sort')||'ind';
 async function t(){try{const r=await fetch('/gridfrag?sort='+Q+'&_='+Date.now());document.getElementById('g').innerHTML=await r.text();}catch(e){}
   setTimeout(t,(document.getElementById('g').dataset.closed==='1')?30000:5000);}
 t();
+// 輕量 hover:只顯示 時間/價(data-pts=[[分鐘序,價]],x 依 viewBox 320 寬換算)
+(function(){const g=document.getElementById('g'); const tip=document.createElement('div'); const ln=document.createElement('div');
+ tip.id='gtip'; ln.id='gline'; document.body.appendChild(tip); document.body.appendChild(ln);
+ g.addEventListener('mousemove',e=>{const svg=e.target.closest&&e.target.closest('svg[data-pts]'); if(!svg){tip.style.display='none';ln.style.display='none';return;}
+  if(!svg._pts){try{svg._pts=JSON.parse(svg.dataset.pts);}catch(_){return;}}
+  const r=svg.getBoundingClientRect(); const idx=(e.clientX-r.left)/r.width*270; let best=null,bd=1e9;
+  for(const p of svg._pts){const d=Math.abs(p[0]-idx); if(d<bd){bd=d;best=p;}}
+  if(!best||bd>3){tip.style.display='none';ln.style.display='none';return;}
+  const m=540+best[0], hm=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+  tip.textContent=hm+'  '+best[1]; tip.style.display='block'; const lx=r.left+best[0]/270*r.width;
+  ln.style.left=lx+'px'; ln.style.top=r.top+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
+  tip.style.left=Math.min(lx+8,window.innerWidth-110)+'px'; tip.style.top=(r.top+4)+'px';});
+ g.addEventListener('mouseleave',()=>{tip.style.display='none';ln.style.display='none';});})();
 </script></body></html>"""
 
 
