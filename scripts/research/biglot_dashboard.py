@@ -2157,7 +2157,7 @@ def _svg_detail(sid, day, st, pc):
 
     def Y(v):                                  # 價格:左軸,佔整個繪圖區
         return PADT + (yhi - v) / (yhi - ylo) * plotH
-    parts = [f"<svg viewBox='0 0 {W} {H}' style='width:100%;max-width:{W}px;height:auto;background:#0d1117'>"]
+    parts = [f"<svg viewBox='0 0 {W} {H}' style='width:100%;max-width:{W}px;height:auto;background:#0d1117' data-vw='{W}' data-pts='__PTS__'>"]
     # 成交量:底部 22% 高度的淡色柱(先畫,壓在最底層)
     VH = plotH * 0.22
     vmax = max((mins[k]["vol"] for k in order), default=1) or 1
@@ -2207,7 +2207,11 @@ def _svg_detail(sid, day, st, pc):
     for hm in ("09:00", "10:00", "11:00", "12:00", "13:00", "13:30"):
         parts.append(f"<text x='{X(hm):.1f}' y='{H-6}' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
     parts.append("</svg>")
-    return "".join(parts)
+    # hover 資料:每分鐘 [x, y(價), 時間, 價, 累計大戶萬, 累計散戶萬, 量張]
+    cumd = {k: (b, r) for k, b, r in cum}
+    hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"])]
+                      for k in order if mins[k]["px"]])
+    return "".join(parts).replace("__PTS__", html_mod.escape(hov, quote=True), 1)
 
 
 def _book_table(bk):
@@ -2259,6 +2263,26 @@ def render_stock_frag(sid, day):
             "<div class='sbook'>" + book + "</div></div>")
 
 
+HOVER_JS = """<script>(function(){
+  const box=document.getElementById('sd'); const tip=document.createElement('div'); const ln=document.createElement('div');
+  tip.id='stip'; ln.id='sline'; document.body.appendChild(tip); document.body.appendChild(ln);
+  box.addEventListener('mousemove',e=>{
+    const svg=e.target.closest&&e.target.closest('svg[data-pts]'); if(!svg){tip.style.display='none';ln.style.display='none';return;}
+    if(!svg._pts){try{svg._pts=JSON.parse(svg.dataset.pts);}catch(_){return;}}
+    const r=svg.getBoundingClientRect(), sc=r.width/parseFloat(svg.dataset.vw||'940'), x=(e.clientX-r.left)/sc;
+    let best=null,bd=1e9; for(const p of svg._pts){const d=Math.abs(p[0]-x); if(d<bd){bd=d;best=p;}}
+    if(!best||bd>8){tip.style.display='none';ln.style.display='none';return;}
+    tip.innerHTML=best[2]+' <b>'+best[3]+'</b><br>大戶累計 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span> · 散戶累計 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span><br>該分鐘量 '+best[6].toLocaleString()+' 張';
+    tip.style.display='block'; const lx=r.left+best[0]*sc;
+    ln.style.left=lx+'px'; ln.style.top=r.top+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
+    tip.style.left=Math.min(lx+10,window.innerWidth-230)+'px'; tip.style.top=(r.top+best[1]*sc-40)+'px';
+  });
+  box.addEventListener('mouseleave',()=>{tip.style.display='none';ln.style.display='none';});
+})();</script>
+<style>#stip{position:fixed;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:2px 8px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:9;white-space:nowrap;line-height:1.5}
+#sline{position:fixed;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:8}</style>"""
+
+
 def render_stock(sid, day):
     name = NAMES.get(sid, sid)
     cat = SUBCAT.get(sid) or CATS.get(sid, "")
@@ -2271,6 +2295,7 @@ def render_stock(sid, day):
     if live:
         js = (f"<script>async function u(){{try{{const r=await fetch('/stockfrag?sid={sid}&d={day}&_='+Date.now());"
               f"document.getElementById('sd').innerHTML=await r.text();}}catch(e){{}}setTimeout(u,2000);}}setTimeout(u,2000);</script>")
+    js += HOVER_JS
     return (f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
             f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
             f"<title>{sid} {name}</title>{ARC_CSS}"
