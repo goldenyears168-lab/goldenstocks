@@ -584,8 +584,9 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 #txline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
 #notes{{outline:none;min-height:60px;padding:2px 4px;border-radius:4px}} #notes:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}}
 #nstat{{color:#8b949e;font-size:10px;text-align:right}}
-td.snote{{text-align:left;min-width:170px;max-width:280px;white-space:normal;font-weight:400}}
-.ne{{display:inline-block;min-width:130px;outline:none;padding:0 3px;border-radius:3px;color:#e6edf3}} .ne:empty::before{{content:'…';color:#484f58}}
+td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
+.ne{{display:inline-block;min-width:130px;max-width:320px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;white-space:nowrap;outline:none;padding:0 3px;border-radius:3px;color:#e6edf3}} .ne:empty::before{{content:'…';color:#484f58}}
+.ne:focus{{max-width:none;white-space:normal;overflow:visible}}
 .ne:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}} .nt{{margin-left:4px;font-size:9px;white-space:nowrap}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
@@ -631,17 +632,19 @@ tick();
   const app=document.getElementById('app'); const tm={{}}; window.__noteEditing=false;
   // 按下格子的瞬間就鎖住重繪(避免 fetch 回應剛好在 mousedown 與 focus 之間把格子換掉);focusout 解鎖
   app.addEventListener('mousedown',e=>{{if(e.target.closest&&e.target.closest('td.snote')){{window.__noteEditing=true;}}}});
-  app.addEventListener('focusin',e=>{{if(e.target.closest&&e.target.closest('.ne')){{window.__noteEditing=true;}}}});
+  app.addEventListener('focusin',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(el){{window.__noteEditing=true; if(el.dataset.orig===undefined){{el.dataset.orig=el.innerText;}}}}}});
   app.addEventListener('click',e=>{{const td=e.target.closest&&e.target.closest('td.snote'); if(!td) return;
     const el=td.querySelector('.ne'); if(el && document.activeElement!==el){{el.focus();}}}});   // 點到格子空白處也進入編輯
-  const save=async el=>{{const sid=el.dataset.sid; const nt=el.nextElementSibling;
+  const save=async (el,force)=>{{const sid=el.dataset.sid; const nt=el.nextElementSibling;
+    if(!force && el.innerText===(el.dataset.orig||'')){{return;}}   // 沒改動就不存(避免只是點進去也蓋掉編輯時間)
+    el.dataset.orig=el.innerText;
     try{{const r=await fetch('/stocknote',{{method:'POST',body:JSON.stringify({{sid:sid,txt:el.innerText}})}});
       const j=await r.json(); if(nt){{nt.textContent=j.t;}}}}catch(e){{if(nt){{nt.textContent='儲存失敗';}}}}}};
   app.addEventListener('input',e=>{{const el=e.target.closest('.ne'); if(!el) return; const sid=el.dataset.sid;
-    const nt=el.nextElementSibling; if(nt){{nt.textContent='編輯中…';}} clearTimeout(tm[sid]); tm[sid]=setTimeout(()=>save(el),1500);}});
+    const nt=el.nextElementSibling; if(nt){{nt.textContent='編輯中…';}} clearTimeout(tm[sid]); tm[sid]=setTimeout(()=>save(el,true),1500);}});
   app.addEventListener('focusout',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return; clearTimeout(tm[el.dataset.sid]); save(el); setTimeout(()=>{{window.__noteEditing=false;}},200);}});
   app.addEventListener('keydown',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return;
-    if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm[el.dataset.sid]);save(el);}}
+    if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm[el.dataset.sid]);save(el,true);}}
     if(e.key==='Escape'){{el.blur();}}}});
 }})();
 // 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
