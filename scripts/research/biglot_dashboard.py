@@ -86,6 +86,33 @@ def _load_notes():
         return DEFAULT_NOTES
 
 
+#: 每檔筆記(2026-09-24):sid -> {"txt": 純文字, "t": "HH:MM:SS", "d": "YYYY-MM-DD"};存資料目錄,不進 git
+STOCK_NOTES_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "stock_notes.json"
+STOCK_NOTES: dict = {}
+try:
+    STOCK_NOTES = json.loads(STOCK_NOTES_PATH.read_text(encoding="utf-8"))
+except Exception:  # noqa: BLE001
+    STOCK_NOTES = {}
+
+
+def _stock_note_td(sid):
+    n = STOCK_NOTES.get(sid) or {}
+    txt = html_mod.escape(n.get("txt") or "")
+    when = (n.get("t") or "")
+    if n.get("d") and n["d"] != datetime.now(TZ).strftime("%Y-%m-%d"):
+        when = f"{n['d'][5:]} {when}"
+    return (f"<td class='snote'><span class='ne' contenteditable='true' spellcheck='false' data-sid='{sid}'>{txt}</span>"
+            f"<span class='nt dim'>{when}</span></td>")
+
+
+def _save_stock_note(sid, txt):
+    now = datetime.now(TZ)
+    STOCK_NOTES[sid] = {"txt": txt[:2000], "t": now.strftime("%H:%M:%S"), "d": now.strftime("%Y-%m-%d")}
+    STOCK_NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STOCK_NOTES_PATH.write_text(json.dumps(STOCK_NOTES, ensure_ascii=False, indent=0), encoding="utf-8")
+    return STOCK_NOTES[sid]["t"]
+
+
 def _tx_panel(now):
     """頂部右側:台指近月即時價 + 對昨結 + 5分/30分 bps + 1分 z(影子帳砍尾同口徑)+ 10 秒線 SVG。無資料回空字串。"""
     t, px = TX_SER["t"], TX_SER["px"]
@@ -557,6 +584,9 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 #txline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
 #notes{{outline:none;min-height:60px;padding:2px 4px;border-radius:4px}} #notes:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}}
 #nstat{{color:#8b949e;font-size:10px;text-align:right}}
+td.snote{{text-align:left;min-width:170px;max-width:280px;white-space:normal;font-weight:400}}
+.ne{{display:inline-block;min-width:130px;outline:none;padding:0 3px;border-radius:3px;color:#e6edf3}} .ne:empty::before{{content:'…';color:#484f58}}
+.ne:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}} .nt{{margin-left:4px;font-size:9px;white-space:nowrap}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
@@ -578,6 +608,8 @@ async function tick(){{
   try{{
     const r=await fetch('/frag?_='+Date.now());
     const t=await r.text();
+    const ae=document.activeElement;
+    if(ae && ae.classList && ae.classList.contains('ne')){{setTimeout(tick,R);return;}}   // 正在編輯個股筆記:暫停換表,離開格子後恢復
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
     const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
     const c=document.getElementById('closed');
@@ -593,6 +625,19 @@ tick();
     st.textContent=(r.ok?'已儲存 ':'儲存失敗 ')+new Date().toTimeString().slice(0,8);}}catch(e){{st.textContent='儲存失敗';}}}};
   n.addEventListener('input',()=>{{st.textContent='編輯中…';clearTimeout(tm);tm=setTimeout(save,1500);}});
   n.addEventListener('keydown',e=>{{if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm);save();}}}});
+}})();
+// 個股筆記:事件委派到 #app(表格每秒重繪);input 去抖 1.5s / blur / Ctrl+S → POST /stocknote,回傳最後編輯時間寫進同格小字
+(function(){{
+  const app=document.getElementById('app'); const tm={{}};
+  const save=async el=>{{const sid=el.dataset.sid; const nt=el.nextElementSibling;
+    try{{const r=await fetch('/stocknote',{{method:'POST',body:JSON.stringify({{sid:sid,txt:el.innerText}})}});
+      const j=await r.json(); if(nt){{nt.textContent=j.t;}}}}catch(e){{if(nt){{nt.textContent='儲存失敗';}}}}}};
+  app.addEventListener('input',e=>{{const el=e.target.closest('.ne'); if(!el) return; const sid=el.dataset.sid;
+    const nt=el.nextElementSibling; if(nt){{nt.textContent='編輯中…';}} clearTimeout(tm[sid]); tm[sid]=setTimeout(()=>save(el),1500);}});
+  app.addEventListener('focusout',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return; clearTimeout(tm[el.dataset.sid]); save(el);}});
+  app.addEventListener('keydown',e=>{{const el=e.target.closest&&e.target.closest('.ne'); if(!el) return;
+    if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm[el.dataset.sid]);save(el);}}
+    if(e.key==='Escape'){{el.blur();}}}});
 }})();
 // 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
 (function(){{
@@ -1635,6 +1680,7 @@ def render():
             + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
                f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
             + _sigtd
+            + _stock_note_td(r["sid"])
             + "</tr>")
 
     try:
@@ -1676,7 +1722,7 @@ def render():
 <th class="gd" title="現價÷最近12個5分桶均價−1(=近1小時位置)。負=壓著(彈簧),隔夜挑股用;需≥8桶,13:20後最有意義。">壓縮<span class="sub">對1h均%</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th><th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
-<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
+<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th><th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
@@ -2294,7 +2340,18 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         """/notes:儲存頁首可編輯筆記(本機/Tailscale 私網用,內容原樣存 HTML,不做權限控制)。"""
         path, _, _ = self.path.partition("?")
-        if path == "/notes":
+        if path == "/stocknote":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:10_000])
+                sid = str(q.get("sid", ""))[:8]
+                if sid not in NAMES:
+                    raise ValueError("unknown sid")
+                t = _save_stock_note(sid, str(q.get("txt", "")))
+                body, code = json.dumps({"ok": True, "t": t}).encode(), 200
+            except Exception as exc:  # noqa: BLE001
+                body, code = f"err {exc!r}".encode(), 500
+        elif path == "/notes":
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(n).decode("utf-8", "replace")[:200_000]
