@@ -2273,11 +2273,17 @@ def render_help():
 # 資料源=raw_{日}.jsonl(逐筆) + watchlist_books_{日}.jsonl(五檔),兩者皆有歷史,
 # 故同一頁 today=即時、d=過去日=回放,完全共用。per-(sid,日) 增量快取,重繪只讀新增 bytes。
 DETAIL: dict = {}
+DETAIL_LOCK = threading.Lock()   # _stock_series 增量讀非執行緒安全:loop(總覽/AGG)與 HTTP(詳情頁)同時呼叫會把同一段 bytes 解析兩次(2026-09-24 大戶累計 2 倍事故)
 
 
 def _stock_series(sid, day):
     """回傳 {mins:{"HH:MM":{px,vol,big,ret,tot}}, px0, last_px, big_day, ret_day, tot_day}。
-    增量:今天的檔會一路長,只解析新增行;過去日解析一次後快取到 EOF。"""
+    增量:今天的檔會一路長,只解析新增行;過去日解析一次後快取到 EOF。整段加鎖(見 DETAIL_LOCK)。"""
+    with DETAIL_LOCK:
+        return _stock_series_locked(sid, day)
+
+
+def _stock_series_locked(sid, day):
     key = (sid, day)
     st = DETAIL.get(key)
     if st is None:
