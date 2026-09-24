@@ -625,7 +625,7 @@ def main() -> int:
         hm = _now().strftime("%H:%M")
         if hm >= f"{END_HHMM[0]:02d}:{END_HHMM[1]:02d}":
             break
-        # 盤前試撮快照:08:45~09:00 每輪覆寫,09:00 後不再覆寫=凍結最終試撮(供 dashboard 盤前欄)
+        # 盤前試撮快照:啟動(08:30 起,launchd 2026-09-24 改 08:30)~09:00 每輪覆寫,09:00 後不再覆寫=凍結最終試撮(供 dashboard 盤前欄)
         if hm <= "09:00" and _TRIAL:
             try:
                 (OUT_DIR / f"preopen_{day}.json").write_text(

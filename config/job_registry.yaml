@@ -666,22 +666,29 @@ jobs:
     category: collect
     order_capable: false
     status: enabled
-    schedule: "weekdays 08:44（08:45–13:45 常駐輪詢；09:10 / 10:10 為補啟動）"
+    schedule: "weekdays 08:29（08:30–08:45 試撮窗每 5s、08:45–13:45 日盤每 60s；09:10 / 10:10 為補啟動）"
     description: >-
       v3 45 檔個股期貨的五檔深度，走**期交所 MIS**（純 HTTP POST getQuoteDetail），
       一次請求回 45 筆完整五檔（CBidPrice1-5 / CAskPrice1-5 / CBidSize1-5 / CAskSize1-5
-      / CBestBid,AskPrice / SpotID），實測 49 KB。預設每 60 秒一輪。
+      / CBestBid,AskPrice / SpotID），實測 49 KB。
       **刻意不走 Fubon ws books**：補齊 45 檔要 34 root × 4 訂閱 = 136 個訂閱、得再開
       3 條 ws 連線；mini 已掛 11 個 job（含唯一 live order-capable 的 tmf-channel-poll），
       而 futopt-books-collect-stocks 檔頭記著 2026-08-21「108 訂閱擠一條連線 → 日盤掉
       157/300 分鐘（52%）」的事故。MIS 不佔連線額度，零風險。
-      用途：算個股期貨真實價差與深度 → 決定「大戶未平倉訊號改做個股期貨」能否過成本
+      用途：(1) 算個股期貨真實價差與深度 → 決定「大戶未平倉訊號改做個股期貨」能否過成本
       （台指期來回 ≈2 bps、v3 契約價差中位 33 bps、最緊的 14 bps；規則 A/C 兩平 15 bps、
       E 兩平 24 bps —— 差距就在這裡，必須有實測價差才算得出淨值）。
+      (2) 2026-09-19 加：系統性收集「盤前試撮委託簿 vs 真開盤方向」案例（起因：肉眼截圖
+      大立光期貨 08:42:55 試撮顯示 -9.92%、成交 0，08:48:51 真開盤卻 +1.33%，方向完全反過來）
+      —— 舊版 08:44 起收、60s 一輪根本來不及捕捉這段，改成 08:29 起收，08:45 前用 5s
+      （貼齊 MIS 自身更新頻率）、之後沿用 60s。
       輸出 ${GOLDENSTOCKS_DATA_DIR}/cache/futopt_mis_depth/mis_depth_{date}.jsonl。
       唯讀、無送單路徑。刻意不進 install-launchd.sh LABELS，安裝見
       scripts/launchd/futopt-mis-depth-collect.command 檔頭。
-      開關：.env RUN_FUTOPT_MIS_DEPTH（預設 1）· MIS_DEPTH_INTERVAL / MIS_DEPTH_UNTIL。
+      開關：.env RUN_FUTOPT_MIS_DEPTH（預設 1）· MIS_DEPTH_INTERVAL / MIS_DEPTH_UNTIL ·
+      MIS_DEPTH_PREOPEN_INTERVAL（預設 5）/ MIS_DEPTH_PREOPEN_UNTIL（預設 08:45）。
+      ⚠️ MIS 在 08:30–08:45 試撮窗是否穩定回應未經驗證（先前只在 08:44 後收過），
+      第一個交易日跑完要查 log 確認沒有大量失敗輪。
 
   - label: biglot-bucket-eod
     category: collect
@@ -748,7 +755,7 @@ jobs:
     category: collect
     order_capable: false
     status: enabled
-    schedule: "weekdays 09:00（一次性，13:32 自動退出）"
+    schedule: "weekdays 08:30（2026-09-24 起提前到盤前試撮；一次性，13:32 自動退出）"
     description: >-
       大戶盤中佈局監看：09:00 起訂閱 45 檔 trades 累積「大戶淨主動買」，
       12:00 / 13:00 / 13:30 各寄一封多空前十名，收盤後再一封。
