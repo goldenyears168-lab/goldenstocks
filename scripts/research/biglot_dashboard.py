@@ -72,6 +72,70 @@ AMP20 = {r["sid"]: r.get("amp20") for r in _cal["universe"]}
 PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector preopen_*.json,08:30~09:00)
 FUT_PX: dict = {}    # 個股期貨即時 sid->{px,sym,t,bid,bidsz,ask,asksz,bt}(futprice_*.json;bid/ask 來自 ws books)
 WRT: dict = {}       # 權證多空 sid->{call_30,put_30,call_day,put_day,...}(warrantflow_*.json;MIS 輪詢,描述性未回測)
+TX_SER: dict = {"day": None, "t": [], "px": [], "off": 0}   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
+
+
+def _tx_panel(now):
+    """頂部右側:台指近月即時價 + 對昨結 + 5分/30分 bps + 1分 z(影子帳砍尾同口徑)+ 10 秒線 SVG。無資料回空字串。"""
+    t, px = TX_SER["t"], TX_SER["px"]
+    tx = FUT_PX.get("TXF") if isinstance(FUT_PX.get("TXF"), dict) else None
+    if not t or not tx or not tx.get("px"):
+        return ""
+    last = float(tx["px"]); fpc = tx.get("fpc"); nts = t[-1]
+    import bisect as _bs
+    def _at(sec):
+        i = _bs.bisect_right(t, nts - sec) - 1
+        return px[i] if i >= 0 else None
+    p5, p30 = _at(300), _at(1800)
+    b5 = (last / p5 - 1) * 1e4 if p5 else None
+    b30 = (last / p30 - 1) * 1e4 if p30 else None
+    # 1 分 z:30 秒格點的 1 分報酬歷史 σ(與 zcrash_shadow 相同)
+    z = None
+    if len(t) > 12:
+        r1 = []
+        g = t[0] + 60
+        while g <= nts:
+            i = _bs.bisect_right(t, g) - 1; j = _bs.bisect_right(t, g - 60) - 1
+            if i >= 0 and j >= 0 and px[j]:
+                r1.append(px[i] / px[j] - 1)
+            g += 30
+        if len(r1) >= 10:
+            m = sum(r1) / len(r1); sd = (sum((x - m) ** 2 for x in r1) / len(r1)) ** 0.5
+            p60 = _at(60)
+            if sd > 0 and p60:
+                z = (last / p60 - 1) / sd
+    chg = (last / fpc - 1) * 100 if fpc else None
+    cls = "up" if (chg or 0) > 0 else ("dn" if (chg or 0) < 0 else "")
+    zcls = " style='background:#6e1a1a;color:#ffb3b3;padding:0 4px'" if (z is not None and z <= -1) else (
+        " style='background:#1a4d2e;color:#b3ffcc;padding:0 4px'" if (z is not None and z >= 1) else "")
+    # SVG:固定 08:45→13:45 時間軸,y 含昨結
+    W, H, L, R = 330, 64, 4, 4
+    t0 = datetime.fromisoformat(f"{TX_SER['day']}T08:45:00+08:00").timestamp(); t1 = t0 + 5 * 3600
+    ys = px + ([fpc] if fpc else [])
+    lo, hi = min(ys), max(ys)
+    if hi - lo < 1e-9:
+        hi = lo + 1
+    def X(ts): return L + (ts - t0) / (t1 - t0) * (W - L - R)
+    def Y(v): return 6 + (hi - v) / (hi - lo) * (H - 12)
+    step = max(1, len(t) // 600)
+    pts = " ".join(f"{X(a):.1f},{Y(b):.1f}" for a, b in list(zip(t, px))[::step])
+    col = "#ff7b72" if (chg or 0) > 0 else "#3fb950"
+    svg = (f"<svg width='{W}' height='{H}' style='display:block'>"
+           + (f"<line x1='{L}' y1='{Y(fpc):.1f}' x2='{W-R}' y2='{Y(fpc):.1f}' stroke='#8b949e' stroke-dasharray='3,3'/>" if fpc else "")
+           + f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.2'/>"
+           + f"<circle cx='{X(nts):.1f}' cy='{Y(last):.1f}' r='2.5' fill='{col}'/>"
+           + f"<text x='{L}' y='10' font-size='9' fill='#8b949e'>{hi:,.0f}</text>"
+           + f"<text x='{L}' y='{H-1}' font-size='9' fill='#8b949e'>{lo:,.0f}</text></svg>")
+    f = lambda v: f"{v:+.0f}" if v is not None else "—"  # noqa: E731
+    return (f"<div class='txp'><div><b>台指近月</b> <span class='{cls}' style='font-size:15px;font-weight:700'>{last:,.0f}</span> "
+            + (f"<span class='{cls}'>{last - fpc:+,.0f} ({chg:+.2f}%)</span>" if fpc else "")
+            + f" <span class='dim'>{tx.get('t', '')}</span></div>"
+            f"<div>5分 <b>{f(b5)}</b>bps · 30分 <b>{f(b30)}</b>bps · 1分z <b{zcls}>{z:+.1f}</b>"
+            + (f" · 買{tx.get('bid')}/賣{tx.get('ask')}" if tx.get("bid") else "")
+            + "<span class='dim' style='margin-left:6px'>校準:z≤−1 紅=急殺做多砍尾中 · z≥+1 綠=急拉做空砍尾中</span></div>"
+            + svg + "</div>") if z is not None else (
+            f"<div class='txp'><div><b>台指近月</b> <span class='{cls}' style='font-size:15px;font-weight:700'>{last:,.0f}</span>"
+            + (f" <span class='{cls}'>{chg:+.2f}%</span>" if chg is not None else "") + "</div>" + svg + "</div>")
 # 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
 # 產業交界畫粗線(band)。查無的股票排最後。
 _CLUSTERS = [
@@ -472,6 +536,7 @@ th .sub{{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1p
 border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .disc b{{color:#e6edf3}} .disc .ok{{color:#3fb950}} .disc .no{{color:#ff7b72}}
 .disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
+.txp{{float:right;width:340px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px 8px;margin:0 0 6px 12px;font-size:11px;line-height:1.5}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES)}檔即時儀表板
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
@@ -588,6 +653,29 @@ def ingest():
         WRT = json.loads(wf.read_text()) if wf.exists() else {}
     except Exception:
         WRT = {}
+    # 台指近月 10 秒樣本(collect_biglot_futprice 落地),增量讀,供頂部台指校準圖
+    try:
+        if TX_SER["day"] != today:
+            TX_SER.update({"day": today, "t": [], "px": [], "off": 0})
+        tf = _bd / f"txf_10s_{today}.jsonl"
+        if tf.exists():
+            with open(tf, "rb") as f:
+                f.seek(TX_SER["off"])
+                chunk = f.read()
+            nl = chunk.rfind(b"\n")
+            if nl != -1:
+                TX_SER["off"] += nl + 1
+                for line in chunk[:nl].split(b"\n"):
+                    try:
+                        o = json.loads(line)
+                        ts = datetime.fromisoformat(f"{today}T{o['t']}+08:00").timestamp()
+                        if o.get("px") and (not TX_SER["t"] or ts > TX_SER["t"][-1]):
+                            TX_SER["t"].append(ts)
+                            TX_SER["px"].append(float(o["px"]))
+                    except Exception:  # noqa: BLE001
+                        continue
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _ingest_trade(line):
@@ -1516,8 +1604,13 @@ def render():
         print(f"[shadow] {_e!r}", file=sys.stderr)
     upd_note = (f"每{REFRESH_SEC}s自動更新(不重載)" if in_mkt
                 else "盤後定格,已停止更新")
+    try:
+        _txp = _tx_panel(now)
+    except Exception as _e:  # noqa: BLE001
+        _txp = ""
+        print(f"[tx_panel] {_e!r}", file=sys.stderr)
     PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
-{stale_bar}
+{_txp}{stale_bar}
 <div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
 紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
