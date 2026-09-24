@@ -1644,52 +1644,62 @@ def render():
                                _w.get("bull_30"), _w.get("bear_30"), "權證30分 " + _wtip)
         else:
             _wrt5td = _wrt30td = "<td class='dim'>—</td>"
+        # ---- 各欄先算成具名字串,再依「同尺度 大戶→散戶→權證」順序組列(2026-09-24 重排) ----
+        c_nm = (f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
+                f"title=\"{html_mod.escape(_stock_tip(r['sid']), quote=True).replace(chr(10), '&#10;')}\" "
+                f"style='color:inherit;text-decoration:none'>{name}</a>"
+                f"<span class='cat'>{r['cat']}</span></td>")
+        c_vr = vr_td(r)
+        c_amp = (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
+                 f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
+        c_open = td(r["day_ret"], "pct2")
+        c_r30 = td(r["r30_r"], "bps")
+        c_ctx = (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
+                 f"style='font-size:11px'>{r['mkt_ctx']}</td>" if r.get("mkt_ctx") else "<td class='dim'>—</td>")
+        c_big5, c_big30, c_bigday = td(r["big5_r"], "wan"), td(r["big30_r"], "wan"), td(r["bigday"], "wan")
+        c_rb30 = (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}'>{r['rbuy30_r']:.1f}%</td>"
+                  if (r.get("rbuy30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
+        c_rs30 = (f"<td>{r['rsell30_r']:.1f}%</td>"
+                  if (r.get("rsell30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
+        c_dsh = td(r["dsh30_r"], "bps", True, r["unm"]).replace("bps", "")
+        c_w5 = td(r["w_ret_r"], "bps")
+        c_ret5 = td(r["retn5_r"], "wan", unm=r["unm"])
+        c_rb5 = (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}'>"
+                 f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
+        c_rs5 = (f"<td>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
+        c_retday = td(r["retday"], "wan", unm=r["unm"])
+        # 新欄:全日大戶 − 全日散戶(萬);|差| ≥ 全日成交 5% 粗體
+        if r.get("bigday") is not None and r.get("retday") is not None and not r["unm"]:
+            _dv = r["bigday"] - r["retday"]
+            _tot = (ST.day.get(r["sid"]) or {}).get("tot") or 0
+            _bold = "font-weight:700" if (_tot and abs(_dv) >= 0.05 * _tot) else ""
+            c_diff = f"<td class='{'up' if _dv > 0 else ('dn' if _dv < 0 else '')}' style='{_bold}'>{_dv/1e4:+,.0f}</td>"
+        else:
+            c_diff = "<td class='dim'>—</td>"
+        c_bigsh = (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
+                   if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
+        c_cmp = (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
+                 if r["cmp1h"] is not None else "<td class='dim'>—</td>")
+        c_dtr = (("<td class='up' style='font-size:11px'>↑多"
+                  + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
+                  + "</td>" if r['dtrend']['above_ma5']
+                  else "<td class='dn' style='font-size:11px'>↓空"
+                  + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
+                  + "</td>")
+                 if r.get("dtrend") else "<td class='dim'>—</td>")
+        c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
+                f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
+        c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
+                  f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
         trs.append(
-            f"<tr{_band}>"
-            f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
-            f"title=\"{html_mod.escape(_stock_tip(r['sid']), quote=True).replace(chr(10), '&#10;')}\" "
-            f"style='color:inherit;text-decoration:none'>{name}</a>"
-            f"<span class='cat'>{r['cat']}</span></td>"
-            + vr_td(r)
-            + (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
-               f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
-            + _pxtd
-            + _fbtd + _fatd
-            + _chgtd
-            + td(r["day_ret"], "pct2")
-            + td(r["r30_r"], "bps")
-            + (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
-               f"style='font-size:11px'>{r['mkt_ctx']}</td>"
-               if r.get("mkt_ctx") else "<td class='dim'>—</td>")
-            + td(r["big5_r"], "wan") + td(r["big30_r"], "wan") + td(r["bigday"], "wan")
-            + (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}'>{r['rbuy30_r']:.1f}%</td>"
-               if (r.get("rbuy30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + (f"<td>{r['rsell30_r']:.1f}%</td>"
-               if (r.get("rsell30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + td(r["dsh30_r"], "bps", True, r["unm"]).replace("bps", "")
-            + td(r["w_ret_r"], "bps") + td(r["retn5_r"], "wan", unm=r["unm"])
-            + (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}'>"
-               f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + (f"<td>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-            + td(r["retday"], "wan", unm=r["unm"])
-            + _wrt5td + _wrt30td
-            + (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
-               if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
-            + (f"<td class='{'dn' if r['cmp1h'] < 0 else ''}'>{r['cmp1h']:+.2f}%</td>"
-               if r["cmp1h"] is not None else "<td class='dim'>—</td>")
-            + (("<td class='up' style='font-size:11px'>↑多"
-                + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
-                + "</td>" if r['dtrend']['above_ma5']
-                else "<td class='dn' style='font-size:11px'>↓空"
-                + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
-                + "</td>")
-               if r.get("dtrend") else "<td class='dim'>—</td>")
-            + (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
-               f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
-            + (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
-               f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
-            + _sigtd
-            + _stock_note_td(r["sid"])
+            f"<tr{_band}>" + c_nm
+            + _pxtd + _chgtd + c_open + c_w5 + c_r30 + c_ctx          # ① 價
+            + _sigtd + _stock_note_td(r["sid"])                        # ② 決策
+            + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ③ 5分:大戶→散戶→權證
+            + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td             # ④ 30分
+            + c_bigday + c_retday + c_diff + c_bigsh                   # ⑤ 全日
+            + c_cmp + c_dtr + c_rs + c_rvol + c_vr + c_amp             # ⑥ 結構/隔夜
+            + _fbtd + _fatd                                            # ⑦ 期貨
             + "</tr>")
 
     try:
@@ -1715,25 +1725,36 @@ def render():
 <div class="flagbar" hidden>{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th class="stk">股票<span class="sub">點名稱看詳情</span></th>
-<th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
-<th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
-<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:30~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價">現價</th><th title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買<span class="sub">買一價×量</span></th><th title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th><th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:30~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th><th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
+<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:30~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價">現價</th>
+<th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:30~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th>
+<th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
+<th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">bps</span></th>
 <th class="g30" title="近30分鐘價格報酬,單位bps(1bps=0.01%)。主尺度。每秒滾動(現價 vs 1800秒前成交價);訊號標籤用完成5分桶版">近30分漲跌<span class="sub">bps·滾動</span></th>
 <th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格。門檻:個股|30分|≥20bps∧市場≥5bps才標。">順逆大盤</th>
+<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
+<th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 <th class="gd" title="近5分大戶淨額(萬),每秒滾動(往回300秒)。大戶=單筆成交≥1000萬,按主動方向計正負。訊號標籤用完成5分桶版。">5分大戶<span class="sub">淨額·萬·滾動</span></th>
+<th class="g5" title="5分窗散戶淨額(萬)。散戶=1張且<500萬。">5分散戶<span class="sub">淨額·萬</span></th>
+<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">5分散買<span class="sub">參與%</span></th>
+<th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">5分散賣<span class="sub">參與%</span></th>
+<th class="g5" title="權證5分:該標的底下全部權證近5分。數字=認購/認售 成交額(活動量,萬);小字=簽號後『多方占比』=(主動買認購+主動賣認售)÷全部主動額;判斷與顏色同一規則:占比≥60%=偏多(紅)、≤40%=偏空(綠)、其間=中性(灰)。主動方以每筆成交價對當下買一/賣一判定(富邦 ws 逐筆)。名單=前一日成交額前600檔活躍權證。⚠描述性、尚未回測">權證5分<span class="sub">購/售·萬 (多方%) 判斷</span></th>
 <th class="g30" title="近30分大戶淨額(萬),每秒滾動(往回1800秒)。大戶=單筆≥1000萬。主尺度;訊號標籤用完成5分桶版。">30分大戶<span class="sub">淨額·萬·滾動</span></th>
-<th class="gd" title="全日累計大戶淨額(萬)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶<span class="sub">淨額·萬</span></th>
 <th class="g30" title="30分散戶買方參與(毒藥側,≥5%標黃)。散戶=1張且<500萬。">30分散買<span class="sub">參與%</span></th>
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">30分散賣<span class="sub">參與%</span></th>
 <th class="g30" title="30分散戶買方參與 − 前一段參與%,即散戶參與度的變化(跳升=散戶湧入)">散戶參與Δ<span class="sub">30分</span></th>
-<th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">bps</span></th><th class="g5" title="5分窗散戶淨額(萬)。散戶=1張且<500萬。">5分散戶<span class="sub">淨額·萬</span></th>
-<th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">5分散買<span class="sub">參與%</span></th><th class="g5" title="散戶賣方參與(投降側:無資訊,less bad)">5分散賣<span class="sub">參與%</span></th><th class="gd" title="全日累計散戶淨額(萬)。散戶=1張且<500萬。">全日散戶<span class="sub">淨額·萬</span></th>
-<th class="g5" title="權證5分:該標的底下全部權證近5分。數字=認購/認售 成交額(活動量,萬);小字=簽號後『多方占比』=(主動買認購+主動賣認售)÷全部主動額;判斷與顏色同一規則:占比≥60%=偏多(紅)、≤40%=偏空(綠)、其間=中性(灰)。主動方以每筆成交價對當下買一/賣一判定(富邦 ws 逐筆)。名單=前一日成交額前600檔活躍權證。⚠描述性、尚未回測">權證5分<span class="sub">購/售·萬 (多方%) 判斷</span></th><th class="g30" title="權證30分:近30分 認購/認售 成交額(萬),小字=簽號後多方占比,判斷:≥60%偏多(紅)/≤40%偏空(綠)/其間中性(灰)。主尺度。資料源富邦 ws 逐筆(2連線×300檔)。⚠描述性、尚未回測,不是訊號;『權證做多』看占比與判斷,不看購/售活動量">權證30分<span class="sub">購/售·萬 (多方%) 判斷</span></th>
+<th class="g30" title="權證30分:近30分 認購/認售 成交額(萬),小字=簽號後多方占比,判斷:≥60%偏多(紅)/≤40%偏空(綠)/其間中性(灰)。主尺度。資料源富邦 ws 逐筆(2連線×300檔)。⚠描述性、尚未回測,不是訊號;『權證做多』看占比與判斷,不看購/售活動量">權證30分<span class="sub">購/售·萬 (多方%) 判斷</span></th>
+<th class="gd" title="全日累計大戶淨額(萬)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶<span class="sub">淨額·萬</span></th>
+<th class="gd" title="全日累計散戶淨額(萬)。散戶=1張且<500萬。">全日散戶<span class="sub">淨額·萬</span></th>
+<th class="gd" title="全日大戶淨額 − 全日散戶淨額(萬)。兩者異號才有意義:正大=大戶買、散戶賣(籌碼換手到大戶,對應主力點火/蓄勢隔夜側);負大=大戶賣、散戶接(日級證據:散戶接大戶貨偏反指標)。粗體=|差|≥全日成交5%。同號時只是放大,看全日大戶即可。">大戶−散戶<span class="sub">全日·萬</span></th>
 <th class="gd" title="當日大戶淨流÷成交金額=隔夜排序主鍵(IC+0.097/t7.1)">大戶佔比<span class="sub">÷成交%</span></th>
 <th class="gd" title="現價÷最近12個5分桶均價−1(=近1小時位置)。負=壓著(彈簧),隔夜挑股用;需≥8桶,13:20後最有意義。">壓縮<span class="sub">對1h均%</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
-<th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th><th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
-<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th><th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
+<th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
+<th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
+<th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
+<th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
+<th title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買<span class="sub">買一價×量</span></th>
+<th title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
