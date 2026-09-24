@@ -683,7 +683,7 @@ class S:
         self.first_done = set()
         self.buckets = {}                       # sid -> {bk: {...}}
         self.day = defaultdict(lambda: {"big": 0., "ret": 0., "ret2": 0., "mid": 0.,
-                                        "tot": 0., "big_pm": 0., "px0": None})
+                                        "tot": 0., "big_pm": 0., "px0": None, "hi": None, "lo": None})
         self.book = {}                          # sid -> latest snapshot
         # 每檔最近 ~60 分鐘逐筆 (ts, px, amt, sgn, is_big, is_retail):供 5分/30分 欄位**每秒滾動窗**
         # (2026-09-23 jack 要求)。標籤/旗標仍依完成的 5 分桶判定(=127 日回測定義),不走這裡。
@@ -817,6 +817,8 @@ def _ingest_trade(line):
              "px": None, "vol": 0., "pxvol": 0.})
     row["px"] = px
     ds = ST.day[sid]
+    ds["hi"] = px if ds.get("hi") is None else max(ds["hi"], px)   # 今日高低(振幅倍數用)
+    ds["lo"] = px if ds.get("lo") is None else min(ds["lo"], px)
     if ds["px0"] is None:
         ds["px0"] = px
     if gap and amt >= GAP_JUMP_AMT:
@@ -1230,6 +1232,7 @@ def _score_td(r):
     tip = ("隔夜分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_ov_items"]) or "無") +
            " ‖ 盤中分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_in_items"]) or "無") +
            f" ‖ 盤中分(不含權證) {r.get('sc_in_nowrt', 0):+d}" +
+           (f" ‖ 高波動日 ×(今日振幅 {r['amp_ratio']:.1f}x 20日均:同分對應更大 bps,分數不變)" if (r.get("amp_ratio") or 0) >= 1.5 else "") +
            " ‖ 權重依127日基準率 0/±1/±2;加總分未驗證,累20日算IC")
     z = TX_LAST.get("z")
     bg = " background:#21262d;" if (z is not None and abs(z) >= 1) else ""
@@ -1821,13 +1824,29 @@ def render():
                   f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
         c_rvd = (f"<td class='{'wall' if r['rvol_day'] >= 1.5 else ('dim' if r['rvol_day'] < 0.7 else '')}'>{r['rvol_day']:.2f}x</td>"
                  if r.get("rvol_day") is not None else "<td class='dim'>—</td>")
+        # 今日振幅倍數 = (今高−今低)/昨收% ÷ 20日均振幅%;波動聚集只預測振幅不預測方向 → 不進淨分,當倍率/風控提示
+        _pc = PREV_CLOSE.get(r["sid"]); _ds = ST.day.get(r["sid"]) or {}
+        if _pc and _ds.get("hi") and _ds.get("lo") and r.get("amp20"):
+            _a20 = r["amp20"]
+            _ampt = (_ds["hi"] - _ds["lo"]) / _pc * 100; _ar = _ampt / _a20 if _a20 > 0 else None
+            r["amp_ratio"] = _ar
+            if _ar is None:
+                c_ampr = "<td class='dim'>—</td>"
+            else:
+                _acls = 'warnv' if _ar >= 1.5 else ('dim' if _ar < 0.7 else '')
+                _abold = 'font-weight:700' if _ar >= 1.5 else ''
+                c_ampr = (f"<td class='{_acls}' style='{_abold}' title='今日振幅 {_ampt:.2f}% ÷ 20日均振幅 {_a20:.2f}% = {_ar:.2f}x。"
+                          f"波動聚集:只預測明日振幅(真),方向 IC≈0 → 不進淨分;≥1.5x = 高波動日,淨分同分對應更大 bps、砍尾閾值可放寬'>{_ar:.2f}x</td>")
+        else:
+            r["amp_ratio"] = None
+            c_ampr = "<td class='dim'>—</td>"
         trs.append(
             f"<tr{_band}>" + c_nm
             + _pxtd + _fbtd + _fatd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價)
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td             # ③ 30分
             + c_bigday + c_retday + c_diff + c_bigsh                   # ④ 全日
-            + c_cmp + c_dtr + c_rs + c_rvol + c_rvd + c_vr + c_amp     # ⑤ 結構/隔夜(+全日量能)
+            + c_cmp + c_dtr + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -1883,6 +1902,7 @@ def render():
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
 <th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
+<th title="今日振幅倍數 = (今高−今低)/昨收% ÷ 20日均振幅%。波動聚集:預測明日振幅為真、方向 IC≈0(tick排列/籌碼分數兩線驗過)→ 不投票、不進淨分;≥1.5x 黃粗=高波動日:同樣淨分對應更大 bps、急殺z 砍尾閾值可放寬、部位縮小。">今日振幅<span class="sub">÷20日均 x</span></th>
 <th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
 <th title="淨分 = 隔夜分(收盤→明開)與盤中分(未來30分)分開計,不混加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1。盤中(只算時距內未✗的即時標籤):主力點火/純機構 +2 · 深接 +1 · 機構暗退/噴後過熱 −2 · 散戶虛拉/破昨防線 −1 · 勿追 −1(市場30分>0 時記0)· 權證30分≥100萬:偏多∧價漲 −1、偏多∧大戶賣 −1、偏空∧大戶買 +1(未驗證)。權重依127日基準率 0/±1/±2;加總分本身未驗證,累20日算IC。灰底=台指1分|z|≥1 砍尾中。滑鼠移上看逐項。">淨分<span class="sub">隔夜 · 盤中</span></th>
 <th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
