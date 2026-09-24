@@ -73,7 +73,23 @@ PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector pre
 FUT_PX: dict = {}    # 個股期貨即時 sid->{px,sym,t,bid,bidsz,ask,asksz,bt}(futprice_*.json;bid/ask 來自 ws books)
 WRT: dict = {}       # 權證多空 sid->{call_30,put_30,call_day,put_day,...}(warrantflow_*.json;MIS 輪詢,描述性未回測)
 TX_SER: dict = {"day": None, "t": [], "px": [], "off": 0}
-TX_LAST: dict = {"z": None}   # 台指 1 分 z 最近值(_tx_panel 每秒更新,淨分欄用)   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
+TX_LAST: dict = {"z": None}   # 台指 1 分 z 最近值(_tx_panel 每秒更新,淨分欄用)
+WRT_MIN: dict = {"day": None, "off": 0, "data": {}}   # 權證逐筆 → sid -> {HH:MM: 簽號淨額(元,購+/售−×主動方)},供各圖紫線
+AGG: dict = {}                                        # 36 檔分鐘加總累計(大戶/散戶/權證),供台指面板;render_grid_frag 每 5 秒更新
+
+
+def _wrt_cum(sid, order):
+    """依分鐘鍵 order 回傳權證簽號淨額的累計序列(元);無資料回 None。"""
+    d = WRT_MIN["data"].get(sid)
+    if not d:
+        return None
+    keys = sorted(d)
+    out, c, j = [], 0.0, 0
+    for k in order:
+        while j < len(keys) and keys[j] <= k:
+            c += d[keys[j]]; j += 1
+        out.append(c)
+    return out   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
 #: 頁首可編輯筆記(2026-09-24):存在資料目錄,不進 git;沒有檔案時顯示預設紀律條
 NOTES_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "dashboard_notes.html"
 DEFAULT_NOTES = "（自由書寫的筆記區：點這裡開始輸入；Enter 換行，停止輸入 1.5 秒自動儲存，Ctrl/Cmd+S 立即儲存。紀律條全文見 📖 欄位說明。）"
@@ -112,6 +128,28 @@ def _save_stock_note(sid, txt):
     STOCK_NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
     STOCK_NOTES_PATH.write_text(json.dumps(STOCK_NOTES, ensure_ascii=False, indent=0), encoding="utf-8")
     return STOCK_NOTES[sid]["t"]
+
+
+def _agg_lines(t0, t1, W, H, L, R):
+    """台指面板疊圖:36 檔累計大戶(紅)/散戶(藍)/權證簽號(紫)加總,各自以 ±最大值正規化到同一畫面(0 線置中)。"""
+    if not AGG.get("mins"):
+        return ""
+    mins = AGG["mins"]; mid = H / 2
+    def X(hm):
+        h, m = hm.split(":"); ts = t0 + ((int(h) - 8) * 60 + int(m) - 45) * 60
+        return L + max(0.0, min(1.0, (ts - t0) / (t1 - t0))) * (W - L - R)
+    out = [f"<line x1='{L}' y1='{mid:.0f}' x2='{W-R}' y2='{mid:.0f}' stroke='#30363d' stroke-dasharray='2,3'/>"]
+    lab = []
+    for key, col, nm in (("big", "#ff7b72", "大戶"), ("ret", "#58a6ff", "散戶"), ("wrt", "#d2a8ff", "權證")):
+        v = AGG.get(key) or []
+        if not v:
+            continue
+        mx = max(abs(x) for x in v) or 1.0
+        pts = " ".join(f"{X(k):.0f},{mid - (x / mx) * (H / 2 - 8):.0f}" for k, x in zip(mins, v))
+        out.append(f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.2' opacity='0.85'/>")
+        lab.append(f"<tspan fill='{col}'>{nm} {v[-1]/1e4:+,.0f}萬(尺±{mx/1e4:,.0f})</tspan>")
+    out.append(f"<text x='{W-R}' y='{H-2}' font-size='9' text-anchor='end'>36檔累計 " + " ".join(lab) + "</text>")
+    return "".join(out)
 
 
 def _tx_panel(now):
@@ -167,6 +205,7 @@ def _tx_panel(now):
            + (f"<line x1='{L}' y1='{Y(fpc):.1f}' x2='{W-R}' y2='{Y(fpc):.1f}' stroke='#8b949e' stroke-dasharray='3,3'/>" if fpc else "")
            + f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.2'/>"
            + f"<circle cx='{X(nts):.1f}' cy='{Y(last):.1f}' r='2.5' fill='{col}'/>"
+           + _agg_lines(t0, t1, W, H, L, R)
            + f"<text x='{L}' y='10' font-size='9' fill='#8b949e'>{hi:,.0f}</text>"
            + f"<text x='{L}' y='{H-1}' font-size='9' fill='#8b949e'>{lo:,.0f}</text></svg>")
     f = lambda v: f"{v:+.0f}" if v is not None else "—"  # noqa: E731
@@ -768,6 +807,31 @@ def ingest():
                         if o.get("px") and (not TX_SER["t"] or ts > TX_SER["t"][-1]):
                             TX_SER["t"].append(ts)
                             TX_SER["px"].append(float(o["px"]))
+                    except Exception:  # noqa: BLE001
+                        continue
+    except Exception:  # noqa: BLE001
+        pass
+    # 權證逐筆(collect_warrant_ws 落地)增量聚合成每分鐘簽號淨額:購 +dirn、售 −dirn
+    try:
+        if WRT_MIN["day"] != today:
+            WRT_MIN.update({"day": today, "off": 0, "data": {}})
+        wtf = _bd.parent / "warrant_trades_ws" / f"warrant_trades_{today}.jsonl"
+        if wtf.exists():
+            with open(wtf, "rb") as f:
+                f.seek(WRT_MIN["off"])
+                chunk = f.read()
+            nl = chunk.rfind(b"\n")
+            if nl != -1:
+                WRT_MIN["off"] += nl + 1
+                for line in chunk[:nl].split(b"\n"):
+                    try:
+                        o = json.loads(line)
+                        sgn = (o.get("dirn") or 0) * (1 if o.get("side") == "購" else -1)
+                        if not sgn:
+                            continue
+                        hm = o["ts"][11:16]
+                        dd = WRT_MIN["data"].setdefault(str(o["sid"]), {})
+                        dd[hm] = dd.get(hm, 0.0) + sgn * float(o["price"]) * float(o["size"]) * 1000
                     except Exception:  # noqa: BLE001
                         continue
     except Exception:  # noqa: BLE001
@@ -2377,6 +2441,12 @@ def _svg_detail(sid, day, st, pc):
     rpts = " ".join(f"{X(k):.1f},{FY(r):.1f}" for k, _, r in cum)
     parts.append(f"<polyline points='{bpts}' fill='none' stroke='#ff7b72' stroke-width='1.8' opacity='0.85'/>")
     parts.append(f"<polyline points='{rpts}' fill='none' stroke='#58a6ff' stroke-width='1.3' opacity='0.85'/>")
+    wc = _wrt_cum(sid, order); wmax = 0.0
+    if wc and any(abs(v) > 0 for v in wc):
+        wmax = max(abs(v) for v in wc) or 1.0
+        wpts = " ".join(f"{X(k):.1f},{fmid - (v / wmax) * (plotH / 2 - 8):.1f}" for k, v in zip(order, wc))
+        parts.append(f"<polyline points='{wpts}' fill='none' stroke='#d2a8ff' stroke-width='1.2' opacity='0.9'/>")
+        parts.append(f"<text x='{W-PADR+4}' y='{PADT+plotH-2:.1f}' fill='#d2a8ff' font-size='9'>權±{wmax/1e4:,.0f}萬</text>")
     for wan, y in ((amax, FY(amax)), (0, fmid), (-amax, FY(-amax))):
         parts.append(f"<text x='{W-PADR+4}' y='{y+3:.1f}' fill='#8b949e' font-size='10'>{wan:+,.0f}萬</text>")
     # 參考線:昨收(灰)/漲停(紅)/跌停(綠)
@@ -2397,12 +2467,14 @@ def _svg_detail(sid, day, st, pc):
     parts.append(f"<text x='{PADL+80}' y='{PADT+11}' fill='#ff7b72' font-size='10'>— 累計大戶淨(右軸·萬)</text>")
     parts.append(f"<text x='{PADL+210}' y='{PADT+11}' fill='#58a6ff' font-size='10'>— 累計散戶淨</text>")
     parts.append(f"<text x='{PADL+300}' y='{PADT+11}' fill='#3b5170' font-size='10'>▮ 量(底部)</text>")
+    parts.append(f"<text x='{PADL+370}' y='{PADT+11}' fill='#d2a8ff' font-size='10'>— 累計權證簽號淨(自訂尺)</text>")
     for hm in ("09:00", "10:00", "11:00", "12:00", "13:00", "13:30"):
         parts.append(f"<text x='{X(hm):.1f}' y='{H-6}' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
     parts.append("</svg>")
     # hover 資料:每分鐘 [x, y(價), 時間, 價, 累計大戶萬, 累計散戶萬, 量張]
     cumd = {k: (b, r) for k, b, r in cum}
-    hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"])]
+    wcd = dict(zip(order, wc)) if wc else {}
+    hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"]), round(wcd.get(k, 0) / 1e4)]
                       for k in order if mins[k]["px"]])
     return "".join(parts).replace("__PTS__", html_mod.escape(hov, quote=True), 1)
 
@@ -2465,7 +2537,7 @@ HOVER_JS = """<script>(function(){
     const r=svg.getBoundingClientRect(), sc=r.width/parseFloat(svg.dataset.vw||'940'), x=(e.clientX-r.left)/sc;
     let best=null,bd=1e9; for(const p of svg._pts){const d=Math.abs(p[0]-x); if(d<bd){bd=d;best=p;}}
     if(!best||bd>8){tip.style.display='none';ln.style.display='none';return;}
-    tip.innerHTML=best[2]+' <b>'+best[3]+'</b><br>大戶累計 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span> · 散戶累計 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span><br>該分鐘量 '+best[6].toLocaleString()+' 張';
+    tip.innerHTML=best[2]+' <b>'+best[3]+'</b><br>大戶累計 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span> · 散戶累計 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span><br>權證簽號累計 <span style="color:#d2a8ff">'+(best[7]||0).toLocaleString()+'萬</span> · 該分鐘量 '+best[6].toLocaleString()+' 張';
     tip.style.display='block'; const lx=r.left+best[0]*sc;
     ln.style.left=lx+'px'; ln.style.top=r.top+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
     tip.style.left=Math.min(lx+10,window.innerWidth-230)+'px'; tip.style.top=(r.top+best[1]*sc-40)+'px';
@@ -2480,7 +2552,7 @@ def _svg_mini(st, pc):
     """6×6 總覽用迷你疊圖:價(黃)+昨收虛線 + 累計大戶(紅)/散戶(藍)右軸 + 量(底部面積)。無文字、座標取整、preserveAspectRatio=none 拉滿格子。"""
     mins = st["mins"]
     if not mins:
-        return "<svg viewBox='0 0 320 170' preserveAspectRatio='none' style='width:100%;height:100%'></svg>", 1
+        return "<svg viewBox='0 0 320 170' preserveAspectRatio='none' style='width:100%;height:100%'></svg>", 1, 0
     order = sorted(mins.keys())
     W, H = 320, 170
 
@@ -2517,11 +2589,16 @@ def _svg_mini(st, pc):
     parts.append(f"<line x1='0' y1='{mid:.0f}' x2='{W}' y2='{mid:.0f}' stroke='#30363d' stroke-width='1'/>")
     parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{FY(b):.0f}" for k, b, _ in cum) + "' fill='none' stroke='#ff7b72' stroke-width='1.4' opacity='0.85'/>")
     parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{FY(r):.0f}" for k, _, r in cum) + "' fill='none' stroke='#58a6ff' stroke-width='1.1' opacity='0.85'/>")
+    wc = _wrt_cum(st.get("sid") or "", order) if st.get("sid") else None
+    wmax = 0.0
+    if wc and any(abs(v) > 0 for v in wc):
+        wmax = max(abs(v) for v in wc) or 1.0
+        parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{mid - (v / wmax) * (H / 2 - 6):.0f}" for k, v in zip(order, wc)) + "' fill='none' stroke='#d2a8ff' stroke-width='1.1' opacity='0.9'/>")
     if pc:
         parts.append(f"<line x1='0' y1='{Y(pc):.0f}' x2='{W}' y2='{Y(pc):.0f}' stroke='#8b949e' stroke-dasharray='3 3' opacity='0.7'/>")
     parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{Y(mins[k]['px']):.0f}" for k in order if mins[k]["px"]) + "' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
     parts.append("</svg>")
-    return "".join(parts), amax
+    return "".join(parts), amax, wmax
 
 
 def render_grid_frag(sort="ind"):
@@ -2542,19 +2619,47 @@ def render_grid_frag(sort="ind"):
         bd = r.get("bigday") or 0; rd = r.get("retday") if r.get("retday") is not None else (st.get("ret_day") or 0)
         tags = (r.get("bull_txt") or "").split("·")[:1] + (r.get("bear_txt") or "").split("·")[:1]
         tagh = "".join(f"<span class='{'sigup' if i == 0 else 'sigdn'}'>{t}</span>" for i, t in enumerate(tags) if t)
-        svg, amax = _svg_mini(st, pc)
+        st["sid"] = sid
+        svg, amax, wmax = _svg_mini(st, pc)
         cells.append(f"<a class='cell' href='/stock?sid={sid}' target='_blank'>"
                      f"<div class='ch'><b>{sid} {NAMES.get(sid, '')}</b> {pxs} · 大戶 <span class='{'up' if bd > 0 else 'dn'}'>{bd/1e4:+,.0f}</span>"
                      f" 散 <span class='{'up' if rd > 0 else 'dn'}'>{rd/1e4:+,.0f}</span> {tagh}"
-                     f"<span class='dim' style='float:right'>尺±{amax/1e4:,.0f}萬</span></div>"
+                     f"<span class='dim' style='float:right'>尺±{amax/1e4:,.0f}萬"
+                     + (f" <span style='color:#d2a8ff'>權±{wmax/1e4:,.0f}萬</span>" if wmax else "") + "</span></div>"
                      f"<div class='cc'>{svg}</div></a>")
-    return f"<div class='meta' style='margin:0 0 2px'>更新 {datetime.now(TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 底=量 · 點格子開詳情</div>" + "".join(cells)
+    # 36 檔分鐘加總累計(大戶/散戶/權證)→ AGG,供台指面板紅/藍/紫線
+    try:
+        allk = sorted({k for r in rows for k in (_stock_series(r["sid"], day)["mins"] or {})})
+        big = {k: 0.0 for k in allk}; ret = {k: 0.0 for k in allk}; wrt = {k: 0.0 for k in allk}
+        for r in rows:
+            mm = _stock_series(r["sid"], day)["mins"]
+            for k, v in mm.items():
+                big[k] += v["big"]; ret[k] += v["ret"]
+            wd = WRT_MIN["data"].get(r["sid"]) or {}
+            for k, v in wd.items():
+                if k in wrt:
+                    wrt[k] += v
+        cb = cr = cw = 0.0; B = []; Rr = []; Wv = []
+        for k in allk:
+            cb += big[k]; cr += ret[k]; cw += wrt[k]; B.append(cb); Rr.append(cr); Wv.append(cw)
+        AGG.update({"mins": allk, "big": B, "ret": Rr, "wrt": Wv, "t": datetime.now(TZ).strftime("%H:%M:%S")})
+    except Exception as _e:  # noqa: BLE001
+        print(f"[agg] {_e!r}", file=sys.stderr)
+    tx_row = ""
+    try:
+        _tp = _tx_panel(datetime.now(TZ))
+        if _tp:
+            tx_row = "<div class='txrow'>" + _tp.replace("<div id='txsrc' hidden>", "<div>", 1) + "</div>"
+    except Exception as _e:  # noqa: BLE001
+        print(f"[grid-tx] {_e!r}", file=sys.stderr)
+    return tx_row + f"<div class='meta' style='margin:0 0 2px'>更新 {datetime.now(TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 紫=累計權證簽號淨 · 底=量 · 點格子開詳情</div>" + "".join(cells)
 
 
 GRID_SHELL = """<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>36檔圖形總覽</title><style>
 html,body{height:100%;margin:0;background:#0d1117;color:#c9d1d9;font:11px/1.35 -apple-system,'PingFang TC',monospace}
-#g{display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(6,1fr);gap:4px;height:calc(100vh - 22px);padding:2px 4px 4px}
+#g{display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:auto 16px repeat(6,1fr);gap:4px;height:calc(100vh - 6px);padding:2px 4px 4px}
+#g .txrow{grid-column:1/-1;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 8px;font-size:12px;line-height:1.5}
 #g .meta{grid-column:1/-1;height:16px;color:#8b949e;font-size:10px}
 .cell{display:flex;flex-direction:column;min-height:0;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:2px 4px;color:inherit;text-decoration:none}
 .cell:hover{border-color:#58a6ff}
@@ -2735,6 +2840,12 @@ def loop():
             elif not done_close:
                 ingest()          # 收盤後補跑一次定格,之後停工
                 render()
+                try:              # 盤後定格也要有 36 檔加總(台指面板紅/藍/紫線)與總覽快取:先建 AGG 再重繪一次
+                    PAGE["grid"] = render_grid_frag("ind")
+                    PAGE["grid_t"] = time.time()
+                    render()
+                except Exception as _ge:  # noqa: BLE001
+                    print(f"[grid-close] {_ge!r}", file=sys.stderr)
                 snapshot_day()
                 try:
                     _oos_update_at_close()
