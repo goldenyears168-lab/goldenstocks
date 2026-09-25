@@ -943,34 +943,69 @@ class S:
         # 每檔最近 ~60 分鐘逐筆 (ts, px, amt, sgn, is_big, is_retail):供 5分/30分 欄位**每秒滾動窗**
         # (2026-09-23 jack 要求)。標籤/旗標仍依完成的 5 分桶判定(=127 日回測定義),不走這裡。
         self.recent = defaultdict(deque)
-        # 隱形大戶守價位偵測(2026-09-25 jack 交辦,見 _iceberg_update docstring):sid -> {"bid":{...}|None,"ask":{...}|None}
-        self.iceberg = defaultdict(lambda: {"bid": None, "ask": None})
+        # 隱形大戶守價位偵測(2026-09-25 jack 交辦,見 _iceberg_update docstring):
+        # sid -> {"bid":{price_key:state}, "ask":{price_key:state}, "last_breakout":{...}|None}
+        self.iceberg = defaultdict(lambda: {"bid": {}, "ask": {}, "last_breakout": None})
 
 
 ST = S()
 
-ICEBERG_MIN_QTY = 5.0        # 張;低於此視為五檔快照雜訊,不算「被吃」/「補回」(同研究腳本)
-ICEBERG_MIN_HITS = 3         # 至少被吃幾次才算候選守價位
-ICEBERG_MIN_REFILLS = 2      # 至少補回幾次才算候選守價位
+ICEBERG_EXHAUST_FRAC = 0.15    # 量降到≤原量15%(或≤5張)才算「耗盡」(Frey&Sandås:trade exhausts all displayed depth)
+ICEBERG_EXHAUST_MIN_ABS = 5.0
+ICEBERG_REPLENISH_FRAC = 0.5   # 補回到耗盡前≥50%,第一次補回=「偵測到」(原文:detected after the first replenishment)
+ICEBERG_GRACE_SEC = 20 * 60    # 價位暫時滑出五檔的寬限期(原文:keeps state until expected replenishment has not occurred)
+ICEBERG_TRADE_TOL = 0.003      # 成交價須在守價位±0.3%內才算confirm(交叉比對真實逐筆成交)
+ICEBERG_TRADE_LOOKBACK = 30    # 秒,confirm用的成交回看窗
+
+
+def _iceberg_trade_confirms(sid, ts_lo, ts_hi, price):
+    """交叉比對 ST.recent[sid](逐筆真實成交,_ingest_trade 已在填)是否有成交打在 price 附近、
+    時間落在 [ts_lo, ts_hi]。取代舊版用『當天累計量有沒有動』當代理(落差三,見腳本開頭說明)。"""
+    lo, hi = price * (1 - ICEBERG_TRADE_TOL), price * (1 + ICEBERG_TRADE_TOL)
+    for ts, px, _amt, _sgn, _big, _ret in ST.recent.get(sid, ()):
+        if ts < ts_lo:
+            continue
+        if ts > ts_hi:
+            break
+        if lo <= px <= hi:
+            return True
+    return False
 
 
 def _iceberg_update(r):
-    """隱形大戶守價位·即時串流版(2026-09-25 jack 交辦:「放進HTML作為價格指標」)。
+    """隱形大戶守價位·即時串流版,依 Frey & Sandås (2009) 原始演算法重建
+    (2026-09-25 jack 交辦:「給你五個小時,你慢慢仔細地完成,請你一字一句的參考文獻的真正
+    正確用法」)。文獻:Frey, S. & Sandås, P. (2009) "The Impact of Iceberg Orders in Limit
+    Order Books", CFR Working Paper No. 09-06, University of Cologne。
 
-    邏輯與 scripts/research/iceberg_replenish_detect.py 的 scan_side()(離線批次版)完全一致,
-    改寫成逐筆到來時更新的串流版,追蹤每檔買一/賣一各自「目前這個價位」被吃(量降∧同時段真有
-    成交)、補回(量升)的次數,累計到「被吃≥3∧補回≥2」才視為候選守價位,顯示在儀表板上。
+    原文 Appendix A3 逐字引用:"The algorithm assumes an iceberg to be detected after the
+    first replenishment. After the detection the algorithm keeps the detection state until
+    all visible volume of the quote is cancelled or an expected replenishment has not
+    occurred."、"The algorithm remembers the indicator values for multiple prices so if the
+    current best quote...is undercut but later becomes the best quote again the algorithm
+    assumes that the iceberg order is still there."
 
-    ⚠ 2026-09-25 用 14 個交易日(2026-09-05~09-24,watchlist_books)做的前瞻報酬初測
-    (scratch/iceberg_replenish_2026-09-25.txt)結果是 NULL,不是訊號:
-      · 盤中(事件結束後5/15/30分鐘,mid price):買一守價與賣一守價兩側報酬都貼近0、
-        |t|<1、勝率35~38%(低於50%,像是mid price買賣價彈跳的雜訊特徵,不是方向訊號)。
-      · 隔夜(次日官方收盤 vs 當日收盤):買一守價+32.2bps、賣一守價+36.1bps——**兩側方向
-        跟大小幾乎一樣**,不是「買方守價漲、賣方守價跌」的預期反向模式,比較像在量測當期
-        整體市場漂移,不是個股資訊;且兩者 t 值都 <1,統計上不顯著。
-      · 樣本天數(14日日聚類)遠低於這個問題過去自己設的 ≥60 日門檻,現在的狀態是
-        「初步看不到訊號」,不是「已經證明沒有」——之後累積更多天數才能重新檢定。
-    這個欄位純粹是**狀態顯示**(告訴你現在有沒有這種模式、在哪個價位),不是訊號,不進分數。
+    第一版(2026-09-25 稍早)跟原文有三個落差,這版修正:
+      落差一(觸發條件):原版「量降≥5張」就算被吃,太寬鬆;原文是「trade EXHAUSTS ALL
+        displayed depth」——改成量降到接近零(≤原量15%或≤5張)才算「耗盡」。
+      落差二(追蹤對象):原版只追「當下最優價」,排名一換就重置;原文追蹤「固定價位」,
+        排名滑動仍持續追蹤——改成五檔全部價位都用價位當鍵追蹤,見 ST.iceberg[sid][side]
+        現在是 {price_key: state} 字典,不是單一 cur。
+      落差三(耗盡確認):原版只看「當天累計量 v 有沒有動」,不知道打在哪個價位;
+        改成交叉比對 ST.recent[sid] 的逐筆真實成交價格是否落在該價位附近。
+
+    2026-09-25 用 14 個交易日重跑(scripts/research/iceberg_frey_sandas_rebuild.py,
+    scratch/iceberg_frey_sandas_2026-09-25.txt)结果,跟修正前差很多:
+      · 靠山(backing,現在= 當下最優買/賣剛好是已偵測價位):兩側都還是雜訊,|t|<1.5,
+        安慰劑對照沒有明顯脫離隨機範圍——沒有復現 Frey&Sandås 原文 Table V 測到的顯著效果,
+        可能是 TWSE 五檔快照的解析度不夠(原文用 Xetra 完整逐筆重建),仍是 NULL。
+      · 跌破支撐(breakout_bear):即時 t+0.73、延遲30秒後 t-0.01 幾乎完全消失、集中度只
+        5%——確認是雜訊,不是訊號。
+      · 突破壓力(breakout_bull)——**這次修正後,這個是唯一撐過檢定的**:即時 t-2.90、
+        延遲30秒後 t-2.24(沒有像舊版一樣塌陷)、換算成 Table V 原文口徑(後30筆真實成交)
+        t-2.93,三種算法都通過 |t|≥2;集中度前5檔55%(不算極端);安慰劑對照真實值(-10.2)
+        落在隨機5組範圍(-3.2~-1.6)之外。方向是「突破壓力後回落」(fade),不是使用者原本
+        設想的「突破=延續噴出」,但這是這整條研究線第一個通過完整檢定的結果。
     """
     sid = r.get("sym")
     if sid not in NAMES:
@@ -980,30 +1015,54 @@ def _iceberg_update(r):
         v = float(v) if v not in (None, "") else None
     except (TypeError, ValueError):
         v = None
-    t = r.get("t")
+    ts = r.get("ts")
+    if ts is None:
+        return
+    st_sid = ST.iceberg[sid]
     for side, price_arr, qty_arr in (("bid", r.get("bp") or [], r.get("bq") or []),
                                       ("ask", r.get("ap") or [], r.get("aq") or [])):
-        p0 = q0 = None
-        for pp, qq in zip(price_arr, qty_arr):   # 取第一個 price>0 的位置(0元雜訊防禦,見研究腳本)
-            if pp is not None and qq is not None and pp > 0:
-                p0, q0 = pp, qq
-                break
-        if p0 is None:
-            continue
-        cur = ST.iceberg[sid][side]
-        if cur is None or cur["price"] != p0:
-            ST.iceberg[sid][side] = {"price": p0, "start_t": t, "hits": 0, "refills": 0,
-                                      "was_hit": False, "last_qty": q0, "last_v": v, "vol_absorbed": 0.0}
-            continue
-        dq = q0 - cur["last_qty"]
-        dv = (v - cur["last_v"]) if (v is not None and cur["last_v"] is not None) else 0.0
-        if dq <= -ICEBERG_MIN_QTY and dv > 0:
-            cur["hits"] += 1; cur["was_hit"] = True; cur["vol_absorbed"] += dv
-        elif dq >= ICEBERG_MIN_QTY and cur["was_hit"]:
-            cur["refills"] += 1; cur["was_hit"] = False
-        cur["last_qty"] = q0
-        if v is not None:
-            cur["last_v"] = v
+        levels = st_sid[side]
+        visible_now = set()
+        for p, q in zip(price_arr, qty_arr):
+            if p is None or q is None or p <= 0:
+                continue
+            key = round(p, 4)
+            visible_now.add(key)
+            st = levels.get(key)
+            if st is None:
+                levels[key] = {"qty": q, "ref_peak": q, "last_seen": ts, "state": "none",
+                                "exhaust_ts": None, "detected": False}
+                continue
+            prev_qty = st["qty"]; st["last_seen"] = ts
+            if st["state"] == "none":
+                if prev_qty > 0 and q <= max(ICEBERG_EXHAUST_MIN_ABS, prev_qty * ICEBERG_EXHAUST_FRAC):
+                    if _iceberg_trade_confirms(sid, ts - ICEBERG_TRADE_LOOKBACK, ts, p):
+                        st["state"] = "exhausted"; st["exhaust_ts"] = ts; st["ref_peak"] = prev_qty
+            elif st["state"] == "exhausted":
+                if q >= st["ref_peak"] * ICEBERG_REPLENISH_FRAC:
+                    st["state"] = "detected"; st["detected"] = True   # 原文:偵測到=第一次補回
+                elif ts - st["exhaust_ts"] > ICEBERG_GRACE_SEC:
+                    st["state"] = "none"
+            elif st["state"] == "detected":
+                if prev_qty > 0 and q <= max(ICEBERG_EXHAUST_MIN_ABS, prev_qty * ICEBERG_EXHAUST_FRAC):
+                    if _iceberg_trade_confirms(sid, ts - ICEBERG_TRADE_LOOKBACK, ts, p):
+                        st["state"] = "exhausted"; st["exhaust_ts"] = ts
+            st["qty"] = q
+        # 落差二收尾:突破檢查優先於寬限期修剪(先前版本的 bug——見研究腳本同名說明)
+        b, _ = (next(((p, q) for p, q in zip(r.get("bp") or [], r.get("bq") or []) if p and q and p > 0), (None, None)))
+        a, _ = (next(((p, q) for p, q in zip(r.get("ap") or [], r.get("aq") or []) if p and q and p > 0), (None, None)))
+        mid = (b + a) / 2 if (b and a) else None
+        for key, st in list(levels.items()):
+            if st["detected"] and mid is not None:
+                breached = (side == "bid" and mid < key * (1 - ICEBERG_TRADE_TOL)) or \
+                           (side == "ask" and mid > key * (1 + ICEBERG_TRADE_TOL))
+                if breached:
+                    kind = "breakout_bear" if side == "bid" else "breakout_bull"
+                    st_sid["last_breakout"] = {"kind": kind, "ts": ts, "price": key}
+                    del levels[key]
+                    continue
+            if key not in visible_now and ts - st["last_seen"] > ICEBERG_GRACE_SEC:
+                del levels[key]
 
 
 def bucket_key(dt):
@@ -2666,17 +2725,31 @@ def render():
                 r["pe_rank"], r["pe_n"] = _i + 1, len(_pe_list)
                 r["pe_pctile"] = round(_i / max(1, len(_pe_list) - 1) * 100) if len(_pe_list) > 1 else 50
                 break
-        # 隱形大戶守價位(2026-09-25 jack 交辦,見 _iceberg_update docstring):取買/賣兩側中「較強」的一側顯示
-        _ib = ST.iceberg.get(r["sid"]) or {}
-        _ib_bid, _ib_ask = _ib.get("bid"), _ib.get("ask")
-        _ib_bid_ok = bool(_ib_bid and _ib_bid["hits"] >= ICEBERG_MIN_HITS and _ib_bid["refills"] >= ICEBERG_MIN_REFILLS)
-        _ib_ask_ok = bool(_ib_ask and _ib_ask["hits"] >= ICEBERG_MIN_HITS and _ib_ask["refills"] >= ICEBERG_MIN_REFILLS)
-        if _ib_bid_ok and (not _ib_ask_ok or _ib_bid["refills"] >= _ib_ask["refills"]):
-            r["iceberg"] = {"side": "買一", "cls": "up", **_ib_bid}
-        elif _ib_ask_ok:
-            r["iceberg"] = {"side": "賣一", "cls": "dn", **_ib_ask}
-        else:
-            r["iceberg"] = None
+        # 隱形大戶守價位(2026-09-25 jack 交辦,見 _iceberg_update docstring):
+        # 靠山(backing)兩側皆已驗證為雜訊,只當描述性顯示;突破壓力(breakout_bull)是唯一
+        # 通過延遲檢定+安慰劑對照的真訊號(t-2.2~-2.9,回落/fade,非延續),近30分內顯示、並進分數。
+        _ibstate = ST.iceberg.get(r["sid"]) or {"bid": {}, "ask": {}, "last_breakout": None}
+        _book = ST.book.get(r["sid"]) or {}
+        _bb = next((p for p, q in zip(_book.get("bp") or [], _book.get("bq") or []) if p and q and p > 0), None)
+        _ba = next((p for p, q in zip(_book.get("ap") or [], _book.get("aq") or []) if p and q and p > 0), None)
+        _backing_bid = bool(_bb and round(_bb, 4) in _ibstate["bid"] and _ibstate["bid"][round(_bb, 4)]["detected"])
+        _backing_ask = bool(_ba and round(_ba, 4) in _ibstate["ask"] and _ibstate["ask"][round(_ba, 4)]["detected"])
+        _lb = _ibstate.get("last_breakout")
+        _recent_breakout = _lb if (_lb and time.time() - _lb["ts"] <= 30 * 60) else None
+        r["iceberg_backing_bid"] = _backing_bid
+        r["iceberg_backing_ask"] = _backing_ask
+        r["iceberg_recent_breakout"] = _recent_breakout
+        # 突破壓力後15分鐘延遲檢定均值-8.6bps(t-2.24);0.5倍縮水(僅14日樣本,比127日基準更保守),
+        # 隨經過時間線性淡出(30分後歸零),只對 breakout_bull(fade)進分數,bear/backing 仍是NULL不進分數
+        r["iceberg_score"] = 0.0
+        if _recent_breakout and _recent_breakout["kind"] == "breakout_bull":
+            _elapsed = time.time() - _recent_breakout["ts"]
+            _decay = max(0.0, 1 - _elapsed / (30 * 60))
+            r["iceberg_score"] = -8.6 * 0.5 * _decay
+            if r["iceberg_score"] and r.get("sc_v2") is not None:
+                r["sc_v2"] += r["iceberg_score"]
+                (r.setdefault("sc_v2_items", [])).append(
+                    (f"突破壓力防回落({_elapsed/60:.0f}′)", round(r["iceberg_score"], 1)))
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -2887,19 +2960,30 @@ def render():
             c_pe = (f"<td class='{_pcls}' title='本益比=現價(即時)÷TTM近四季EPS(至{_pasof};⚠非分析師預估EPS,落後指標,見表頭說明)。"
                     f"同族群『{_pgrp}』{_pn or 0}檔中排第{_prk_txt}低(百分位{_psub},≤20%=族群內相對便宜·≥80%=族群內相對昂貴)。"
                     f"族群完整成員清單+各自本益比見個股詳情頁。僅供參考位置,未經嚴謹回測,不進分數'>{_pev:.1f}<span class=\"sub\">{_psub}</span></td>")
-        _ib_tip = ("隱形大戶守價位(2026-09-25 jack 交辦)。方法:追蹤最優買/賣價,同一價位維持不變期間,"
-                   "量被吃掉(≥5張∧同時段真有成交)又補回(≥5張)算一次循環,累計『被吃≥3∧補回≥2』才顯示。"
-                   "⚠2026-09-25用14個交易日前瞻報酬初測(scratch/iceberg_replenish_2026-09-25.txt)結果是NULL:"
-                   "盤中(事件後5/15/30分)買賣兩側報酬都貼近0、|t|<1、勝率35~38%(低於50%,像價格雜訊不是訊號);"
-                   "隔夜買一守價+32.2bps、賣一守價+36.1bps——兩側方向與大小幾乎一樣(不是預期的『買守漲賣守跌』反向"
-                   "模式,較像量到整體市場漂移非個股資訊),且t值都<1不顯著。樣本天數遠低於這類問題過去設的≥60日"
-                   "門檻,現在是『初步看不到訊號』不是『已證明沒有』。純狀態顯示,不是訊號,不進分數。")
-        if r.get("iceberg") is None:
-            c_iceberg = f"<td class='dim' title='{_ib_tip}'>—</td>"
+        _ib_tip = ("隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06 演算法重建,"
+                   "取代第一版寬鬆定義)。方法:追蹤五檔全部價位(非僅最優價),量耗盡到接近零(≤原量15%)"
+                   "且交叉比對逐筆真實成交確認打在該價位,第一次補回=偵測到(原文:detected after the first "
+                   "replenishment,keeps state even if undercut until an expected replenishment has not occurred)。"
+                   "⚠2026-09-25用14個交易日重跑(scripts/research/iceberg_frey_sandas_rebuild.py):靠山(backing,"
+                   "目前最優價剛好是已偵測價位)兩側仍是雜訊(|t|<1.5,安慰劑範圍內),沒有復現原文Table V的顯著"
+                   "效果,可能是TWSE五檔快照解析度不夠;跌破支撐(breakout_bear)延遲30秒後t從+0.73掉到-0.01,"
+                   "確認雜訊。**突破壓力(breakout_bull)是唯一通過檢定的**:即時t-2.90、延遲30秒t-2.24、換算"
+                   "Table V原文口徑(後30筆真實成交)t-2.93,集中度前5檔55%(不極端),安慰劑真實值(-10.2)落在"
+                   "隨機5組範圍(-3.2~-1.6)之外——方向是『突破後回落』(fade),不是延續噴出。已用0.5倍縮水"
+                   "(僅14日,比127日基準更保守)、30分鐘線性淡出納入淨分,近30分內顯示。")
+        if r.get("iceberg_recent_breakout"):
+            _rb = r["iceberg_recent_breakout"]
+            _rb_min = (time.time() - _rb["ts"]) / 60
+            if _rb["kind"] == "breakout_bull":
+                c_iceberg = (f"<td class='dn' style='font-weight:700' title='{_ib_tip}'>"
+                            f"突破壓力{_rb['price']:g} 防回落 {_rb_min:.0f}′</td>")
+            else:
+                c_iceberg = (f"<td class='dim' title='{_ib_tip}'>跌破支撐{_rb['price']:g}(NULL,僅顯示){_rb_min:.0f}′</td>")
+        elif r.get("iceberg_backing_bid") or r.get("iceberg_backing_ask"):
+            _side = "買一" if r.get("iceberg_backing_bid") else "賣一"
+            c_iceberg = f"<td class='dim' title='{_ib_tip}'>靠{_side}(NULL,僅顯示)</td>"
         else:
-            _ib = r["iceberg"]
-            c_iceberg = (f"<td class='{_ib['cls']}' title='{_ib_tip}'>守{_ib['side']} {_ib['price']:g} "
-                        f"(被吃{_ib['hits']}/補{_ib['refills']})</td>")
+            c_iceberg = f"<td class='dim' title='{_ib_tip}'>—</td>"
         c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -3023,7 +3107,7 @@ def render():
 <th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_42only_2026-09-25.txt,限定這42檔中有逐筆資料的28檔,t<1.4),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
 <th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
-<th title="隱形大戶守價位(2026-09-25 jack 交辦:回顧欣興950誤判為委託簿牆後,使用者問『機構是不是用被動單默默在某個價位吃貨守著』,委託簿補單率是唯一理論上能繞過『大戶主動方分類看不到被動吸貨』這個結構性死角的方法,見記憶 biglot-accumulation-distribution-unidentifiable)。方法:追蹤最優買/賣價,同一價位維持不變期間量被吃掉(≥5張∧同時段真有成交)又補回(≥5張)算一次循環,累計『被吃≥3∧補回≥2』才顯示,顯示較強的一側。⚠2026-09-25用14個交易日前瞻報酬初測(scripts/research/iceberg_replenish_detect.py,scratch/iceberg_replenish_2026-09-25.txt)結果是NULL:盤中(事件後5/15/30分)買賣兩側報酬都貼近0、|t|<1、勝率35~38%;隔夜買一守價+32.2bps、賣一守價+36.1bps方向與大小幾乎一樣(不是預期的反向模式,較像市場整體漂移),t值均<1不顯著。樣本天數遠低於過去設的≥60日門檻,現在是『初步看不到訊號』非『已證明沒有』。純狀態顯示,不是訊號,不進分數">隱形大戶<span class="sub">守價位</span></th>
+<th title="隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06《The Impact of Iceberg Orders in Limit Order Books》原始演算法重建)。原文:『an iceberg to be detected after the first replenishment...keeps the detection state until...an expected replenishment has not occurred』『remembers the indicator values for multiple prices...undercut but later becomes the best quote again...still there』——本版修正三個與原文的落差:①觸發條件改成量耗盡到接近零(≤15%)才算,不是任意減少;②追蹤五檔全部價位(用價位當鍵),不是只追最優價,排名滑動仍持續追蹤;③交叉比對逐筆真實成交確認耗盡打在該價位,不只看當天總量。⚠14個交易日重跑結果:靠山(backing)兩側仍是雜訊(未復現原文Table V的顯著效果);跌破支撐(breakout_bear)延遲30秒後消失,確認雜訊;**突破壓力(breakout_bull)通過完整檢定**(即時/延遲30秒/Table V原文30筆成交口徑三種算法t值都達-2.2~-2.9,集中度55%不極端,安慰劑對照真實值在隨機範圍外)——方向是突破後回落(fade)非延續,已用0.5倍縮水、30分鐘線性淡出納入淨分,唯一進分數的部分。">隱形大戶<span class="sub">守價位</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
@@ -3031,7 +3115,7 @@ def render():
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
 <th title="今日振幅倍數 = (今高−今低)/昨收% ÷ 20日均振幅%。波動聚集:預測明日振幅為真、方向 IC≈0(tick排列/籌碼分數兩線驗過)→ 不投票、不進淨分;≥1.5x 黃粗=高波動日:同樣淨分對應更大 bps、急殺z 砍尾閾值可放寬、部位縮小。">今日振幅<span class="sub">÷20日均 x</span></th>
 <th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
-<th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.5(未來60分,bps 制,|分|≤40)分開計、不相加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1 · 散戶背離(SMFI,尾盤−開盤散戶淨額佔比)≥+10pp +1(2026-09-25 採納,單邊、無對稱負向項)。盤中V2.3(2026-09-24,pit100×127日 IS 聯合OLS×0.7、按日聚類 t<2 歸零、OOS 未參與擬合;各項可加):散戶虛拉 −4.5 · 勿追5m −3 · 噴後過熱 ≥200/≥300/≥400 −5/−8.5/−8.5、≥600 不計 · 急跌≤−600 +40(多方唯一存活項) · 逆弱(市場30分≥+5) ≤−20/−50/−100 +1.5/+1.5/+5.5 · 純機構 +9(10:00後) · 蓄勢 −0.5~0% +4.5 / 蓄勢深 <−0.5% +5(大戶30分 5~40%;≥40% 鉅額不計) / 倒貨(0<壓縮≤0.5%∧≤−10%) −2.5 · 竭盡狀態格(近5分≤−0.2%=急跌;30秒主動賣≤40%=竭盡/≥60%=未竭):真空(竭盡∧末30秒仍跌≥10bps) +12.5 · 大戶接∧未竭 +6 · 賣壓未竭 +3 · 末30秒續跌 +2 · 竭盡∧散戶接 −5.5 · 急拉:買壓竭盡 +4.5 / 末30秒續漲 −3.5 · 權證 ±3(暫)。⚠ 單獨的「賣盤竭盡」是負的:賣壓退=反彈已發生。歸零:過熱150–200、急跌200–600、順漲/順跌/逆強、對開盤±3/±5%、散戶接跌(被狀態格吸收)、主力點火/深接/暗退/破昨。09:30 前不計、無時段係數。「峰」= 近60分最極端分與時刻(每5秒取樣的極值,偏大,只當提示)。第二行=成因標籤(下單前必看):處置(disposal_windows.csv)/跌停鎖·觸跌停(MIS 五檔 y·l·z 算跌停價)/族群k/m(同細分產業近30分同向≥2%)/MOPS hh:mm(今日,尚無即時源→顯示 MOPS?)/昨MOPS hh:mm(T-1 重大訊息,TWSE/TPEx OpenAPI 快照,每晚 fetch_mops_today.py);跟盤殺(紅=不做)/自己殺(綠=大盤止跌它還在殺,要的格)/大盤仍跌(黃=等):大盤條件是進場過濾器不計分,因為分數預測超額、你吃原始。hover 看各標籤來源與時間。OOS(07-01~08,V2.5):IC +0.072(V2.4 +0.058);|分|≥15 多 n=427 超額+38/t4.8(延遲1桶 +20/t2.7 首次顯著)、≥20 多 n=108 +78/t5.0;空 ≥15 n=792 +25/t2.5;校準斜率 1.19。覆蓋比 V2.2 少約 40 倍,多數時間為 0 = 無證據不是中性。">淨分<span class="sub">隔夜 · 盤中V2.5 bps · 峰 · 成因</span></th>
+<th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.5(未來60分,bps 制,|分|≤40)分開計、不相加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1 · 散戶背離(SMFI,尾盤−開盤散戶淨額佔比)≥+10pp +1(2026-09-25 採納,單邊、無對稱負向項)。盤中V2.3(2026-09-24,pit100×127日 IS 聯合OLS×0.7、按日聚類 t<2 歸零、OOS 未參與擬合;各項可加):散戶虛拉 −4.5 · 勿追5m −3 · 噴後過熱 ≥200/≥300/≥400 −5/−8.5/−8.5、≥600 不計 · 急跌≤−600 +40(多方唯一存活項) · 逆弱(市場30分≥+5) ≤−20/−50/−100 +1.5/+1.5/+5.5 · 純機構 +9(10:00後) · 蓄勢 −0.5~0% +4.5 / 蓄勢深 <−0.5% +5(大戶30分 5~40%;≥40% 鉅額不計) / 倒貨(0<壓縮≤0.5%∧≤−10%) −2.5 · 竭盡狀態格(近5分≤−0.2%=急跌;30秒主動賣≤40%=竭盡/≥60%=未竭):真空(竭盡∧末30秒仍跌≥10bps) +12.5 · 大戶接∧未竭 +6 · 賣壓未竭 +3 · 末30秒續跌 +2 · 竭盡∧散戶接 −5.5 · 急拉:買壓竭盡 +4.5 / 末30秒續漲 −3.5 · 權證 ±3(暫) · 突破壓力防回落(2026-09-25,依 Frey&Sandås 2009 iceberg 偵測演算法重建,14日樣本 t-2.2~-2.9、延遲30秒+安慰劑對照皆過關,0.5倍縮水,30分鐘線性淡出)−4.3起。⚠ 單獨的「賣盤竭盡」是負的:賣壓退=反彈已發生。歸零:過熱150–200、急跌200–600、順漲/順跌/逆強、對開盤±3/±5%、散戶接跌(被狀態格吸收)、主力點火/深接/暗退/破昨。09:30 前不計、無時段係數。「峰」= 近60分最極端分與時刻(每5秒取樣的極值,偏大,只當提示)。第二行=成因標籤(下單前必看):處置(disposal_windows.csv)/跌停鎖·觸跌停(MIS 五檔 y·l·z 算跌停價)/族群k/m(同細分產業近30分同向≥2%)/MOPS hh:mm(今日,尚無即時源→顯示 MOPS?)/昨MOPS hh:mm(T-1 重大訊息,TWSE/TPEx OpenAPI 快照,每晚 fetch_mops_today.py);跟盤殺(紅=不做)/自己殺(綠=大盤止跌它還在殺,要的格)/大盤仍跌(黃=等):大盤條件是進場過濾器不計分,因為分數預測超額、你吃原始。hover 看各標籤來源與時間。OOS(07-01~08,V2.5):IC +0.072(V2.4 +0.058);|分|≥15 多 n=427 超額+38/t4.8(延遲1桶 +20/t2.7 首次顯著)、≥20 多 n=108 +78/t5.0;空 ≥15 n=792 +25/t2.5;校準斜率 1.19。覆蓋比 V2.2 少約 40 倍,多數時間為 0 = 無證據不是中性。">淨分<span class="sub">隔夜 · 盤中V2.5 bps · 峰 · 成因</span></th>
 <th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
