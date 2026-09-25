@@ -788,6 +788,7 @@ class S:
         self.book_off = 0
         self.lastvol = defaultdict(float)
         self.last_px = {}
+        self.last_bid = {}; self.last_ask = {}     # 逐筆帶的買一/賣一(紙上交易掛價用)
         self.last_seen = {}
         self.first_done = set()
         self.buckets = {}                       # sid -> {bk: {...}}
@@ -933,6 +934,8 @@ def _ingest_trade(line):
         ST.day[sid]["px0"] = px
         return
     b, a = d.get("bid"), d.get("ask")
+    if b is not None: ST.last_bid[sid] = float(b)
+    if a is not None: ST.last_ask[sid] = float(a)
     side = 1 if (a is not None and px >= float(a)) else (
         -1 if (b is not None and px <= float(b)) else 0)
     if side == 0:
@@ -1760,6 +1763,191 @@ def _mini_td(r) -> str:
             f"<span class='dim' style='font-size:9px'> {sh:.0f}%·{nb}/{ns}</span></td>")
 
 
+
+# ---- 紙上交易(paper trading;jack 2026-09-25 交辦,2026-09-29 起累 20 日)--------------------------------------------
+#: 目的:量「訊號當下掛買一等 30 秒」的真實成交率——tick 重放顯示嚴格(穿越才成交)27% vs 樂觀(觸價即成交)89% 決定損益兩平的哪一邊。
+#: 規則(定案,見記憶 biglot-v25-tick-replay-verdict):進場 V2.5≥15、成因無 處置/跌停鎖/跟盤殺、同時 ≤3 口、掛買一 30 秒不追;
+#: 出場 持倉分≤0 連續 30 秒 / 壞標籤 / 60 分 → 掛賣一 60 秒、沒成交打買一;13:20 後強制出。兩本帳:bucket=只在 5 分桶邊界取樣
+#: (回測口徑)、sec=每秒首次穿越(反應式,預期較差)。成交口徑 strict(價穿越)與 opt(觸價)並記。不接下單層、不送單。
+PAPER_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "paper_state.json"
+PAPER_DAILY = DATA_DIR.parent / "cache" / "biglot_live_watch" / "paper_daily.json"
+PAPER_COST, PAPER_K, PAPER_TH = 22.0, 3, 15.0
+PAPER_BUY_WAIT, PAPER_SELL_WAIT, PAPER_MAX_HOLD = 30, 60, 3600
+PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
+PAPER_BOOKS = ("bucket", "sec")
+
+
+def _paper_blank(day):
+    return {"day": day, "seen": {b: [] for b in PAPER_BOOKS}, "orders": {b: {} for b in PAPER_BOOKS}, "pos": {b: {} for b in PAPER_BOOKS},
+            "closed": {b: [] for b in PAPER_BOOKS}, "last_bkey": {}, "n_sig": {b: 0 for b in PAPER_BOOKS}}
+
+
+try:
+    PAPER: dict = json.loads(PAPER_PATH.read_text(encoding="utf-8"))
+except Exception:  # noqa: BLE001
+    PAPER = _paper_blank(None)
+
+
+def _paper_save():
+    try:
+        PAPER_PATH.parent.mkdir(parents=True, exist_ok=True); PAPER_PATH.write_text(json.dumps(PAPER, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _paper_log(rec):
+    try:
+        f = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"paper_trades_{PAPER['day']}.jsonl"
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": datetime.now(TZ).strftime("%H:%M:%S"), **rec}, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _paper_fills(sid, t_post, limit, side):
+    """掃 t_post 之後的逐筆:買單=賣方主動成交 <limit(strict)/≤limit(opt);賣單對稱。回傳 (t_strict, t_opt)。"""
+    ts_s = ts_o = None
+    for ts, px, amt, sgn, _b, _r in ST.recent.get(sid, ()):
+        if ts <= t_post: continue
+        if side == "buy" and sgn < 0:
+            if px <= limit and ts_o is None: ts_o = ts
+            if px < limit and ts_s is None: ts_s = ts
+        elif side == "sell" and sgn > 0:
+            if px >= limit and ts_o is None: ts_o = ts
+            if px > limit and ts_s is None: ts_s = ts
+        if ts_s is not None and ts_o is not None: break
+    return ts_s, ts_o
+
+
+def _paper_close(book, sid, pos, exit_px, how, now):
+    g = (exit_px / pos["entry"] - 1) * 1e4; net = g - PAPER_COST
+    rec = {"ev": "close", "book": book, "sid": sid, "entry": pos["entry"], "exit": exit_px, "how": how, "reason": (pos.get("sell") or {}).get("reason"),
+           "gross_bps": g, "net_bps": net, "ntd_net": net / 1e4 * pos["entry"] * 2000, "hold_min": (now - pos["t_fill"]) / 60,
+           "strict_entry": pos["strict"], "strict_exit": how in ("買一", "收盤") or bool(pos.get("sell_strict")), "sig": pos["sig"]}
+    PAPER["closed"][book].append(rec); _paper_log(rec); PAPER["pos"][book].pop(sid, None)
+
+
+def _paper_update(rows, now):
+    day = ST.date
+    if PAPER.get("day") != day:
+        PAPER.clear(); PAPER.update(_paper_blank(day)); _paper_save()
+    hm = datetime.fromtimestamp(now, TZ).strftime("%H:%M:%S")
+    if hm < "09:30:00" or hm > "13:25:00":
+        return
+    bkey = hm[:4] + str(int(hm[4]) // 5 * 5)                      # 5 分桶鍵(HH:M0/M5)
+    at_boundary = hm[3:5] in ("00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55") and hm[6:8] <= "03"
+    changed = False
+    for r in rows:
+        sid = r["sid"]; sc = r.get("sc_v2"); px = r.get("px")
+        tags = [t for t, _ in (r.get("cause") or [])]; items = [k for k, _ in (r.get("sc_v2_items") or [])]
+        bid = ST.last_bid.get(sid); ask = ST.last_ask.get(sid)
+        bk = ST.book.get(sid) or {}
+        if bid is None and bk.get("bp"): bid = bk["bp"][0]
+        if ask is None and bk.get("ap"): ask = bk["ap"][0]
+        for book in PAPER_BOOKS:
+            # --- 訊號 → 掛買一 ---
+            if sc is not None and sc >= PAPER_TH and hm <= "13:20:00" and sid not in PAPER["seen"][book]:
+                fire = False
+                if book == "bucket":
+                    if at_boundary and PAPER["last_bkey"].get(sid) != bkey:
+                        PAPER["last_bkey"][sid] = bkey; fire = True
+                else:
+                    fire = True
+                if fire:
+                    PAPER["seen"][book].append(sid); PAPER["n_sig"][book] += 1; changed = True
+                    skip = next((t for t in tags if t.startswith(PAPER_SKIP)), None)
+                    busy = len(PAPER["orders"][book]) + len(PAPER["pos"][book])
+                    if skip or busy >= PAPER_K or bid is None or not px:
+                        _paper_log({"ev": "signal_skip", "book": book, "sid": sid, "score": sc, "why": skip or ("容量" if busy >= PAPER_K else "無買一"), "tags": tags})
+                    else:
+                        PAPER["orders"][book][sid] = {"limit": bid, "t_post": now, "sig": {"hm": hm, "score": sc, "px": px, "bid": bid, "ask": ask, "tags": tags, "items": items}}
+                        _paper_log({"ev": "signal", "book": book, "sid": sid, "score": sc, "px": px, "bid": bid, "ask": ask, "tags": tags, "items": items})
+            # --- 買單管理 ---
+            o = PAPER["orders"][book].get(sid)
+            if o:
+                ts_s, ts_o = _paper_fills(sid, o["t_post"], o["limit"], "buy")
+                if ts_o is not None:
+                    PAPER["pos"][book][sid] = {"entry": o["limit"], "t_fill": ts_o, "strict": ts_s is not None, "low_since": None, "sell": None, "sig": o["sig"]}
+                    PAPER["orders"][book].pop(sid); changed = True
+                    _paper_log({"ev": "fill", "book": book, "sid": sid, "px": o["limit"], "strict": ts_s is not None, "wait_s": ts_o - o["t_post"]})
+                elif now - o["t_post"] > PAPER_BUY_WAIT:
+                    PAPER["orders"][book].pop(sid); changed = True
+                    PAPER["closed"][book].append({"ev": "unfilled", "book": book, "sid": sid, "limit": o["limit"], "px_now": px, "sig": o["sig"]})
+                    _paper_log({"ev": "unfilled", "book": book, "sid": sid, "limit": o["limit"], "px_now": px, "run_bps": ((px / o["limit"] - 1) * 1e4) if px else None})
+            # --- 持倉管理 ---
+            pos = PAPER["pos"][book].get(sid)
+            if not pos: continue
+            if pos.get("sell") is None:
+                if sc is not None and sc <= 0:
+                    if pos.get("low_since") is None: pos["low_since"] = now
+                else:
+                    pos["low_since"] = None
+                reason = None
+                if pos.get("low_since") is not None and now - pos["low_since"] >= 30: reason = "分數≤0·30秒"
+                elif any(k.startswith(HOLD_BAD) for k in items): reason = "壞標籤"
+                elif now - pos["t_fill"] >= PAPER_MAX_HOLD: reason = "到期60分"
+                elif hm >= "13:20:00": reason = "收盤前"
+                if reason and ask:
+                    pos["sell"] = {"limit": ask, "t_post": now, "reason": reason}; changed = True
+                    _paper_log({"ev": "sell_post", "book": book, "sid": sid, "limit": ask, "reason": reason, "score": sc, "hold_min": (now - pos["t_fill"]) / 60})
+            else:
+                so = pos["sell"]; ts_s, ts_o = _paper_fills(sid, so["t_post"], so["limit"], "sell")
+                if ts_o is not None:
+                    pos["sell_strict"] = ts_s is not None; _paper_close(book, sid, pos, so["limit"], "賣一", now); changed = True
+                elif now - so["t_post"] > PAPER_SELL_WAIT or hm >= "13:24:00":
+                    _paper_close(book, sid, pos, bid or px or so["limit"], "買一", now); changed = True
+            if sid in PAPER["pos"][book]:
+                pos = PAPER["pos"][book][sid]
+                r.setdefault("paper", {})[book] = {"entry": pos["entry"], "min": (now - pos["t_fill"]) / 60, "pnl": ((px / pos["entry"] - 1) * 1e4) if px else None,
+                                                    "sell": bool(pos.get("sell")), "strict": pos["strict"]}
+    if changed: _paper_save()
+
+
+def _paper_settle(day):
+    """收盤:強制平掉殘餘部位、寫當日統計到 paper_daily.json(冪等)。"""
+    if PAPER.get("day") != day: return
+    now = time.time()
+    for book in PAPER_BOOKS:
+        for sid, pos in list(PAPER["pos"][book].items()):
+            px = ST.last_px.get(sid) or pos["entry"]; pos["sell"] = pos.get("sell") or {"reason": "收盤強制"}; _paper_close(book, sid, pos, px, "收盤", now)
+        PAPER["orders"][book].clear()
+    try:
+        daily = json.loads(PAPER_DAILY.read_text(encoding="utf-8")) if PAPER_DAILY.exists() else {}
+    except Exception:  # noqa: BLE001
+        daily = {}
+    out = {}
+    for book in PAPER_BOOKS:
+        cl = [c for c in PAPER["closed"][book] if c.get("ev") == "close"]; un = [c for c in PAPER["closed"][book] if c.get("ev") == "unfilled"]
+        st = [c for c in cl if c["strict_entry"]]
+        def _m(xs, k): return (sum(x[k] for x in xs) / len(xs)) if xs else None
+        out[book] = {"n_sig": PAPER["n_sig"][book], "n_post": len(cl) + len(un), "n_fill_opt": len(cl), "n_fill_strict": len(st),
+                     "gross_opt": _m(cl, "gross_bps"), "net_opt": _m(cl, "net_bps"), "net_strict": _m(st, "net_bps"),
+                     "hit_opt": (sum(1 for c in cl if c["net_bps"] > 0) / len(cl)) if cl else None, "ntd_opt": sum(c["ntd_net"] for c in cl), "ntd_strict": sum(c["ntd_net"] for c in st),
+                     "reasons": {str(k): sum(1 for c in cl if c.get("reason") == k) for k in set(c.get("reason") for c in cl)}}
+    daily[day] = out; PAPER_DAILY.parent.mkdir(parents=True, exist_ok=True); PAPER_DAILY.write_text(json.dumps(daily, ensure_ascii=False, indent=1), encoding="utf-8")
+    _paper_log({"ev": "settle", **{b: {k: v for k, v in out[b].items() if k != "reasons"} for b in PAPER_BOOKS}}); _paper_save()
+
+
+def _paper_summary():
+    """頁首一行:今日兩本帳 + 累計(paper_daily)。"""
+    parts = []
+    for book in PAPER_BOOKS:
+        cl = [c for c in PAPER.get("closed", {}).get(book, []) if c.get("ev") == "close"]; un = [c for c in PAPER.get("closed", {}).get(book, []) if c.get("ev") == "unfilled"]
+        st = [c for c in cl if c["strict_entry"]]
+        net = (sum(c["net_bps"] for c in cl) / len(cl)) if cl else None
+        parts.append(f"{book}: 訊號 {PAPER.get('n_sig', {}).get(book, 0)} 掛 {len(cl)+len(un)} 成交 {len(st)}嚴/{len(cl)}樂 持 {len(PAPER.get('pos', {}).get(book, {}))}"
+                     + (f" 淨均 {net:+.0f}bps" if net is not None else ""))
+    try:
+        daily = json.loads(PAPER_DAILY.read_text(encoding="utf-8")) if PAPER_DAILY.exists() else {}
+        if daily:
+            ds = sorted(daily); b = "bucket"; nets = [daily[d][b]["net_opt"] for d in ds if daily[d][b].get("net_opt") is not None]
+            nf = sum(daily[d][b]["n_fill_opt"] for d in ds); ns = sum(daily[d][b]["n_fill_strict"] for d in ds)
+            parts.append(f"累計 {len(ds)} 日 bucket 成交 {ns}嚴/{nf}樂" + (f" 日均淨 {sum(nets)/len(nets):+.0f}bps" if nets else ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return " · ".join(parts)
+
+
 def _score_td(r):
     ov, sc = r.get("sc_ov"), r.get("sc_in")
     if ov is None or sc is None:
@@ -1786,12 +1974,16 @@ def _score_td(r):
     cause = r.get("cause") or []
     if cause:
         tip += " ‖ 成因:" + " · ".join(f"[{t}] {d}" for t, d in cause)
-    h = r.get("hold"); hold_html = ""
+    pp = r.get("paper") or {}; paper_html = ""
+    for bk_, q in pp.items():
+        if q:
+            paper_html += (f"<br><span style='font-size:9px;color:#d2a8ff'>紙{bk_[:1]} {q['pnl']:+.0f} · {q['min']:.0f}分{'·嚴' if q['strict'] else '·樂'}{' 賣中' if q['sell'] else ''}</span>")
+    h = r.get("hold"); hold_html = paper_html
     if h:
         pn = f"{h['pnl']:+.0f}" if h["pnl"] is not None else "—"
         fl = " ".join(f"<b style='color:#f85149'>{html_mod.escape(f)}</b>" for f in h["flags"])
         hint = f" <span style='color:#3fb950'>{h['hint']}</span>" if h.get("hint") else ""
-        hold_html = (f"<br><span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
+        hold_html += (f"<br><span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
                      f"{(' 低'+str(int(h['low_s']))+'s') if h['low_s'] else ''}</span> {fl}{hint}")
         tip += f" ‖ 持倉:進 {h['hm']} @ {h['px0']} · 出場規則=分數≤0 連續 30 秒 / 壞標籤(虛拉·過熱·竭盡∧散戶接) / 60 分到期;獲利≥50 可停利;不設移動停利/硬停損/破昨低(面板對照較差)"
     _col = {"處置": "#f0883e", "跌停鎖": "#f85149", "觸跌停": "#f85149", "族群": "#d29922", "MOPS?": "#8b949e", "MOPS": "#a371f7", "昨MOPS": "#7d5bbe", "跟盤殺": "#f85149", "自己殺": "#3fb950", "大盤仍跌": "#d29922"}
@@ -2090,6 +2282,10 @@ def render():
         _score_rows(rows, mkt30, time.time(), mkt30_r)
         _cause_tags(rows, ST.date)
         _hold_update(rows)
+        try:
+            _paper_update(rows, time.time())
+        except Exception as _pe:  # noqa: BLE001
+            print(f"[paper] {_pe!r}", file=sys.stderr)
         _log_scores(rows, ST.date)
     except Exception as _e:  # noqa: BLE001
         print(f"[score] {_e!r}", file=sys.stderr)
@@ -2440,7 +2636,7 @@ def render():
     PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
 {_txp}{stale_bar}
 <div class="meta" hidden>更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
-市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> ·
+市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> · <span style='color:#d2a8ff' title='紙上交易(不送單):bucket=5分桶邊界取樣(回測口徑)、sec=每秒首次穿越;進 V2.5≥15 掛買一30秒,出 分數≤0·30秒/壞標籤/60分 掛賣一60秒否則買一;嚴=價穿越才算成交、樂=觸價即成交;成本22bps;帳本 paper_trades_{{日}}.jsonl / paper_daily.json'>紙上 {_paper_summary()}</span> ·
 紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>
@@ -3364,6 +3560,10 @@ def loop():
                 except Exception as _ge:  # noqa: BLE001
                     print(f"[grid-close] {_ge!r}", file=sys.stderr)
                 snapshot_day()
+                try:
+                    _paper_settle(ST.date)
+                except Exception as _pe:  # noqa: BLE001
+                    print(f"[paper-settle] {_pe!r}", file=sys.stderr)
                 try:
                     _oos_update_at_close()
                 except Exception:
