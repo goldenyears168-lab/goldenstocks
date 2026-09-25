@@ -412,6 +412,52 @@ def _load_daily_trend():
 
 DAILY_TREND = _load_daily_trend()
 
+
+def _load_key_line(lookback=500):
+    """「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師節目逐字稿)。
+
+    規則(逐字稿精確化):某日 K 棒同時滿足下列三條件即為「觸發棒」,線 = 觸發棒的最低點(含影線):
+      (a) 紅K(收盤>開盤) (b) 收盤漲幅>前一日收盤+4% (c) 收盤突破「前 60 個交易日最高收盤」(不含當日)。
+    同一檔股票取**最近一次**觸發棒的最低點當線(新觸發棒出現線才會移動;較舊的觸發棒作廢,線只會愈墊愈高)。
+    掃描不到 500 個交易日內找不到任何觸發棒 → 該股「沒有這條線」。
+
+    2026-09-25 研究(scratch/key_line_research_2026-09-25.txt):
+      · 前高判斷用「收盤突破」比「最高價突破」穩健(不受單日長上影線誤觸發);回顧期 20/60/120 日結果穩定,取 60。
+      · 42 檔高波動宇宙(本身已篩掉不會噴的股票)近 2 年內無線比例 0%,跟節目口頭估計「30~50% 無線」對不上——
+        那是對整個 AI 概念股母體講的,不是對這個已篩選過的高波動子集,不是規則錯,已在欄位說明中註記。
+      · 粗略回測(拉回線±2%內買,持有10/20日):+5.1%/t+9.6、+11.4%/t+12.5,勝率61~62%,n=817/801——
+        ⚠️ 這不是嚴謹回測:未拆IS/OOS、未日聚類(同批股票多年趨勢高度重疊,t值灌水)、未扣大盤同期報酬、
+        未計成本、單一(本身可能上升趨勢)高波動宇宙。只當「規則不荒謬」的合理性檢查,不是驗證過的訊號。
+    """
+    out = {}
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        for sid in NAMES:
+            rows = conn.execute(
+                "SELECT trade_date, MAX(open) o, MAX(high) h, MAX(low) l, MAX(close) c "
+                "FROM stock_daily_bars WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT ?",
+                (sid, lookback)).fetchall()
+            rows = [r for r in rows if all(r[1:])][::-1]   # 反轉成由舊到新,才能用 i-60:i 當「前 60 日」
+            if len(rows) < 65:
+                continue
+            closes = [r[4] for r in rows]
+            line_price = line_date = None
+            for i in range(60, len(rows)):
+                _, o, h, lo, c = rows[i]
+                prev_c = closes[i - 1]
+                prior_hi = max(closes[i - 60:i])
+                if c > o and c > prev_c * 1.04 and c > prior_hi:
+                    line_price, line_date = lo, rows[i][0]
+            if line_price is not None:
+                out[sid] = {"price": line_price, "date": line_date}
+        conn.close()
+    except Exception as e:
+        print(f"[key_line] load failed: {e}", file=sys.stderr)
+    return out
+
+
+KEY_LINE = _load_key_line()
+
 # ---- 融資/借券變化幅度 → 波動風險分數（非方向訊號，只預測盤中振幅，多空都適用）------
 # 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
 # 2025-01~2026-09 回測）。演進紀錄（後面取代前面）：
@@ -816,8 +862,9 @@ def ingest():
         ST.__init__()
         ST.date = today
         _refresh_vol_risk_if_needed()
-        global DAILY_TREND
+        global DAILY_TREND, KEY_LINE
         DAILY_TREND = _load_daily_trend()
+        KEY_LINE = _load_key_line()
         PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
@@ -2442,6 +2489,11 @@ def render():
         # ≥30% = 短線超買過熱、回檔壓力極高的民間經驗法則;純描述性警示,不進分數。
         _ma20 = dt.get("ma20") if dt else None
         r["bias20"] = ((r["px"] / _ma20 - 1) * 100) if (_ma20 and r.get("px")) else None
+        # 關鍵一條線(2026-09-25 jack 交辦,見 _load_key_line docstring):距離% = 現價 ÷ 線 − 1。無線則 None。
+        _kl = KEY_LINE.get(r["sid"])
+        r["key_line"] = _kl["price"] if _kl else None
+        r["key_line_date"] = _kl["date"] if _kl else None
+        r["key_line_dist"] = ((r["px"] / _kl["price"] - 1) * 100) if (_kl and r.get("px")) else None
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -2623,6 +2675,24 @@ def render():
                        f"{r['bias20']:+.0f}%</td>")
         else:
             c_bias20 = "<td class='dim'>—</td>"
+        if r.get("key_line") is None:
+            c_keyline = "<td class='dim' title='「關鍵一條線」規則(逐字稿見表頭說明):近 500 個交易日內找不到任何觸發棒(紅K∧漲幅>4%∧收盤突破前60日高)。節目原意=避開,不建議在此價位承接'>沒有</td>"
+        elif r.get("key_line_dist") is None:
+            c_keyline = "<td class='dim'>—</td>"
+        else:
+            _kd = r["key_line_dist"]
+            if _kd <= -10:
+                _kcls, _klab = "dn", "已破線"
+            elif -3 <= _kd <= 3:
+                _kcls, _klab = "warnv", "回測區"
+            else:
+                _kcls, _klab = ("up" if _kd > 0 else "dn"), ""
+            _kl_px, _kl_dt = r["key_line"], r["key_line_date"]
+            _kl_txt = _klab if _klab else f"{_kd:+.0f}%"
+            c_keyline = (f"<td class='{_kcls}' title='關鍵一條線={_kl_px:g}@{_kl_dt}(觸發棒最低點)。"
+                        f"距離=現價÷線−1={_kd:+.1f}%。規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最高收盤,取最近一次觸發棒最低點;"
+                        f"≤−10%視為已跌破線(節目原意=避開/反彈賣,非等拉回買)、±3%內=貼近線的回測買點區(節目原意的買點)。"
+                        f"⚠僅合理性檢查未嚴謹回測,不進分數'>{_kl_txt}</td>")
         c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -2651,7 +2721,7 @@ def render():
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_bias20 + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離)
+            + c_cmp + c_dtr + c_bias20 + c_keyline + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -2705,6 +2775,7 @@ def render():
 <th title="壓縮 =(現價 ÷ 近12個5分桶均價 − 1)%,需≥8桶;與全日大戶佔比聯合、多空對稱:黃粗體(多)= 大戶佔比≥+10% ∧ 壓縮<0(價壓著,127日隔夜 +139/t2.9);黃粗體(空)= 大戶佔比≤−10% ∧ 壓縮>0(大戶倒完價仍在均價上,−28~−80,勿抱非放空);其餘淡化。基準 +73。">壓縮<span class="sub">對1h均% × 大戶佔比</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="20MA(月線)正乖離率 = 現價 ÷ 20日均價(PIT,用昨收含之前20日收盤,不含今日)− 1。2026-09-25 jack 交辦:取代『距離當天漲停%』——乖離率抓的是相對過去一個月成本的超買程度,不受個股漲跌停%上限差異影響。≥+30% 粗體黃字=短線漲幅過熱、超買回檔壓力極高的經驗法則;純描述性警示,不進分數、不做嚴謹回測。">20MA乖離<span class="sub">正乖離%</span></th>
+<th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』(節目原意:避開,不建議承接)。≤−10%=已跌破線(節目原意:避開/反彈賣,非買點);±3%內=貼近線的回測區(節目原意的買點)。⚠合理性檢查(scratch/key_line_research_2026-09-25.txt):粗略回測拉回線±2%買、持10/20日 +5.1%/t9.6、+11.4%/t12.5,但未拆IS/OOS、未日聚類(同批股票多年趨勢重疊,t值灌水)、未扣大盤同期報酬、未計成本、單一高波動宇宙——不是驗證過的訊號,純描述性,不進分數。42檔高波動宇宙目前無線比例0%,與節目口頭估計30~50%不符,因宇宙本身已篩選過易噴股票,非規則錯誤。">關鍵一條線<span class="sub">距離%</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
