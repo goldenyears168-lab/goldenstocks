@@ -378,7 +378,7 @@ jobs:
     order_capable: false
     status: enabled
     schedule: "KeepAlive 常駐（獨立於 futopt-books-collect 的第二條 websocket 連線）"
-    description: "個股期貨五檔＋逐筆 · 唯讀 · 2026-08-21 建立。2026-09-01 換池：FUTOPT_STOCK_ROOTS 改為 momentum-rotation v2 宇宙 18 檔（聯電 CC 留在指數連線的 CCF 不搬），舊池（12+7）停收。同日二次換池：v2 死亡帶 7 root（CG/DI/GY/DA/QX/PL/QZ，tick 成本 33-64bp 永不可交易）換成池 v3 候選 7 root（LE 玉晶光/OW 環球晶/IX 景碩/GU 全新/NA 穩懋/ND 威剛/QD 台勝科），維持 18 roots 同一條連線。⚠️ 帳號連線上限實測：第三條個股期 ws 連線 09:51 撞 Maximum number of connections reached，勿再開新連線（futopt-books-collect-newpool 已建檔即廢，模板留在 repo 但不得 bootstrap）。凌晨 tickers() 查空時靠 futures_symbol_cache.json fallback（已播種全池 {root}FI6）。與指數核心 8 檔分開跑：合用一條連線時 27×4=108 個訂閱撞上券商上限，當天指數組日盤掉 52%。刻意不在 install-launchd.sh 的 LABELS 陣列，安裝方式見 scripts/launchd/futopt-books-collect-stocks.command 檔頭"
+    description: "個股期貨五檔＋逐筆 · 唯讀 · 2026-08-21 建立。2026-09-01 換池：FUTOPT_STOCK_ROOTS 改為 momentum-rotation v2 宇宙 18 檔（聯電 CC 留在指數連線的 CCF 不搬），舊池（12+7）停收。同日二次換池：v2 死亡帶 7 root（CG/DI/GY/DA/QX/PL/QZ，tick 成本 33-64bp 永不可交易）換成池 v3 候選 7 root（LE 玉晶光/OW 環球晶/IX 景碩/GU 全新/NA 穩懋/ND 威剛/QD 台勝科），維持 18 roots 同一條連線。⚠️ 帳號連線上限實測：第三條個股期 ws 連線 09:51 撞 Maximum number of connections reached，勿再開新連線（futopt-books-collect-newpool 已建檔即廢，模板留在 repo 但不得 bootstrap）。凌晨 tickers() 查空時靠 futures_symbol_cache.json fallback（已播種全池 {root}FI6）。與指數核心 8 檔分開跑：合用一條連線時 27×4=108 個訂閱撞上券商上限，當天指數組日盤掉 52%。刻意不在 install-launchd.sh 的 LABELS 陣列，安裝方式見 scripts/launchd/futopt-books-collect-stocks.command 檔頭 2026-09-24 換成大戶儀表板 36 檔全部 root(FUTOPT_DAY_ONLY=1 只訂日盤,36×2=72 訂閱)並重新 bootstrap(09-22 曾為儀表板期貨 feed bootout);FT/ND 撤出。"
 
   - label: limitup-fade-nightly
     category: research
@@ -386,7 +386,7 @@ jobs:
     status: enabled
     schedule: "weekdays 22:45"
     description: >-
-      limitup-fade 每晚選股信（實單前測第一步 · 2026-09-03 建立 · 唯讀無送單）。
+      limitup-fade 每晚選股信（實單前測第一步 · 2026-09-03 建立 · 唯讀無送單）。 2026-09-24 起同時跑 fetch_mops_today.py（TWSE/TPEx OpenAPI 重大訊息 T-1 快照 → cache/mops_today_*.json，供大戶儀表板「昨MOPS」成因標籤；失敗不擋主流程）。
       策略＝T 日漲停鎖死 → T+1 開盤集合競價放空吃遞延買盤（真 OOS 2020~2026-02 每筆
       +0.79% cluster-t=5.07、日均淨 +0.663%、Sharpe 2.43、七年逐年皆正；規則 SSOT＝
       scripts/research/screen_limitup_fade.py 檔頭，2026-09-03 的 biglot 路徑分解獨立
@@ -610,8 +610,18 @@ jobs:
   - label: nightly-expert-digest
     category: research
     order_capable: false
-    status: enabled
-    schedule: "weekdays 20:00"
+    status: disabled
+    disabled_since: "2026-09-24"
+    disabled_reason: >
+      36檔高波動 HTML dashboard(biglot_dashboard.py :8771)整合決策：與 dashboard
+      重疊 14/36 檔標的，但硬編核心三檔(8046/8358)的 P6 champion 假說已被
+      config/research.yaml topic expert-pool-pools-consensus-reverify 判為多重比較
+      後效應消失(僅 2344 站得住)，不足以支撐獨立留著。launchctl disable + bootout
+      已執行，.env RUN_EXPERT_POOL_EMAIL／RUN_WINBOND_EXPERT_POOL_EMAIL／
+      RUN_SPECIALTY_EXPERT_POOL_EMAIL 待手動補設為 0(agent 無法寫
+      goldenstocks-data/.env，見對話紀錄)。python／研究線一律未動，要重驗 2344
+      單獨可手動跑 run_expert_pool_watch.py。
+    schedule: "weekdays 20:00 (disabled)"
     description: "Expert-pool + 松山/新店 buy-side consensus digest, email only (formerly winbond-/specialty-expert-pool-watch)"
 
   - label: chip-daily-brief
@@ -839,15 +849,37 @@ jobs:
   - label: second-disp-expert-pool-watch
     category: research
     order_capable: false
-    status: enabled
-    schedule: "weekdays 20:35"
+    status: disabled
+    disabled_since: "2026-09-24"
+    disabled_reason: >
+      36檔高波動 HTML dashboard(biglot_dashboard.py :8771)整合決策：候選清單是
+      TWSE 處置股動態名單，跟固定 36 檔重疊是偶發的、非設計上互補；
+      config/research.yaml topic second-disp-expert-pool-copytrade 狀態一直是
+      observe_only／adoptable_status: proposed，G2–G5 全 pending，未曾推進到可
+      採納。launchctl disable + bootout 已執行，.env
+      RUN_SECOND_DISP_EXPERT_POOL_EMAIL 待手動補設為 0(agent 無法寫
+      goldenstocks-data/.env)。python／研究線一律未動。
+    schedule: "weekdays 20:35 (disabled)"
     description: "Disposition-stock expert-pool copytrade watch, T0 filter, email only"
 
   - label: songshan-follow-watch
     category: research
     order_capable: false
-    status: enabled
-    schedule: "weekdays 21:00"
+    status: retired
+    retired_at: "2026-09-24"
+    retired_reason: >
+      36檔高波動 HTML dashboard(biglot_dashboard.py :8771)整合決策：本 job 的價值
+      是替 9217 松山跟單研究累積 PIT 樣本，但該研究線本身已經在
+      songshan-copytrade-poll 下單 job 退役時定案 rejected（見 memory
+      「松山跟單袖現況」：第十一輪定案訊號為負、G2 已 rejected、從未成交過），
+      繼續留痕已無研究價值；且郵件本來就預設關閉(--bootstrap-only)，跟 20:00
+      digest 內容重複。三層退役：launchctl disable + bootout 已執行（mini 上
+      即時生效）；install-launchd.sh 的 LABELS/TEMPLATES/render_template sed/
+      安裝函式已移除、label 移入 RETIRED_LABELS；plist／launcher template 因
+      agent 無法寫 goldenstocks-data/ 而**未搬到慣例備份路徑**，暫留在
+      launchd/ 原地（已不被 install-launchd.sh 引用，無害，使用者可自行搬移
+      或刪除）。python（run_songshan_follow_watch.py）保留供手動使用。
+    schedule: "weekdays 21:00 (retired)"
     description: >
       Observe-only：每個交易日固定記錄 9217（凱基松山）跟單訊號的觸發與
       near-miss，不下單、不建立 Fubon session。腳本

@@ -60,6 +60,7 @@ SUBCAT = {
     "2313": "PCB-HDI", "2308": "電源供應", "1802": "玻璃基板", "3231": "伺服器代工", "3481": "面板",
 }
 RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= RETAIL_CAP}
+FUT_MINI = {r["sid"] for r in _cal["universe"] if r.get("is_mini")}   # 期貨為小型契約(100 股):期貨買/賣欄標「小」、1 口名目=價×100
 # 公司描述/看盤標籤(純靜態;主表名稱 hover 提示 + 詳情頁區塊)。查無則不顯示。
 try:
     from biglot_stock_info import INFO as STOCK_INFO, BLOCKS as STOCK_BLOCKS, tooltip as _stock_tip
@@ -120,6 +121,70 @@ def _stock_note_td(sid):
         when = f"{n['d'][5:]} {when}"
     return (f"<td class='snote'><span class='ne' contenteditable='true' spellcheck='false' data-sid='{sid}'>{txt}</span>"
             f"<span class='nt dim'>{when}</span></td>")
+
+
+# ---- 持倉監控(jack 2026-09-25):手動標記持倉,持有中每輪重算 V2.5 當「持倉分」,出場提示依 127 日面板對照
+#      (scratch/exit_rules_2026-09-25.txt):分數≤0 出 +23.1/+23.2(t5.2/6.2,均持 11 分,SD 94)、壞標籤出 +24.5/+26.0、
+#      到期 60 分;移動停利/硬停損/破昨低出場皆較差,不做。純提示,不送單。
+HOLDS_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "holds.json"
+try:
+    HOLDS: dict = json.loads(HOLDS_PATH.read_text(encoding="utf-8"))
+except Exception:  # noqa: BLE001
+    HOLDS = {}
+HOLD_BAD = ("散戶虛拉", "噴後過熱", "急跌·竭盡∧散戶接")
+
+
+def _hold_save():
+    HOLDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    HOLDS_PATH.write_text(json.dumps(HOLDS, ensure_ascii=False, indent=0), encoding="utf-8")
+
+
+def _hold_log(rec: dict):
+    try:
+        f = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"hold_events_{datetime.now(TZ).strftime('%Y-%m-%d')}.jsonl"
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": datetime.now(TZ).strftime("%H:%M:%S"), **rec}, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _hold_toggle(sid: str, action: str, px):
+    now = time.time()
+    if action == "open" and sid not in HOLDS:
+        HOLDS[sid] = {"t0": now, "hm": datetime.now(TZ).strftime("%H:%M:%S"), "px0": px, "low_since": None, "fired": []}
+        _hold_log({"ev": "open", "sid": sid, "px0": px})
+    elif action == "close" and sid in HOLDS:
+        h = HOLDS.pop(sid); pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
+        _hold_log({"ev": "close", "sid": sid, "px0": h.get("px0"), "px": px, "pnl_bps": pnl, "hold_min": (now - h["t0"]) / 60, "reason": "manual", "fired": h.get("fired", [])})
+    _hold_save()
+
+
+def _hold_update(rows):
+    """每輪:持倉分=當下 V2.5;分數≤0 連續 30 秒 / 壞標籤 / 60 分到期 → 出場旗標;獲利≥50 提示。首次觸發落地。"""
+    now = time.time()
+    for r in rows:
+        h = HOLDS.get(r["sid"])
+        if not h:
+            r["hold"] = None; continue
+        px = r.get("px"); sc = r.get("sc_v2"); items = [k for k, _ in (r.get("sc_v2_items") or [])]
+        pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
+        hold_min = (now - h["t0"]) / 60
+        if sc is not None and sc <= 0:
+            if h.get("low_since") is None: h["low_since"] = now
+        else:
+            h["low_since"] = None
+        flags = []
+        if h.get("low_since") is not None and now - h["low_since"] >= 30: flags.append("分數≤0·30秒")
+        bad = [k for k in items if any(k.startswith(b) for b in HOLD_BAD)]
+        if bad: flags.append("壞標籤:" + "/".join(x.split("(")[0] for x in bad))
+        if hold_min >= 60: flags.append("到期60分")
+        hint = "停利+50" if (pnl is not None and pnl >= 50) else ""
+        for fl in flags:
+            key = fl.split(":")[0]
+            if key not in h.setdefault("fired", []):
+                h["fired"].append(key); _hold_log({"ev": "flag", "sid": r["sid"], "flag": fl, "pnl_bps": pnl, "hold_min": hold_min, "score": sc})
+        r["hold"] = {"hm": h["hm"], "px0": h.get("px0"), "pnl": pnl, "min": hold_min, "score": sc, "flags": flags, "hint": hint,
+                     "low_s": (now - h["low_since"]) if h.get("low_since") is not None else 0}
 
 
 def _save_stock_note(sid, txt):
@@ -690,6 +755,11 @@ tick();
     if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm[el.dataset.sid]);save(el,true);}}
     if(e.key==='Escape'){{el.blur();}}}});
 }})();
+// 持倉按鈕:持/出 → POST /hold(純提示,不送單)
+(function(){{const app=document.getElementById('app');
+  app.addEventListener('click',async e=>{{const b=e.target.closest&&e.target.closest('.hbtn'); if(!b) return; e.preventDefault(); e.stopPropagation();
+    try{{await fetch('/hold',{{method:'POST',body:JSON.stringify({{sid:b.dataset.sid,action:b.dataset.action}})}});}}catch(_){{}}}});
+}})();
 // 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
 (function(){{
   const box=document.getElementById('txp'), tip=document.getElementById('txtip'), ln=document.getElementById('txline');
@@ -836,6 +906,7 @@ def ingest():
                         continue
     except Exception:  # noqa: BLE001
         pass
+    _ingest_mini_fut(today)                        # 期散:小型契約 1 口成交(FUT_MINI 檔)
 
 
 def _ingest_trade(line):
@@ -918,7 +989,7 @@ def _rolling(sid, nts):
     只供欄位顯示;標籤照舊用完成的 5 分桶。無逐筆時回 None。"""
     out = {k: None for k in ("big5_r", "big30_r", "retn5_r", "rbuy5_r", "rsell5_r",
                              "rbuy30_r", "rsell30_r", "dsh30_r", "w_ret_r", "r30_r",
-                             "tot5_r", "tot30_r", "big5p_r", "bigp30_r", "share5_r", "dshare5_r", "sell30s_r")}
+                             "tot5_r", "tot30_r", "big5p_r", "bigp30_r", "share5_r", "dshare5_r", "sell30s_r", "r30s_r")}
     q = ST.recent.get(sid)
     if not q:
         return out
@@ -928,8 +999,8 @@ def _rolling(sid, nts):
     tot_p = ret2_p = 0.0
     big5p = tot5p = ret2_5p = bigp30 = 0.0
     t30s = nts - 30
-    sbuy = ssell = 0.0                        # 近 30 秒主動買/賣金額(委託簿竭盡候選用)
-    px5 = px30 = None
+    sbuy = ssell = 0.0                        # 近 30 秒主動買/賣金額(竭盡狀態格用)
+    px5 = px30 = px30s = None                 # px30s = 30 秒前成交價(近30秒報酬,V2.5 真空/已止跌判定)
     for ts, px, amt, sgn, isbig, isret in q:
         if ts <= t60:
             continue
@@ -958,6 +1029,8 @@ def _rolling(sid, nts):
                 sbuy += amt
             elif sgn < 0:
                 ssell += amt
+        else:
+            px30s = px
         if ts <= t5:
             px5 = px
         else:
@@ -974,6 +1047,8 @@ def _rolling(sid, nts):
     out["tot5_r"], out["tot30_r"], out["big5p_r"], out["bigp30_r"] = tot5, tot30, big5p, bigp30
     if sbuy + ssell > 0:
         out["sell30s_r"] = ssell / (sbuy + ssell)
+    if px30s and pxnow:
+        out["r30s_r"] = (pxnow / px30s - 1) * 10000
     if tot5 > 0:
         out["rbuy5_r"] = (ret2_5 + retn5) / 2 / tot5 * 100
         out["rsell5_r"] = (ret2_5 - retn5) / 2 / tot5 * 100
@@ -1341,14 +1416,18 @@ SC_HIST: dict = {}   # sid -> deque[(ts, score)] 近 60 分盤中分歷史(V2.2�
 #: 「區間指標」聯合 OLS(y=未來 60 分對宇宙等權超額 bps,按日聚類 SE),權重 = 0.7×係數、|cl-t|<2 歸零、四捨五入到 0.5;
 #: 過熱 400–600 與逆弱 50–100 依單調先驗沿用前一格(擬合值 t−2.0/+1.9 剛好落門檻外)。OOS(07-01~)不參與擬合。
 #: 歸零項(聯合後無增量):過熱 150–200、急跌 200–600、順漲/順跌/逆強、對開盤 ±3/±5%(被過熱/散戶側吸收)、主力點火/深接/暗退/破昨。
-V23_W = {
-    "散戶虛拉": -4.5, "勿追5m": -3.0, "散戶接跌": +2.5,
+V23_W = {   # 名稱沿用;內容為 V2.5(2026-09-24 晚)
+    "散戶虛拉": -4.5, "勿追5m": -3.0,
     "過熱200-300": -5.0, "過熱300-400": -8.5, "過熱400-600": -8.5,
-    "急跌≤−600": +40.0,                       # 擬合 +45,受 |分|≤40 上限;多方唯一存活項
+    "急跌≤−600": +40.0,                       # 擬合 +45~49,受 |分|≤40 上限
     "逆弱20-50": +1.5, "逆弱50-100": +1.5, "逆弱≤−100": +5.5,
     "純機構": +9.0,
-    "蓄勢": +4.5, "蓄勢深": +5.0, "倒貨": -2.5,  # V2.4 分級蓄勢(biglot_score_v24_fit.py):壓縮 −0.5~0 / <−0.5 ∧ 大戶30分 5~40%;≥40%(鉅額)歸零;倒貨 0<壓縮≤0.5 ∧ ≤−10%
-    "權證": 3.0, "委託簿竭盡": 3.0,            # tick 項,面板測不到,沿用 V2.2 暫定 ±3
+    "蓄勢": +4.5, "蓄勢深": +5.0, "倒貨": -2.5,  # V2.4 分級蓄勢
+    # V2.5 竭盡狀態格(biglot_score_v25_fit.py;近5分 ≤−0.2% 為「急跌」、≥+0.2% 為「急拉」;30秒主動賣占比 ≤40%=竭盡、≥60%=未竭):
+    #   單獨的「賣盤竭盡」是負的(−5.5/−5.1):賣壓退了=反彈已在桶內發生;反轉指紋是「賣壓還在」或「沒人賣價卻掉(真空)」
+    "急跌·賣壓未竭": +3.0, "急跌·真空": +12.5, "急跌·竭盡散戶接": -5.5, "急跌·大戶接∧未竭": +6.0, "急跌·末30秒續跌": +2.0,
+    "急拉·買壓竭盡": +4.5, "急拉·末30秒續漲": -3.5,
+    "權證": 3.0,                               # tick 項,面板測不到,沿用暫定 ±3(散戶接跌 +2.5 已被狀態格吸收 → 0)
 }
 
 
@@ -1410,8 +1489,6 @@ def _score_v2(r, mkt30, hm=None):
         add("散戶虛拉")
     if w5 is not None and w5 > 20 and (((r.get("dshare5_r") or 0) > 5 and not unm) or (b5n is not None and b5n < -5)):
         add("勿追5m")
-    if w5 is not None and w5 < -20 and rb5 is not None and rb5 >= 5 and not unm:
-        add("散戶接跌")
     if r30 is not None:
         if r30 >= 600:
             it.append(("噴後過熱≥600 近漲停,不計", 0))
@@ -1442,10 +1519,20 @@ def _score_v2(r, mkt30, hm=None):
             if sh >= 0.6 and (r30 or 0) > 0: add("權證", "權證偏多∧價漲(暫)", -1)
             elif sh >= 0.6 and b30 <= -3e7: add("權證", "權證偏多∧大戶賣(暫)", -1)
             elif sh <= 0.4 and b30 >= 3e7: add("權證", "權證偏空∧大戶買(暫)", +1)
-    sp = r.get("sell30s_r"); bm, am = r.get("bid_min"), r.get("ask_min")
+    # 竭盡狀態格(V2.5):賣壓還在→買;賣壓退了∧散戶在接→晚了;沒人主動賣價卻掉→真空(最強);急拉對稱
+    sp = r.get("sell30s_r"); r30s = r.get("r30s_r")
     if sp is not None and w5 is not None:
-        if w5 <= -20 and sp <= 0.40 and (bm or 0) >= 3: add("委託簿竭盡", "賣盤竭盡候選(暫)", +1)
-        elif w5 >= 20 and sp >= 0.60 and (am or 0) >= 3: add("委託簿竭盡", "買盤竭盡候選(暫)", -1)
+        exh, notexh = sp <= 0.40, sp >= 0.60
+        if w5 <= -20:
+            if exh and r30s is not None and r30s <= -10: add("急跌·真空", f"急跌·真空(30s主動賣{sp*100:.0f}%∧末30秒{r30s:+.0f}bps)")
+            if notexh: add("急跌·賣壓未竭", f"急跌·賣壓未竭(30s主動賣{sp*100:.0f}%)")
+            if exh and rb5 is not None and rb5 >= 5 and not unm: add("急跌·竭盡散戶接", f"急跌·竭盡∧散戶接(散買{rb5:.0f}%)")
+            if b5n is not None and b5n > 5 and not exh: add("急跌·大戶接∧未竭", f"急跌·大戶接∧未竭(大戶5分{b5n:+.0f}%)")
+            if r30s is not None and r30s <= -10 and not exh: add("急跌·末30秒續跌", f"急跌·末30秒續跌({r30s:+.0f}bps)")
+            if exh and r30s is not None and r30s > 0: it.append((f"急跌·竭盡已止跌(30s主動賣{sp*100:.0f}%,反彈已發生,0)", 0))
+        elif w5 >= 20:
+            if notexh and r30s is not None and r30s < 0: add("急拉·買壓竭盡", f"急拉·買壓竭盡(30s主動賣{sp*100:.0f}%∧末30秒{r30s:+.0f})")
+            if r30s is not None and r30s >= 10: add("急拉·末30秒續漲", f"急拉·末30秒續漲({r30s:+.0f}bps)")
     if abs(sc) > 40:
         it.append((f"上限 ±40(原 {sc:+.0f})", 0)); sc = 40.0 if sc > 0 else -40.0
     # 近 60 分極端分(⚠ 每 5 秒取樣的極值統計量,系統性大於桶級分數;只當「剛剛出現過」提示)
@@ -1475,7 +1562,9 @@ def _log_scores(rows, day):
         SC_LOGGED.add(key)
         out.append(json.dumps({"date": day, "bucket": bk, "ts": now.strftime("%H:%M:%S"), "sid": r["sid"], "px": r.get("px"),
                                "sc_v23": r["sc_v2"], "sc_v22": r.get("sc_v22"), "sc_ov": r.get("sc_ov"), "sc_v1": r.get("sc_in"),
-                               "items": r.get("sc_v2_items") or [], "cause": [t for t, _ in (r.get("cause") or [])]}, ensure_ascii=False))
+                               "items": r.get("sc_v2_items") or [], "cause": [t for t, _ in (r.get("cause") or [])],
+                               "mini": ({k: (v if k != "n30" and k != "n5" else list(v)) for k, v in r["mini"].items()} if r.get("mini") else None),
+                               "hold": r.get("hold")}, ensure_ascii=False))
     if out:
         try:
             logp.parent.mkdir(parents=True, exist_ok=True)
@@ -1551,8 +1640,19 @@ def _cause_tags(rows, today: str):
     grp = {}
     for r in rows:
         grp.setdefault(SUBCAT.get(r["sid"]) or CATS.get(r["sid"]), []).append(r)
+    # 大盤狀態(進場過濾器,不計分;jack 2026-09-24):36 檔等權 近5分 / 近30秒
+    _w5s = [q["w_ret_r"] for q in rows if q.get("w_ret_r") is not None]; _r30ss = [q["r30s_r"] for q in rows if q.get("r30s_r") is not None]
+    mkt5 = sum(_w5s) / len(_w5s) if len(_w5s) >= 10 else None; mkt30s = sum(_r30ss) / len(_r30ss) if len(_r30ss) >= 10 else None
     for r in rows:
         tags = []; sid = r["sid"]
+        w5_, r30s_ = r.get("w_ret_r"), r.get("r30s_r")
+        if w5_ is not None and w5_ <= -20 and mkt5 is not None:
+            if mkt5 <= -20 and (w5_ - mkt5) > -10:
+                tags.append(("跟盤殺", f"個股5分 {w5_:+.0f} vs 大盤5分 {mkt5:+.0f}bps,相對<10bps=只是跟著大盤;127日:聯合 −2.9/−3.7(t−2.3)、原始後60分 −20/−24 → 不做多(大盤不反轉)"))
+            elif mkt30s is not None and r30s_ is not None and r30s_ <= -10 and mkt30s >= 0:
+                tags.append(("自己殺", f"個股末30秒 {r30s_:+.0f} 而大盤末30秒 {mkt30s:+.0f}bps=大盤止跌它還在殺;127日:聯合 +3.4/+5.6(t2.1)、原始 +6/+7 → 要的格"))
+            elif mkt30s is not None and mkt30s < -5:
+                tags.append(("大盤仍跌", f"大盤末30秒 {mkt30s:+.0f}bps 仍在跌;127日:個股續跌∧大盤續跌 聯合 −3.4/−5.6、原始 −5/−18 → 等大盤止住"))
         if sid in disp:
             m, end = disp[sid]; tags.append((f"處置{m}", f"處置窗至 {end}(disposal_windows.csv,分盤撮合、當沖停)"))
         bk = ST.book.get(sid) or {}
@@ -1587,6 +1687,79 @@ def _cause_tags(rows, today: str):
         r["cause"] = tags
 
 
+
+# ---- 期散(小型契約 1 口成交 = 期貨市場散戶代理;jack 2026-09-25):只對 FUT_MINI 檔顯示,描述性、不進分數 ----
+from collections import deque as _deque_mini
+MINI_ROOT = {r["sid"]: (r["fut_code"][:-1] if len(r.get("fut_code", "")) == 3 and r["fut_code"].endswith("F") else r.get("fut_code", "")).lower()
+             for r in _cal["universe"] if r.get("is_mini")}
+MINI_ST: dict = {"day": None, "off": {}, "q": {}}       # off: root -> 檔案讀取位移;q: sid -> deque[(ts, px, size, sgn, amt)]
+
+
+def _ingest_mini_fut(today: str) -> None:
+    """增量讀 {root}_trades_{today}.jsonl(期貨簿收集器落地,交易所 µs 時戳),只留 FUT_MINI 檔;主動方向以該筆 bid/ask 判。"""
+    if MINI_ST["day"] != today:
+        MINI_ST.update({"day": today, "off": {}, "q": {}})
+    for sid, root in MINI_ROOT.items():
+        f = DATA_DIR.parent / "cache" / f"{root}_trades" / f"{root}_trades_{today}.jsonl"
+        if not f.exists():
+            continue
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(MINI_ST["off"].get(root, 0)); chunk = fh.read()
+            nl = chunk.rfind(b"\n")
+            if nl == -1:
+                continue
+            MINI_ST["off"][root] = MINI_ST["off"].get(root, 0) + nl + 1
+            q = MINI_ST["q"].setdefault(sid, _deque_mini())
+            for line in chunk[:nl].split(b"\n"):
+                try:
+                    o = json.loads(line)
+                    if o.get("stale") or o.get("quote_type") not in (None, "FUTURE"):
+                        continue
+                    px, sz, b, a = float(o["price"]), float(o["size"]), o.get("bid"), o.get("ask")
+                    sgn = 1 if (a is not None and px >= float(a)) else (-1 if (b is not None and px <= float(b)) else 0)
+                    ts = float(o["trade_time"]) / 1e6
+                    q.append((ts, px, sz, sgn, px * sz * 100))          # 小型契約 1 口 = 100 股
+                except Exception:  # noqa: BLE001
+                    continue
+            cut = time.time() - 7200
+            while q and q[0][0] < cut:
+                q.popleft()
+        except Exception:  # noqa: BLE001
+            continue
+
+
+def _mini_stats(sid: str, nts: float) -> dict | None:
+    q = MINI_ST["q"].get(sid)
+    if not q:
+        return None
+    out = {}
+    for lab, win in (("5", 300), ("30", 1800)):
+        t0 = nts - win; n1 = a1 = tot = 0.0; nb = ns = 0
+        for ts, px, sz, sgn, amt in q:
+            if ts <= t0: continue
+            tot += amt
+            if sz == 1 and sgn:
+                n1 += sgn * amt; a1 += amt; nb += (sgn > 0); ns += (sgn < 0)
+        out[f"net{lab}"] = n1; out[f"share{lab}"] = (a1 / tot * 100) if tot > 0 else None; out[f"n{lab}"] = (nb, ns); out[f"tot{lab}"] = tot
+    return out
+
+
+def _mini_td(r) -> str:
+    if r["sid"] not in FUT_MINI:
+        return "<td class='dim'>—</td>"
+    m = r.get("mini")
+    if not m or m.get("tot30", 0) <= 0:
+        return "<td class='dim' title='期散:小型契約 1 口成交(期貨散戶代理);今日尚無小型成交'>無</td>"
+    net, sh, (nb, ns) = m["net30"], m["share30"], m["n30"]
+    cls = "up" if net > 0 else ("dn" if net < 0 else "dim")
+    tip = (f"期散(描述性,不進分數):小型契約單筆 1 口(1 口=100 股≈{r.get('px') or 0:.0f}×100 元)的主動買−主動賣淨額,期貨散戶代理。"
+           f"近30分 淨 {net/1e4:+,.0f} 萬(主動買 {nb} 筆/主動賣 {ns} 筆)·1 口成交占全部小型成交 {sh:.0f}%;近5分 淨 {m['net5']/1e4:+,.0f} 萬。"
+           "⚠ 與現股散戶(1 張<500 萬)是不同母體;小型契約有造市商對敲,主動簽號只能濾掉一部分;累 20 日後與可測檔對照再決定用途")
+    return (f"<td class='{cls}' title='{html_mod.escape(tip, quote=True)}'>{net/1e4:+,.0f}"
+            f"<span class='dim' style='font-size:9px'> {sh:.0f}%·{nb}/{ns}</span></td>")
+
+
 def _score_td(r):
     ov, sc = r.get("sc_ov"), r.get("sc_in")
     if ov is None or sc is None:
@@ -1596,7 +1769,7 @@ def _score_td(r):
         return "up" if v > 0 else ("dn" if v < 0 else "dim")
     v2 = r.get("sc_v2"); v2i = r.get("sc_v2_items") or []
     tip = ("隔夜分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_ov_items"]) or "無") +
-           " ‖ 盤中分V2.4(bps,60分,IS聯合OLS×0.7,上限±40):" + (" · ".join(f"{k} {v:+.1f}" for k, v in v2i) or "無") +
+           " ‖ 盤中分V2.5(bps,60分,IS聯合OLS×0.7,上限±40):" + (" · ".join(f"{k} {v:+.1f}" for k, v in v2i) or "無") +
            " ‖ 盤中分V1(0/±1/±2,標籤×衰減,並列20日):" + (" · ".join(f"{k} {v:+.1f}" for k, v in r["sc_in_items"]) or "無") +
            f" = {sc:+.1f}" +
            (f" ‖ V2.2 加總並列 {r['sc_v22']:+.1f}" if r.get("sc_v22") is not None else "") +
@@ -1613,13 +1786,21 @@ def _score_td(r):
     cause = r.get("cause") or []
     if cause:
         tip += " ‖ 成因:" + " · ".join(f"[{t}] {d}" for t, d in cause)
-    _col = {"處置": "#f0883e", "跌停鎖": "#f85149", "觸跌停": "#f85149", "族群": "#d29922", "MOPS?": "#8b949e", "MOPS": "#a371f7", "昨MOPS": "#7d5bbe"}
+    h = r.get("hold"); hold_html = ""
+    if h:
+        pn = f"{h['pnl']:+.0f}" if h["pnl"] is not None else "—"
+        fl = " ".join(f"<b style='color:#f85149'>{html_mod.escape(f)}</b>" for f in h["flags"])
+        hint = f" <span style='color:#3fb950'>{h['hint']}</span>" if h.get("hint") else ""
+        hold_html = (f"<br><span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
+                     f"{(' 低'+str(int(h['low_s']))+'s') if h['low_s'] else ''}</span> {fl}{hint}")
+        tip += f" ‖ 持倉:進 {h['hm']} @ {h['px0']} · 出場規則=分數≤0 連續 30 秒 / 壞標籤(虛拉·過熱·竭盡∧散戶接) / 60 分到期;獲利≥50 可停利;不設移動停利/硬停損/破昨低(面板對照較差)"
+    _col = {"處置": "#f0883e", "跌停鎖": "#f85149", "觸跌停": "#f85149", "族群": "#d29922", "MOPS?": "#8b949e", "MOPS": "#a371f7", "昨MOPS": "#7d5bbe", "跟盤殺": "#f85149", "自己殺": "#3fb950", "大盤仍跌": "#d29922"}
     def _cc(t):
         return next((v for k, v in _col.items() if t.startswith(k)), "#8b949e")
     cause_html = ("<br><span style='font-size:9px'>" + " ".join(f"<span style='color:{_cc(t)}'>{html_mod.escape(t)}</span>" for t, _ in cause) + "</span>") if cause else ""
     return (f"<td style='text-align:left;white-space:nowrap;{bg}' title='{html_mod.escape(tip, quote=True)}'>"
             f"<span class='dim'>隔</span><b class='{_c(ov)}'{big_ov}>{ov:+d}</b> "
-            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}{cause_html}</td>")
+            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}{cause_html}{hold_html}</td>")
 
 
 def render():
@@ -1722,6 +1903,7 @@ def render():
         # 全日
         last_price = ST.last_px.get(sid)
         r.update(_rolling(sid, time.time()))            # 5分/30分 欄位每秒滾動(顯示用 + 即時標籤引擎)
+        r["mini"] = _mini_stats(sid, time.time()) if sid in FUT_MINI else None   # 期散(小型契約 1 口)
         r["rvol5_r"] = ((r["tot5_r"] / rb[bk_lbl]) if (r.get("tot5_r") and bk_lbl in rb and rb[bk_lbl] > 0)
                         else None)                        # 滾動 5 分量能倍數(對同時段基準)
         r["px"] = last_price
@@ -1907,6 +2089,7 @@ def render():
     try:
         _score_rows(rows, mkt30, time.time(), mkt30_r)
         _cause_tags(rows, ST.date)
+        _hold_update(rows)
         _log_scores(rows, ST.date)
     except Exception as _e:  # noqa: BLE001
         print(f"[score] {_e!r}", file=sys.stderr)
@@ -2043,7 +2226,10 @@ def render():
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
-        _band = " class='band'" if r["sid"] in grpend else ""     # 產業交界粗線
+        _hh = r.get("hold"); _hcls = ""
+        if _hh:
+            _hcls = "hexp" if any(f.startswith("到期") for f in _hh["flags"]) else ("hbad" if any(f.startswith("壞") for f in _hh["flags"]) else ("hexit" if _hh["flags"] else "hold"))
+        _band = " class='" + " ".join(x for x in (("band" if r["sid"] in grpend else ""), _hcls) if x) + "'" if (r["sid"] in grpend or _hcls) else ""     # 產業交界粗線 + 持倉底色
         _cc = r.get("chg_amt")                          # 對昨收漲跌:紅漲綠跌(台股慣例)
         _qcls = _px_class(r.get("px"), PREV_CLOSE.get(r["sid"]), r.get("chg_pct"))
         # 對昨收:只用一般紅漲綠跌字色(不要紅底白字——紅底只留給「價」欄)
@@ -2074,13 +2260,13 @@ def render():
         if _fbid is not None:
             _bp = f"<span class='hit'>{_fbid:g}</span>" if _hitb else f"{_fbid:g}"
             _fbtd = (f"<td class='{_fbcls}' title='期貨買一{_bastxt}'>{_bp}"
-                     f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}</span></td>")
+                     f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}{'小' if r['sid'] in FUT_MINI else ''}</span></td>")
         else:
             _fbtd = "<td class='dim'>—</td>"
         if _fask is not None:
             _ap = f"<span class='hit'>{_fask:g}</span>" if _hita else f"{_fask:g}"
             _fatd = (f"<td class='{_facls}' title='期貨賣一{_bastxt}'>{_ap}"
-                     f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}</span></td>")
+                     f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}{'小' if r['sid'] in FUT_MINI else ''}</span></td>")
         else:
             _fatd = "<td class='dim'>—</td>"
         # 盤前試撮:08:30~09:00 無成交價時,試撮直接塞進現有欄位共用(價/對昨收/買簿/賣簿),不另立欄
@@ -2136,7 +2322,12 @@ def render():
         c_nm = (f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
                 f"title=\"{html_mod.escape(_stock_tip(r['sid']), quote=True).replace(chr(10), '&#10;')}\" "
                 f"style='color:inherit;text-decoration:none'>{name}</a>"
-                f"<span class='cat'>{r['cat']}</span></td>")
+                f"<span class='cat'>{r['cat']}</span>"
+                + ("<span class='dim' style='font-size:9px' title='散戶不可測:1 張≥500 萬,散戶欄=不可測、散戶側訊號(虛拉/勿追/竭盡∧散戶接)關閉;大戶/真空/急跌/隔夜大戶佔比照常'> ✗散</span>" if r.get("unm") else "")
+                + ("<span class='dim' style='font-size:9px' title='個股期貨為小型契約(100 股):期貨買/賣欄的量以小型口數計,1 口名目=價×100'> 小</span>" if r["sid"] in FUT_MINI else "")
+                + (f" <span class='hbtn' data-sid='{r['sid']}' data-action='close' title='點一下=平倉(記錄損益與原因 manual)' style='cursor:pointer;color:#f85149;font-size:9px;border:1px solid #f85149;padding:0 3px'>出</span>" if r.get("hold")
+                   else f" <span class='hbtn' data-sid='{r['sid']}' data-action='open' title='點一下=標記持倉(以現價為進場價,啟動持倉分監控;純提示不送單)' style='cursor:pointer;color:#58a6ff;font-size:9px;border:1px solid #30363d;padding:0 3px'>持</span>")
+                + "</td>")
         c_vr = vr_td(r)
         c_amp = (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
                  f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
@@ -2227,7 +2418,7 @@ def render():
             f"<tr{_band}>" + c_nm
             + _pxtd + _fbtd + _fatd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價)
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
-            + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td             # ③ 30分
+            + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh                   # ④ 全日
             + c_cmp + c_dtr + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
@@ -2274,6 +2465,7 @@ def render():
 <th class="g30" title="30分散戶賣方參與(投降側,無資訊)">30分散賣<span class="sub">參與%</span></th>
 <th class="g30" title="30分散戶買方參與 − 前一段參與%,即散戶參與度的變化(跳升=散戶湧入)">散戶參與Δ<span class="sub">30分</span></th>
 <th class="g30" title="權證30分:近30分 認購/認售 成交額(萬),小字=簽號後多方占比,判斷:≥60%偏多(紅)/≤40%偏空(綠)/其間中性(灰)。主尺度。資料源富邦 ws 逐筆(2連線×300檔)。⚠描述性、尚未回測,不是訊號;『權證做多』看占比與判斷,不看購/售活動量">權證30分<span class="sub">購/售·萬 (多方%) 判斷</span></th>
+<th class="g30" title="期散30分:個股期貨『小型契約』(100 股)單筆 1 口成交的主動買−主動賣淨額(萬),小字=1 口成交占全部小型成交%·主動買筆數/主動賣筆數。只對期貨為小型契約的高價檔顯示(大立光/健策/旺矽/台光電;現股 1 張≥500 萬散戶不可測)。⚠ 期貨市場散戶代理,與現股散戶(1 張<500 萬)是不同母體;含造市商對敲;描述性、不進分數,累 20 日後與可測檔對照">期散30分<span class="sub">小型1口淨·萬 (占比·買/賣筆)</span></th>
 <th class="gd" title="全日累計大戶淨額(萬)=盤中一路累加,收盤即全日淨額;最重要,÷成交=佔比%(隔夜排序主鍵IC+0.097/t7.1)。三尺度並排看背離:短窗買∧全日仍賣=誘多">全日大戶<span class="sub">淨額·萬</span></th>
 <th class="gd" title="全日累計散戶淨額(萬)。散戶=1張且<500萬。">全日散戶<span class="sub">淨額·萬</span></th>
 <th class="gd" title="(全日大戶淨 − 全日散戶淨)÷ 全日成交額 = 大戶佔比 − 散戶佔比(%)。搭配大戶佔比讀:A 佔比≥+10%∧散戶<5% = 大戶買散戶未主導(紅;127日隔夜+124,散戶0~5%最佳+185/t4.5) · B 佔比≥+10%∧散戶≥5% = 大戶帶散戶(黃,+75/t1.2) · C 佔比≤−10%∧散戶≥5% = 大戶倒散戶接刀(綠,−11) · D 佔比≤−10% = 大戶賣散戶不接(綠,−13;全體基準+73)。門檻:佔比±10%≈p12/p85,差±15%≈p10/p90(粗體)。127日檢定:此欄控大戶佔比後無獨立方向資訊,排序仍用大戶佔比。">大戶−散戶<span class="sub">÷成交% · A/B/C/D</span></th>
@@ -2287,12 +2479,13 @@ def render():
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
 <th title="今日振幅倍數 = (今高−今低)/昨收% ÷ 20日均振幅%。波動聚集:預測明日振幅為真、方向 IC≈0(tick排列/籌碼分數兩線驗過)→ 不投票、不進淨分;≥1.5x 黃粗=高波動日:同樣淨分對應更大 bps、急殺z 砍尾閾值可放寬、部位縮小。">今日振幅<span class="sub">÷20日均 x</span></th>
 <th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
-<th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.4(未來60分,bps 制,|分|≤40)分開計、不相加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1。盤中V2.3(2026-09-24,pit100×127日 IS 聯合OLS×0.7、按日聚類 t<2 歸零、OOS 未參與擬合;各項可加):散戶虛拉 −4.5 · 勿追5m −3 · 散戶接跌 +2.5 · 噴後過熱 ≥200/≥300/≥400 −5/−8.5/−8.5、≥600 不計 · 急跌≤−600 +40(多方唯一存活項) · 逆弱(市場30分≥+5) ≤−20/−50/−100 +1.5/+1.5/+5.5 · 純機構 +9(10:00後) · 蓄勢 −0.5~0% +4.5 / 蓄勢深 <−0.5% +5(大戶30分 5~40%;≥40% 鉅額不計) / 倒貨(0<壓縮≤0.5%∧≤−10%) −2.5 · 權證/委託簿竭盡 ±3(暫,面板測不到)。歸零:過熱150–200、急跌200–600、順漲/順跌/逆強、對開盤±3/±5%、主力點火/深接/暗退/破昨。09:30 前不計、無時段係數。「峰」= 近60分最極端分與時刻(每5秒取樣的極值,偏大,只當提示)。第二行=成因標籤(下單前必看):處置(disposal_windows.csv)/跌停鎖·觸跌停(MIS 五檔 y·l·z 算跌停價)/族群k/m(同細分產業近30分同向≥2%)/MOPS hh:mm(今日,尚無即時源→顯示 MOPS?)/昨MOPS hh:mm(T-1 重大訊息,TWSE/TPEx OpenAPI 快照,每晚 fetch_mops_today.py);hover 看各標籤來源與時間。OOS(07-01~08,含壓縮兩項):|分|≥15 多 n=94 超額+75/t3.0(原始+78,延遲1桶+41/t1.1)、空 n=324 超額+28/t2.7(原始+56,延遲+19/t1.9);校準斜率 1.20(V2.2 為 0.46);IC +0.057(V2.2 +0.049)。覆蓋比 V2.2 少約 40 倍,多數時間為 0 = 無證據不是中性。">淨分<span class="sub">隔夜 · 盤中V2.4 bps · 峰 · 成因</span></th>
+<th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.5(未來60分,bps 制,|分|≤40)分開計、不相加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1。盤中V2.3(2026-09-24,pit100×127日 IS 聯合OLS×0.7、按日聚類 t<2 歸零、OOS 未參與擬合;各項可加):散戶虛拉 −4.5 · 勿追5m −3 · 噴後過熱 ≥200/≥300/≥400 −5/−8.5/−8.5、≥600 不計 · 急跌≤−600 +40(多方唯一存活項) · 逆弱(市場30分≥+5) ≤−20/−50/−100 +1.5/+1.5/+5.5 · 純機構 +9(10:00後) · 蓄勢 −0.5~0% +4.5 / 蓄勢深 <−0.5% +5(大戶30分 5~40%;≥40% 鉅額不計) / 倒貨(0<壓縮≤0.5%∧≤−10%) −2.5 · 竭盡狀態格(近5分≤−0.2%=急跌;30秒主動賣≤40%=竭盡/≥60%=未竭):真空(竭盡∧末30秒仍跌≥10bps) +12.5 · 大戶接∧未竭 +6 · 賣壓未竭 +3 · 末30秒續跌 +2 · 竭盡∧散戶接 −5.5 · 急拉:買壓竭盡 +4.5 / 末30秒續漲 −3.5 · 權證 ±3(暫)。⚠ 單獨的「賣盤竭盡」是負的:賣壓退=反彈已發生。歸零:過熱150–200、急跌200–600、順漲/順跌/逆強、對開盤±3/±5%、散戶接跌(被狀態格吸收)、主力點火/深接/暗退/破昨。09:30 前不計、無時段係數。「峰」= 近60分最極端分與時刻(每5秒取樣的極值,偏大,只當提示)。第二行=成因標籤(下單前必看):處置(disposal_windows.csv)/跌停鎖·觸跌停(MIS 五檔 y·l·z 算跌停價)/族群k/m(同細分產業近30分同向≥2%)/MOPS hh:mm(今日,尚無即時源→顯示 MOPS?)/昨MOPS hh:mm(T-1 重大訊息,TWSE/TPEx OpenAPI 快照,每晚 fetch_mops_today.py);跟盤殺(紅=不做)/自己殺(綠=大盤止跌它還在殺,要的格)/大盤仍跌(黃=等):大盤條件是進場過濾器不計分,因為分數預測超額、你吃原始。hover 看各標籤來源與時間。OOS(07-01~08,V2.5):IC +0.072(V2.4 +0.058);|分|≥15 多 n=427 超額+38/t4.8(延遲1桶 +20/t2.7 首次顯著)、≥20 多 n=108 +78/t5.0;空 ≥15 n=792 +25/t2.5;校準斜率 1.19。覆蓋比 V2.2 少約 40 倍,多數時間為 0 = 無證據不是中性。">淨分<span class="sub">隔夜 · 盤中V2.5 bps · 峰 · 成因</span></th>
 <th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""
 
 
 ARC_CSS = """<style>body{background:#0d1117;color:#c9d1d9;font:13px/1.6 -apple-system,'PingFang TC',monospace;margin:10px}
+tr.hold td{box-shadow:inset 3px 0 #58a6ff}tr.hexit td{background:#3a3300 !important}tr.hbad td{background:#4a1a1a !important}tr.hexp td{background:#2a2a2a !important}
 table{border-collapse:collapse;white-space:nowrap}th,td{padding:2px 9px;text-align:right;border-bottom:1px solid #21262d}
 th{background:#161b22;color:#8b949e;position:sticky;top:0;z-index:2;cursor:pointer;user-select:none}
 td.nm{position:sticky;left:0;background:#0d1117;text-align:left;font-weight:600;color:#e6edf3;z-index:1}
@@ -3106,6 +3299,17 @@ class H(BaseHTTPRequestHandler):
                     raise ValueError("unknown sid")
                 t = _save_stock_note(sid, str(q.get("txt", "")))
                 body, code = json.dumps({"ok": True, "t": t}).encode(), 200
+            except Exception as exc:  # noqa: BLE001
+                body, code = f"err {exc!r}".encode(), 500
+        elif path == "/hold":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:1000])
+                sid = str(q.get("sid", ""))[:8]; act = str(q.get("action", ""))
+                if sid not in NAMES or act not in ("open", "close"):
+                    raise ValueError("bad sid/action")
+                _hold_toggle(sid, act, ST.last_px.get(sid))
+                body, code = json.dumps({"ok": True, "holds": list(HOLDS)}).encode(), 200
             except Exception as exc:  # noqa: BLE001
                 body, code = f"err {exc!r}".encode(), 500
         elif path == "/notes":

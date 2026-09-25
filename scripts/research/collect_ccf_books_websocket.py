@@ -468,10 +468,15 @@ def _run_once() -> int:
 
         for symbol, root in symbol_to_root.items():
             ws.subscribe({"channel": "books", "symbol": symbol, "afterHours": False})
-            ws.subscribe({"channel": "books", "symbol": symbol, "afterHours": True})
             ws.subscribe({"channel": "trades", "symbol": symbol, "afterHours": False})
-            ws.subscribe({"channel": "trades", "symbol": symbol, "afterHours": True})
-            _log(f"subscribed books+trades (day + afterHours) for {root} {symbol}")
+            # 2026-09-24:FUTOPT_DAY_ONLY=1 只訂日盤(個股期貨夜盤只有 2330/2303 有交易,其餘 34 檔的夜盤訂閱
+            # 純粹佔額度)。36 root × 2 = 72 訂閱,低於曾撞上限的 108;預設(未設)維持日+夜 4 訂閱不變。
+            if os.environ.get("FUTOPT_DAY_ONLY", "").strip() not in ("1", "true", "yes"):
+                ws.subscribe({"channel": "books", "symbol": symbol, "afterHours": True})
+                ws.subscribe({"channel": "trades", "symbol": symbol, "afterHours": True})
+                _log(f"subscribed books+trades (day + afterHours) for {root} {symbol}")
+            else:
+                _log(f"subscribed books+trades (day only) for {root} {symbol}")
 
         started_mono = time.monotonic()
         last_report = time.monotonic()

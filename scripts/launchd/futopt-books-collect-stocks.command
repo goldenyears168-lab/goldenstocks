@@ -56,6 +56,22 @@ _load_env_file() {
 _load_env_file "${APP_SUPPORT}/order.env" "order.env"
 _load_env_file "${STATE}/.env" "project .env"
 
+# 2026-09-01 換池:momentum-rotation v2 宇宙(19 檔)取代退役舊池(舊 12+白名單 7,
+# 8/31 已退役)。聯電(CC/CCF)刻意排除——它在指數核心連線上有 9+ 天最長序列,不搬家。
+# 18 roots × 4 訂閱 = 72,與原 76 同量級,不會重演 108 訂閱撞上限的事故。
+# 2026-09-01 二次換池:死亡帶(tick成本33-64bp,永不可交易)7 root 換成池v3候選
+# (50萬保證金甜蜜帶:LE玉晶光/OW環球晶/IX景碩/GU全新/NA穩懋/ND威剛/QD台勝科)。
+# 撤掉:CG,DI,GY,DA,QX,PL,QZ。維持 18 roots 同一條連線——帳號連線上限實測撞過
+# (2026-09-01 09:51 第三條連線 Maximum number of connections reached),勿再開新連線。
+# 2026-09-24(jack 指示「36 檔全部訂閱」):改成大戶儀表板 36 檔(_live_calib.json)的全部個股期貨 root。
+# 聯電/欣興/臻鼎沿用 3 碼 CCF/IRF/LUF 以接續既有 ccf_books/irf_books/luf_books 目錄;撤掉不在 36 檔的 FT/ND。
+# 36 root × 2 訂閱(FUTOPT_DAY_ONLY=1 只訂日盤;個股期夜盤只有 2330/2303 有交易)= 72,與原 18×4=72 同量級。
+# ⚠ 本 job 自 2026-09-22 起被 bootout(為儀表板期貨買賣簿 feed 釋放連線額度),2026-09-24 晚重新 bootstrap;
+#   若 log 出現 Maximum number of connections reached,先停 momentum-rotation-poll(已無實彈、仍佔一條 ws)再試。
+# 2026-09-25 +6 超高價低 tick(大立光 OL/健策 RG/旺矽 UW/台光電 SF 為小型契約 100 股;奇鋐 RA/聯亞 OT 標準):42 root × 2 = 84 訂閱。
+export FUTOPT_STOCK_ROOTS="HB,KI,PL,PK,CA,NA,OW,QD,LE,QL,GU,KB,IX,NS,IRF,FQ,QX,IT,LUF,GY,QZ,DA,CCF,FZ,DI,NO,LX,PQ,LY,PT,RK,CY,II,OV,GR,DJ,OL,RG,UW,SF,RA,OT"
+export FUTOPT_DAY_ONLY=1
+
 PYTHON="${ROOT}/.venv-fubon/bin/python"
 if [[ ! -x "${PYTHON}" ]]; then echo "✗ missing .venv-fubon python: ${PYTHON}"; exit 1; fi
 ROTATING_TEE="${ROOT}/scripts/launchd/rotating_tee.py"

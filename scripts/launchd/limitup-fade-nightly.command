@@ -39,6 +39,8 @@ PY="${ROOT}/.venv/bin/python"
   echo "=== limitup-fade nightly $(date '+%F %T') ==="
   # 條件 5 的處置名單快照（失敗不擋主流程，但要留痕）
   "${PY}" "${ROOT}/scripts/research/fetch_disposal_list.py" 2>&1 || echo "WARN: fetch_disposal_list 失敗，處置過濾可能不完整"
+  # 大戶儀表板「昨MOPS」成因標籤用：TWSE/TPEx OpenAPI 重大訊息 T-1 快照 → cache/mops_today_{發言日}.json（2026-09-24 加）
+  "${PY}" "${ROOT}/scripts/research/fetch_mops_today.py" 2>&1 || echo "WARN: fetch_mops_today 失敗，儀表板昨MOPS 標籤明日可能缺"
   "${PY}" "${ROOT}/scripts/research/screen_limitup_fade.py" 2>&1
   RC=$?
   echo "=== screen exit=${RC} ==="
