@@ -489,6 +489,71 @@ def _load_pe_peer():
 
 PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
 
+ATR_N = 14            # Wilder(1978)慣例期數,節目原話「5或20皆可」,14是業界折衷慣例
+ATR_SQUEEZE_LOOKBACK = 120
+ATR_SQUEEZE_PCTL = 0.30
+ATR_BREAKOUT_K = 1.5  # 節目原話:「這個慣性超過1.5倍,我覺得不合理,你要立刻出場,因為方向改變了」
+
+
+def _load_atr_state(n_bars=260):
+    """ATR(平均真實區間)盤整壓縮/突破狀態(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師
+    節目 ATR 段落 + Wilder《New Concepts in Technical Trading Systems》1978 原始定義)。
+
+    TR(真實區間) = max(高−低, |高−昨收|, |低−昨收|);ATR14 = Wilder 平滑(遞迴:
+    ATR_t=(ATR_{t-1}×13+TR_t)/14,種子=前14筆TR簡單平均)。「壓縮」定義=今日ATR%(=ATR14÷收盤)
+    落在近120個交易日自身歷史的後30%分位(自身相對壓縮,非跨股比較——呼應本案已確立的
+    「固定%門檻跨時段不可比較,正規化須用個股自身近期慣性」原則)。
+
+    本函式只算到「昨收為止」已知的 ATR14/ATR%/壓縮旗標;「異常」(今日真實區間>1.5×此ATR14)
+    需要今天的高低,由 _score_rows 用即時 ST.day 現算,避免用到未來資訊。
+
+    ⚠ 2026-09-25 嚴謹回測(scripts/research/atr_key_line_research.py,scratch/atr_key_line_research_2026-09-25.txt,
+    21年史·IS/OOS拆2023·日聚類SE·扣42檔等權籃子同期報酬·扣50bps成本·安慰劑·集中度·逐年,僅限這42檔):
+      · 「壓縮→突破」事件本身(不論方向、不論是否貼近關鍵一條線):DROP。10/40/60日持有期 IS/OOS
+        異號、安慰劑5組範圍完全蓋過真實事件均值(統計上與隨機日不可區分)、前5檔貢獻佔比達354%
+        (比關鍵一條線已否決的96%集中度更極端,逐年正負交替無穩定方向)。不進分數,純描述性狀態顯示。
+      · 突破事件『恰好貼近關鍵一條線(±1倍ATR內)』是本次唯一 IS/OOS 同號的子集(IS t+1.66、
+        OOS t+1.80),方向一致但仍未過本案嚴格門檻(|t_OOS|≥2),UI 標記★近線僅供觀察、不進分數。
+      · 用『距離÷ATR』取代關鍵一條線原本的『距離%』重跑橫斷面IC:OOS t 由 +1.26 小幅升至 +1.63,
+        方向一致但同樣未過門檻,只當研究記錄,關鍵一條線欄位主指標仍用距離%不換。
+    """
+    out = {}
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        for sid in NAMES:
+            rows = conn.execute(
+                "SELECT trade_date, MAX(high) h, MAX(low) l, MAX(close) c "
+                "FROM stock_daily_bars WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT ?",
+                (sid, n_bars)).fetchall()
+            rows = [r for r in rows if all(r[1:])][::-1]
+            if len(rows) < ATR_SQUEEZE_LOOKBACK + ATR_N + 20:
+                continue
+            h = [r[1] for r in rows]; lo = [r[2] for r in rows]; c = [r[3] for r in rows]
+            tr = [None] * len(rows)
+            for i in range(1, len(rows)):
+                tr[i] = max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(lo[i] - c[i - 1]))
+            atr = [None] * len(rows)
+            atr[ATR_N] = sum(tr[1:ATR_N + 1]) / ATR_N
+            for i in range(ATR_N + 1, len(rows)):
+                atr[i] = (atr[i - 1] * (ATR_N - 1) + tr[i]) / ATR_N
+            atr_pct = [(atr[i] / c[i]) if atr[i] else None for i in range(len(rows))]
+            valid_idx = [i for i in range(len(atr_pct)) if atr_pct[i] is not None]
+            if len(valid_idx) < ATR_SQUEEZE_LOOKBACK + 1:
+                continue
+            last_i = valid_idx[-1]
+            hist = [atr_pct[i] for i in valid_idx[-ATR_SQUEEZE_LOOKBACK - 1:-1]]
+            cur = atr_pct[last_i]
+            pctl = sum(1 for x in hist if x < cur) / len(hist)
+            out[sid] = {"atr14": atr[last_i], "atr_pct": cur * 100,
+                        "squeeze": pctl <= ATR_SQUEEZE_PCTL, "asof": rows[last_i][0]}
+        conn.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"[atr_state] load failed: {e}", file=sys.stderr)
+    return out
+
+
+ATR_STATE = _load_atr_state()
+
 # ---- 融資/借券變化幅度 → 波動風險分數（非方向訊號，只預測盤中振幅，多空都適用）------
 # 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
 # 2025-01~2026-09 回測）。演進紀錄（後面取代前面）：
@@ -893,10 +958,11 @@ def ingest():
         ST.__init__()
         ST.date = today
         _refresh_vol_risk_if_needed()
-        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS
+        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS, ATR_STATE
         DAILY_TREND = _load_daily_trend()
         KEY_LINE = _load_key_line()
         PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
+        ATR_STATE = _load_atr_state()
         PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
@@ -2773,13 +2839,51 @@ def render():
         else:
             r["amp_ratio"] = None
             c_ampr = "<td class='dim'>—</td>"
+        # ATR 盤整壓縮/突破(2026-09-25 jack 交辦,見 _load_atr_state docstring):今日真實區間用即時高低現算,
+        # 對比昨收已知的 ATR14,避免未來函數。異常事件本身已嚴謹回測 DROP,純描述性狀態,不進分數。
+        _atrs = ATR_STATE.get(r["sid"])
+        if _atrs and _pc and _ds.get("hi") and _ds.get("lo"):
+            _tr_today = max(_ds["hi"] - _ds["lo"], abs(_ds["hi"] - _pc), abs(_ds["lo"] - _pc))
+            r["atr_pct"] = _atrs["atr_pct"]
+            r["atr_squeeze"] = _atrs["squeeze"]
+            r["atr_ratio"] = (_tr_today / _atrs["atr14"]) if _atrs["atr14"] else None
+            r["atr_abnormal"] = bool(r["atr_squeeze"] and r["atr_ratio"] is not None and r["atr_ratio"] > ATR_BREAKOUT_K)
+            r["atr_dir_up"] = (r.get("px") is not None and r["px"] > _pc)
+        else:
+            r["atr_pct"] = r["atr_ratio"] = None
+            r["atr_squeeze"] = r["atr_abnormal"] = False
+            r["atr_dir_up"] = None
+        r["atr_near_line"] = bool(_atrs and _atrs.get("atr14") and r.get("key_line") and r.get("px")
+                                   and abs(r["px"] - r["key_line"]) <= _atrs["atr14"])
+        _atr_tip_base = ("ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破狀態(2026-09-25 jack 交辦,"
+                          "來源:《御錢術》楊育華分析師節目)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位"
+                          "(自身相對壓縮,非跨股比較)。異常=壓縮狀態下,今日真實區間(即時高低現算)超過昨收已知ATR14的1.5倍"
+                          "(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。"
+                          "⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣籃子·"
+                          "扣成本·安慰劑·集中度·逐年,僅限42檔):此突破事件本身DROP——10/40/60日IS/OOS異號、"
+                          "安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。"
+                          "唯一IS/OOS同號的子集是『恰好貼近關鍵一條線±1倍ATR內』(標★近線,IS t+1.66/OOS t+1.80),"
+                          "但仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。")
+        if r.get("atr_pct") is None:
+            c_atr = f"<td class='dim' title='{_atr_tip_base}(此股資料不足140個交易日,無法計算)'>—</td>"
+        else:
+            _near = " ★近線" if r["atr_near_line"] else ""
+            if r["atr_abnormal"]:
+                _dcls = "up" if r["atr_dir_up"] else "dn"
+                _dlbl = "突破↑" if r["atr_dir_up"] else "突破↓"
+                c_atr = (f"<td class='{_dcls}' style='font-weight:700' title='{_atr_tip_base}'>"
+                         f"{_dlbl}{_near} {r['atr_ratio']:.1f}x</td>")
+            elif r["atr_squeeze"]:
+                c_atr = f"<td class='warnv' title='{_atr_tip_base}'>壓縮 {r['atr_pct']:.1f}%</td>"
+            else:
+                c_atr = f"<td class='dim' title='{_atr_tip_base}'>{r['atr_pct']:.1f}%</td>"
         trs.append(
             f"<tr{_band}>" + c_nm
             + _pxtd + _fbtd + _fatd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價)
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_bias20 + c_keyline + c_pe + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、本益比同族群)
+            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -2834,6 +2938,7 @@ def render():
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="20MA(月線)正乖離率 = 現價 ÷ 20日均價(PIT,用昨收含之前20日收盤,不含今日)− 1。2026-09-25 jack 交辦:取代『距離當天漲停%』——乖離率抓的是相對過去一個月成本的超買程度,不受個股漲跌停%上限差異影響。≥+30% 粗體黃字=短線漲幅過熱、超買回檔壓力極高的經驗法則;純描述性警示,不進分數、不做嚴謹回測。">20MA乖離<span class="sub">正乖離%</span></th>
 <th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_42only_2026-09-25.txt,限定這42檔中有逐筆資料的28檔,t<1.4),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
+<th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
