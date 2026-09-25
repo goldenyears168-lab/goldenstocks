@@ -391,7 +391,7 @@ def _load_daily_trend():
         for sid in NAMES:
             rows = conn.execute(
                 "SELECT trade_date, MAX(close) FROM stock_daily_bars "
-                "WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT 11",
+                "WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT 21",
                 (sid,)).fetchall()
             closes = [c for _, c in rows if c]
             if len(closes) < 4:
@@ -399,9 +399,11 @@ def _load_daily_trend():
             last = closes[0]
             ma5 = sum(closes[:5]) / len(closes[:5])
             ma10 = sum(closes[:10]) / len(closes[:10]) if len(closes) >= 6 else None
+            ma20 = sum(closes[:20]) / len(closes[:20]) if len(closes) >= 20 else None   # 20MA(月線),供正乖離率欄
             ret5 = (last / closes[5] - 1) * 100 if len(closes) >= 6 and closes[5] else None
             out[sid] = {"above_ma5": last > ma5,
                         "above_ma10": (last > ma10) if ma10 else None,
+                        "ma20": ma20,
                         "ret5d": ret5, "last": last, "asof": rows[0][0]}
         conn.close()
     except Exception as e:
@@ -2436,6 +2438,10 @@ def render():
             r["mkt_ctx"] = None
         dt = DAILY_TREND.get(r["sid"])
         r["dtrend"] = dt
+        # 20MA 正乖離率(2026-09-25 jack 交辦):現價 ÷ 月線(20 日均價,PIT 用昨收含之前 20 日)− 1。
+        # ≥30% = 短線超買過熱、回檔壓力極高的民間經驗法則;純描述性警示,不進分數。
+        _ma20 = dt.get("ma20") if dt else None
+        r["bias20"] = ((r["px"] / _ma20 - 1) * 100) if (_ma20 and r.get("px")) else None
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -2610,6 +2616,13 @@ def render():
                   + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
                   + "</td>")
                  if r.get("dtrend") else "<td class='dim'>—</td>")
+        if r.get("bias20") is not None:
+            _b20_bold = "font-weight:700" if r["bias20"] >= 30 else ""
+            c_bias20 = (f"<td class='{'warnv' if r['bias20'] >= 30 else ('up' if r['bias20'] > 0 else 'dn')}' style='{_b20_bold}' "
+                       f"title='20MA(月線)正乖離率=現價÷20日均價(PIT,不含今日)−1。≥30%=短線超買過熱、回檔壓力極高的經驗法則,純描述性警示,不進分數'>"
+                       f"{r['bias20']:+.0f}%</td>")
+        else:
+            c_bias20 = "<td class='dim'>—</td>"
         c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -2638,7 +2651,7 @@ def render():
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數)
+            + c_cmp + c_dtr + c_bias20 + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -2691,6 +2704,7 @@ def render():
 <th class="gd" title="散戶版SMFI(2026-09-25已採納進隔夜分):尾盤(12:55-13:20)散戶淨額佔比 − 開盤(09:00-09:25)散戶淨額佔比。方向反直覺:散戶尾盤更偏買方反而預測次日偏多(像散戶跟隨法人已建方向,非純反指標)。門檻不對稱——只有正向(≥+10pp)IS/OOS 一致(門檻掃描 OOS t+2.11~+3.15 隨門檻走強),負向 OOS 在≥15pp 反號,故只設正向 +1、無負向項。127日:單邊規則 vs 基準 ov,IS IC 0.155→0.163(跳空)、OOS 0.068→0.074;觸發勝率 IS 64%→71%、OOS 52%→58%。⚠ IS 單變量控制後部分口徑未過嚴格 t≥2 門檻,依使用者明確指示採納。">散戶背離<span class="sub">尾盤−開盤 pp·≥10 記+1</span></th>
 <th title="壓縮 =(現價 ÷ 近12個5分桶均價 − 1)%,需≥8桶;與全日大戶佔比聯合、多空對稱:黃粗體(多)= 大戶佔比≥+10% ∧ 壓縮<0(價壓著,127日隔夜 +139/t2.9);黃粗體(空)= 大戶佔比≤−10% ∧ 壓縮>0(大戶倒完價仍在均價上,−28~−80,勿抱非放空);其餘淡化。基準 +73。">壓縮<span class="sub">對1h均% × 大戶佔比</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
+<th title="20MA(月線)正乖離率 = 現價 ÷ 20日均價(PIT,用昨收含之前20日收盤,不含今日)− 1。2026-09-25 jack 交辦:取代『距離當天漲停%』——乖離率抓的是相對過去一個月成本的超買程度,不受個股漲跌停%上限差異影響。≥+30% 粗體黃字=短線漲幅過熱、超買回檔壓力極高的經驗法則;純描述性警示,不進分數、不做嚴謹回測。">20MA乖離<span class="sub">正乖離%</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
