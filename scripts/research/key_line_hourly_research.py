@@ -39,7 +39,13 @@ def build_line_series(g: pd.DataFrame, W: int, thresh: float):
 
 
 def main():
+    import json
+    cal = json.load(open(f"{__import__('pathlib').Path.home()}/goldenstocks-data/data/cache/pit_universe_tick/_live_calib.json"))
+    sids42 = {r["sid"] for r in cal["universe"]}   # jack 2026-09-25:研究只限儀表板實際的 42 檔,不用 pit_universe_tick 全 100 檔
     d = pd.read_csv(PANEL, dtype={"sid": str})
+    before = d["sid"].nunique()
+    d = d[d["sid"].isin(sids42)].copy()
+    print(f"42 檔中有逐筆資料的:{d['sid'].nunique()}/{len(sids42)}(原始 pit_universe_tick 面板 {before} 檔,已過濾)")
     d["hour_ord"] = d["hour"].map({h: i for i, h in enumerate(HOUR_ORDER)})
     d = d.sort_values(["sid", "date", "hour_ord"]).reset_index(drop=True)
     print(f"股-小時K {len(d)}  檔 {d['sid'].nunique()}  日 {d['date'].nunique()}")
