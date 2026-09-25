@@ -458,6 +458,37 @@ def _load_key_line(lookback=500):
 
 KEY_LINE = _load_key_line()
 
+
+def _load_pe_peer():
+    """本益比同族群排名(2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比)。
+
+    讀 scripts/research/pe_peer_group_research.py 產生的靜態快照(scratch/pe_peer_group_*.json)。
+    快照內存的是 TTM(近四季已公布)EPS + 用「快照當時最近收盤價」算出的本益比;EPS 每季才變,
+    快照可以放著不必每次渲染重抓 FinMind——但分子(價格)不該是快照的舊收盤價,渲染時用即時價重算
+    (見 _score_rows 的 r["pe_live"]),這才符合她說的「EPS慢、股價快,本益比要用即時股價每天重算」。
+
+    ⚠ 誠實揭露:她的方法分母是「預估EPS」(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估
+    EPS 的資料源,只能用「已公布 TTM EPS」——落後指標,不是預估指標。這是與原方法唯一的實質差異。
+    族群清單沿用既有 SUBCAT 細分類人工擴充真實上市櫃同業,已用 TaiwanStockInfo 驗證代號存在,
+    多數細分族群天生只有 3~8 檔真實同業,遠不到她說的 20~30 檔,如實呈現不硬湊。
+    """
+    path = DATA_DIR.parent / "scratch" / "pe_peer_group_2026-09-25.json"
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        table = d.get("table", {})
+        eps = {}
+        for _rows in table.values():
+            for _r in _rows:
+                if _r.get("eps_ttm") is not None:
+                    eps[_r["sid"]] = (_r["eps_ttm"], _r.get("eps_asof"))
+        return table, d.get("peers", {}), d.get("generated"), eps
+    except Exception as e:  # noqa: BLE001
+        print(f"[pe_peer] load failed: {e}", file=sys.stderr)
+        return {}, {}, None, {}
+
+
+PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
+
 # ---- 融資/借券變化幅度 → 波動風險分數（非方向訊號，只預測盤中振幅，多空都適用）------
 # 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
 # 2025-01~2026-09 回測）。演進紀錄（後面取代前面）：
@@ -862,9 +893,10 @@ def ingest():
         ST.__init__()
         ST.date = today
         _refresh_vol_risk_if_needed()
-        global DAILY_TREND, KEY_LINE
+        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS
         DAILY_TREND = _load_daily_trend()
         KEY_LINE = _load_key_line()
+        PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
         PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
@@ -2494,6 +2526,21 @@ def render():
         r["key_line"] = _kl["price"] if _kl else None
         r["key_line_date"] = _kl["date"] if _kl else None
         r["key_line_dist"] = ((r["px"] / _kl["price"] - 1) * 100) if (_kl and r.get("px")) else None
+        # 本益比同族群排名(2026-09-25 jack 交辦,見 _load_pe_peer docstring):分子用即時價現算,分母用快照 TTM EPS。
+        _eps = PE_EPS.get(r["sid"])
+        r["pe_live"] = (r["px"] / _eps[0]) if (_eps and _eps[0] and _eps[0] > 0 and r.get("px")) else None
+        r["pe_eps_asof"] = _eps[1] if _eps else None
+        r["pe_group"] = SUBCAT.get(r["sid"])
+        _peer_rows = PE_TABLE.get(r["pe_group"], [])
+        _pe_list = [(_pr["sid"], r["pe_live"] if _pr["sid"] == r["sid"] else _pr.get("pe"))
+                    for _pr in _peer_rows]
+        _pe_list = sorted((x for x in _pe_list if x[1] is not None and x[1] > 0), key=lambda x: x[1])
+        r["pe_rank"] = r["pe_n"] = r["pe_pctile"] = None
+        for _i, (_psid, _pv) in enumerate(_pe_list):
+            if _psid == r["sid"]:
+                r["pe_rank"], r["pe_n"] = _i + 1, len(_pe_list)
+                r["pe_pctile"] = round(_i / max(1, len(_pe_list) - 1) * 100) if len(_pe_list) > 1 else 50
+                break
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -2693,6 +2740,17 @@ def render():
                         f"IS期96%超額集中在前5檔(剔除後歸零)、10~20日扣50bps成本轉負、逐年正負不一致,只是少數噴出股撐起的假象。"
                         f"②『無線要避開』KEEP——見上方『沒有』狀態說明,IS/OOS同號且OOS t+9.6~+15.6,動能延續效應真實存在。"
                         f"故此距離%僅供參考位置,≤−10%(已破線)對應②的弱勢訊號,正值/貼近線**不是**驗證過的買點。不進分數'>{_kl_txt}</td>")
+        if r.get("pe_live") is None:
+            c_pe = "<td class='dim' title='本益比:缺 TTM EPS 或即時價,無法計算(常見於11檔生產基本面表尚未同步的股票)'>—</td>"
+        else:
+            _pev, _pct, _pn, _prk = r["pe_live"], r.get("pe_pctile"), r.get("pe_n"), r.get("pe_rank")
+            _pcls = "up" if (_pct is not None and _pct <= 20) else ("dn" if (_pct is not None and _pct >= 80) else "")
+            _pasof, _pgrp = (r.get("pe_eps_asof") or "—"), (r.get("pe_group") or "—")
+            _psub = f"{_pct:.0f}%" if _pct is not None else "單檔"
+            _prk_txt = _prk if _prk is not None else "—"
+            c_pe = (f"<td class='{_pcls}' title='本益比=現價(即時)÷TTM近四季EPS(至{_pasof};⚠非分析師預估EPS,落後指標,見表頭說明)。"
+                    f"同族群『{_pgrp}』{_pn or 0}檔中排第{_prk_txt}低(百分位{_psub},≤20%=族群內相對便宜·≥80%=族群內相對昂貴)。"
+                    f"族群完整成員清單+各自本益比見個股詳情頁。僅供參考位置,未經嚴謹回測,不進分數'>{_pev:.1f}<span class=\"sub\">{_psub}</span></td>")
         c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -2721,7 +2779,7 @@ def render():
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_bias20 + c_keyline + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線)
+            + c_cmp + c_dtr + c_bias20 + c_keyline + c_pe + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、本益比同族群)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -2776,6 +2834,7 @@ def render():
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="20MA(月線)正乖離率 = 現價 ÷ 20日均價(PIT,用昨收含之前20日收盤,不含今日)− 1。2026-09-25 jack 交辦:取代『距離當天漲停%』——乖離率抓的是相對過去一個月成本的超買程度,不受個股漲跌停%上限差異影響。≥+30% 粗體黃字=短線漲幅過熱、超買回檔壓力極高的經驗法則;純描述性警示,不進分數、不做嚴謹回測。">20MA乖離<span class="sub">正乖離%</span></th>
 <th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_42only_2026-09-25.txt,限定這42檔中有逐筆資料的28檔,t<1.4),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
+<th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
@@ -3533,8 +3592,38 @@ def render_stock(sid, day):
             f"<span style='font-size:17px;font-weight:700;margin-left:12px'>{sid} {name}</span>"
             f"<span class='cat' style='margin-left:6px'>{cat}{ampx}</span>"
             f"{'' if live else ' · <span class=warnv>歷史回放 '+day+'</span>'}</div>"
-            f"{_stock_info_block(sid)}"
+            f"{_stock_info_block(sid)}{_pe_peer_block(sid)}"
             f"<div id='sd'>{frag}</div>{js}</body></html>")
+
+
+def _pe_peer_block(sid):
+    """本益比同族群成員清單(2026-09-25 jack 交辦:『同族群的名單請你放進HTML的個別頁面上面,
+    讓我們知道你研究認為跟誰比較』)。見 _load_pe_peer / _score_rows 的 pe_live 計算說明。"""
+    grp = SUBCAT.get(sid)
+    rows = PE_TABLE.get(grp, [])
+    if not rows:
+        return ""
+    trs = []
+    for r in rows:
+        is_self = r["sid"] == sid
+        pe_disp = f"{r['pe']:.1f}" if r.get("pe") is not None else "虧損/無EPS"
+        rank_disp = f"第{r['rank']}/{r['n_valid']}低" if r.get("rank") is not None else "—"
+        row_cls = " class='self'" if is_self else ""
+        trs.append(f"<tr{row_cls}><td>{r['sid']}</td><td>{html_mod.escape(r.get('name') or r['sid'])}</td>"
+                    f"<td>{pe_disp}</td><td>{rank_disp}</td></tr>")
+    return (f"<div class='pepeer'><div class='pehead'>本益比同族群「{html_mod.escape(grp or '')}」"
+            f"(快照{html_mod.escape(PE_GEN or '—')},本股本益比於主表即時重算·此表為快照收盤價)</div>"
+            "<table class='petbl'><thead><tr><th>代號</th><th>名稱</th><th>本益比</th><th>族群排名</th></tr></thead>"
+            f"<tbody>{''.join(trs)}</tbody></table>"
+            "<div class='penote'>依楊育華分析師《御錢術》節目邏輯人工擴充同業清單(不跨族群比較,如IC設計不跟記憶體比)。"
+            "⚠ EPS 為 TTM(近四季已公布),非分析師預估EPS(她的原方法),為與原方法唯一的實質差異,已誠實揭露。"
+            "多數細分族群天生只有 3~8 檔真實同業,未硬湊到她說的 20~30 檔。</div></div>"
+            "<style>.pepeer{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;"
+            "margin-bottom:8px;font-size:12px}.pepeer .pehead{color:#d2a8ff;font-weight:700;margin-bottom:4px}"
+            ".petbl{border-collapse:collapse;width:100%}.petbl td,.petbl th{padding:2px 8px;text-align:right;"
+            "border-bottom:1px solid #21262d}.petbl th:nth-child(2),.petbl td:nth-child(2){text-align:left}"
+            ".petbl tr.self{background:rgba(31,111,235,0.25);font-weight:700}"
+            ".pepeer .penote{color:#8b949e;font-size:11px;margin-top:4px}</style>")
 
 
 def _stock_info_block(sid):
