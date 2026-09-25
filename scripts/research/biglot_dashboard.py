@@ -943,9 +943,67 @@ class S:
         # 每檔最近 ~60 分鐘逐筆 (ts, px, amt, sgn, is_big, is_retail):供 5分/30分 欄位**每秒滾動窗**
         # (2026-09-23 jack 要求)。標籤/旗標仍依完成的 5 分桶判定(=127 日回測定義),不走這裡。
         self.recent = defaultdict(deque)
+        # 隱形大戶守價位偵測(2026-09-25 jack 交辦,見 _iceberg_update docstring):sid -> {"bid":{...}|None,"ask":{...}|None}
+        self.iceberg = defaultdict(lambda: {"bid": None, "ask": None})
 
 
 ST = S()
+
+ICEBERG_MIN_QTY = 5.0        # 張;低於此視為五檔快照雜訊,不算「被吃」/「補回」(同研究腳本)
+ICEBERG_MIN_HITS = 3         # 至少被吃幾次才算候選守價位
+ICEBERG_MIN_REFILLS = 2      # 至少補回幾次才算候選守價位
+
+
+def _iceberg_update(r):
+    """隱形大戶守價位·即時串流版(2026-09-25 jack 交辦:「放進HTML作為價格指標」)。
+
+    邏輯與 scripts/research/iceberg_replenish_detect.py 的 scan_side()(離線批次版)完全一致,
+    改寫成逐筆到來時更新的串流版,追蹤每檔買一/賣一各自「目前這個價位」被吃(量降∧同時段真有
+    成交)、補回(量升)的次數,累計到「被吃≥3∧補回≥2」才視為候選守價位,顯示在儀表板上。
+
+    ⚠ 2026-09-25 用 14 個交易日(2026-09-05~09-24,watchlist_books)做的前瞻報酬初測
+    (scratch/iceberg_replenish_2026-09-25.txt)結果是 NULL,不是訊號:
+      · 盤中(事件結束後5/15/30分鐘,mid price):買一守價與賣一守價兩側報酬都貼近0、
+        |t|<1、勝率35~38%(低於50%,像是mid price買賣價彈跳的雜訊特徵,不是方向訊號)。
+      · 隔夜(次日官方收盤 vs 當日收盤):買一守價+32.2bps、賣一守價+36.1bps——**兩側方向
+        跟大小幾乎一樣**,不是「買方守價漲、賣方守價跌」的預期反向模式,比較像在量測當期
+        整體市場漂移,不是個股資訊;且兩者 t 值都 <1,統計上不顯著。
+      · 樣本天數(14日日聚類)遠低於這個問題過去自己設的 ≥60 日門檻,現在的狀態是
+        「初步看不到訊號」,不是「已經證明沒有」——之後累積更多天數才能重新檢定。
+    這個欄位純粹是**狀態顯示**(告訴你現在有沒有這種模式、在哪個價位),不是訊號,不進分數。
+    """
+    sid = r.get("sym")
+    if sid not in NAMES:
+        return
+    v = r.get("v")
+    try:
+        v = float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        v = None
+    t = r.get("t")
+    for side, price_arr, qty_arr in (("bid", r.get("bp") or [], r.get("bq") or []),
+                                      ("ask", r.get("ap") or [], r.get("aq") or [])):
+        p0 = q0 = None
+        for pp, qq in zip(price_arr, qty_arr):   # 取第一個 price>0 的位置(0元雜訊防禦,見研究腳本)
+            if pp is not None and qq is not None and pp > 0:
+                p0, q0 = pp, qq
+                break
+        if p0 is None:
+            continue
+        cur = ST.iceberg[sid][side]
+        if cur is None or cur["price"] != p0:
+            ST.iceberg[sid][side] = {"price": p0, "start_t": t, "hits": 0, "refills": 0,
+                                      "was_hit": False, "last_qty": q0, "last_v": v, "vol_absorbed": 0.0}
+            continue
+        dq = q0 - cur["last_qty"]
+        dv = (v - cur["last_v"]) if (v is not None and cur["last_v"] is not None) else 0.0
+        if dq <= -ICEBERG_MIN_QTY and dv > 0:
+            cur["hits"] += 1; cur["was_hit"] = True; cur["vol_absorbed"] += dv
+        elif dq >= ICEBERG_MIN_QTY and cur["was_hit"]:
+            cur["refills"] += 1; cur["was_hit"] = False
+        cur["last_qty"] = q0
+        if v is not None:
+            cur["last_v"] = v
 
 
 def bucket_key(dt):
@@ -986,6 +1044,7 @@ def ingest():
                 try:
                     r = json.loads(line)
                     ST.book[r["sym"]] = r
+                    _iceberg_update(r)
                 except Exception:
                     pass
     # 盤前試撮快照 + 個股期貨即時價(小檔,每輪重讀)
@@ -2607,6 +2666,17 @@ def render():
                 r["pe_rank"], r["pe_n"] = _i + 1, len(_pe_list)
                 r["pe_pctile"] = round(_i / max(1, len(_pe_list) - 1) * 100) if len(_pe_list) > 1 else 50
                 break
+        # 隱形大戶守價位(2026-09-25 jack 交辦,見 _iceberg_update docstring):取買/賣兩側中「較強」的一側顯示
+        _ib = ST.iceberg.get(r["sid"]) or {}
+        _ib_bid, _ib_ask = _ib.get("bid"), _ib.get("ask")
+        _ib_bid_ok = bool(_ib_bid and _ib_bid["hits"] >= ICEBERG_MIN_HITS and _ib_bid["refills"] >= ICEBERG_MIN_REFILLS)
+        _ib_ask_ok = bool(_ib_ask and _ib_ask["hits"] >= ICEBERG_MIN_HITS and _ib_ask["refills"] >= ICEBERG_MIN_REFILLS)
+        if _ib_bid_ok and (not _ib_ask_ok or _ib_bid["refills"] >= _ib_ask["refills"]):
+            r["iceberg"] = {"side": "買一", "cls": "up", **_ib_bid}
+        elif _ib_ask_ok:
+            r["iceberg"] = {"side": "賣一", "cls": "dn", **_ib_ask}
+        else:
+            r["iceberg"] = None
     trs = []
     for r in rows:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
@@ -2817,6 +2887,19 @@ def render():
             c_pe = (f"<td class='{_pcls}' title='本益比=現價(即時)÷TTM近四季EPS(至{_pasof};⚠非分析師預估EPS,落後指標,見表頭說明)。"
                     f"同族群『{_pgrp}』{_pn or 0}檔中排第{_prk_txt}低(百分位{_psub},≤20%=族群內相對便宜·≥80%=族群內相對昂貴)。"
                     f"族群完整成員清單+各自本益比見個股詳情頁。僅供參考位置,未經嚴謹回測,不進分數'>{_pev:.1f}<span class=\"sub\">{_psub}</span></td>")
+        _ib_tip = ("隱形大戶守價位(2026-09-25 jack 交辦)。方法:追蹤最優買/賣價,同一價位維持不變期間,"
+                   "量被吃掉(≥5張∧同時段真有成交)又補回(≥5張)算一次循環,累計『被吃≥3∧補回≥2』才顯示。"
+                   "⚠2026-09-25用14個交易日前瞻報酬初測(scratch/iceberg_replenish_2026-09-25.txt)結果是NULL:"
+                   "盤中(事件後5/15/30分)買賣兩側報酬都貼近0、|t|<1、勝率35~38%(低於50%,像價格雜訊不是訊號);"
+                   "隔夜買一守價+32.2bps、賣一守價+36.1bps——兩側方向與大小幾乎一樣(不是預期的『買守漲賣守跌』反向"
+                   "模式,較像量到整體市場漂移非個股資訊),且t值都<1不顯著。樣本天數遠低於這類問題過去設的≥60日"
+                   "門檻,現在是『初步看不到訊號』不是『已證明沒有』。純狀態顯示,不是訊號,不進分數。")
+        if r.get("iceberg") is None:
+            c_iceberg = f"<td class='dim' title='{_ib_tip}'>—</td>"
+        else:
+            _ib = r["iceberg"]
+            c_iceberg = (f"<td class='{_ib['cls']}' title='{_ib_tip}'>守{_ib['side']} {_ib['price']:g} "
+                        f"(被吃{_ib['hits']}/補{_ib['refills']})</td>")
         c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -2883,7 +2966,7 @@ def render():
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群)
+            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_iceberg + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群、隱形大戶守價位)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -2940,6 +3023,7 @@ def render():
 <th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_42only_2026-09-25.txt,限定這42檔中有逐筆資料的28檔,t<1.4),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
 <th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
+<th title="隱形大戶守價位(2026-09-25 jack 交辦:回顧欣興950誤判為委託簿牆後,使用者問『機構是不是用被動單默默在某個價位吃貨守著』,委託簿補單率是唯一理論上能繞過『大戶主動方分類看不到被動吸貨』這個結構性死角的方法,見記憶 biglot-accumulation-distribution-unidentifiable)。方法:追蹤最優買/賣價,同一價位維持不變期間量被吃掉(≥5張∧同時段真有成交)又補回(≥5張)算一次循環,累計『被吃≥3∧補回≥2』才顯示,顯示較強的一側。⚠2026-09-25用14個交易日前瞻報酬初測(scripts/research/iceberg_replenish_detect.py,scratch/iceberg_replenish_2026-09-25.txt)結果是NULL:盤中(事件後5/15/30分)買賣兩側報酬都貼近0、|t|<1、勝率35~38%;隔夜買一守價+32.2bps、賣一守價+36.1bps方向與大小幾乎一樣(不是預期的反向模式,較像市場整體漂移),t值均<1不顯著。樣本天數遠低於過去設的≥60日門檻,現在是『初步看不到訊號』非『已證明沒有』。純狀態顯示,不是訊號,不進分數">隱形大戶<span class="sub">守價位</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
