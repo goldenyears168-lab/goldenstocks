@@ -2040,19 +2040,19 @@ def _score_td(r):
     pp = r.get("paper") or {}; paper_html = ""
     for bk_, q in pp.items():
         if q:
-            paper_html += (f"<br><span style='font-size:9px;color:#d2a8ff'>紙{bk_[:1]} {q['pnl']:+.0f} · {q['min']:.0f}分{'·嚴' if q['strict'] else '·樂'}{' 賣中' if q['sell'] else ''}</span>")
+            paper_html += (f" <span style='font-size:9px;color:#d2a8ff'>紙{bk_[:1]} {q['pnl']:+.0f} · {q['min']:.0f}分{'·嚴' if q['strict'] else '·樂'}{' 賣中' if q['sell'] else ''}</span>")
     h = r.get("hold"); hold_html = paper_html
     if h:
         pn = f"{h['pnl']:+.0f}" if h["pnl"] is not None else "—"
         fl = " ".join(f"<b style='color:#f85149'>{html_mod.escape(f)}</b>" for f in h["flags"])
         hint = f" <span style='color:#3fb950'>{h['hint']}</span>" if h.get("hint") else ""
-        hold_html += (f"<br><span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
+        hold_html += (f" <span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
                      f"{(' 低'+str(int(h['low_s']))+'s') if h['low_s'] else ''}</span> {fl}{hint}")
         tip += f" ‖ 持倉:進 {h['hm']} @ {h['px0']} · 出場規則=分數≤0 連續 30 秒 / 壞標籤(虛拉·過熱·竭盡∧散戶接) / 60 分到期;獲利≥50 可停利;不設移動停利/硬停損/破昨低(面板對照較差)"
     _col = {"處置": "#f0883e", "跌停鎖": "#f85149", "觸跌停": "#f85149", "族群": "#d29922", "MOPS?": "#8b949e", "MOPS": "#a371f7", "昨MOPS": "#7d5bbe", "跟盤殺": "#f85149", "自己殺": "#3fb950", "大盤仍跌": "#d29922"}
     def _cc(t):
         return next((v for k, v in _col.items() if t.startswith(k)), "#8b949e")
-    cause_html = ("<br><span style='font-size:9px'>" + " ".join(f"<span style='color:{_cc(t)}'>{html_mod.escape(t)}</span>" for t, _ in cause) + "</span>") if cause else ""
+    cause_html = (" <span style='font-size:9px'>" + " ".join(f"<span style='color:{_cc(t)}'>{html_mod.escape(t)}</span>" for t, _ in cause) + "</span>") if cause else ""
     return (f"<td style='text-align:left;white-space:nowrap;{bg}' title='{html_mod.escape(tip, quote=True)}'>"
             f"<span class='dim'>隔</span><b class='{_c(ov)}'{big_ov}>{ov:+d}</b> "
             f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}{cause_html}{hold_html}</td>")
@@ -2676,23 +2676,23 @@ def render():
         else:
             c_bias20 = "<td class='dim'>—</td>"
         if r.get("key_line") is None:
-            c_keyline = "<td class='dim' title='「關鍵一條線」規則(逐字稿見表頭說明):近 500 個交易日內找不到任何觸發棒(紅K∧漲幅>4%∧收盤突破前60日高)。節目原意=避開,不建議在此價位承接'>沒有</td>"
+            c_keyline = "<td class='dim' title='「關鍵一條線」規則(逐字稿見表頭說明):近 500 個交易日內找不到任何觸發棒(紅K∧漲幅>4%∧收盤突破前60日高)。2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史·IS/OOS拆2023·日聚類·扣大盤·扣成本):此狀態(無效線=近期無強勢突破)預測未來20/60日相對轉弱,IS/OOS同號、OOS t+9.6~+15.6,站得住的一半'>沒有</td>"
         elif r.get("key_line_dist") is None:
             c_keyline = "<td class='dim'>—</td>"
         else:
             _kd = r["key_line_dist"]
             if _kd <= -10:
                 _kcls, _klab = "dn", "已破線"
-            elif -3 <= _kd <= 3:
-                _kcls, _klab = "warnv", "回測區"
             else:
                 _kcls, _klab = ("up" if _kd > 0 else "dn"), ""
             _kl_px, _kl_dt = r["key_line"], r["key_line_date"]
             _kl_txt = _klab if _klab else f"{_kd:+.0f}%"
             c_keyline = (f"<td class='{_kcls}' title='關鍵一條線={_kl_px:g}@{_kl_dt}(觸發棒最低點)。"
-                        f"距離=現價÷線−1={_kd:+.1f}%。規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最高收盤,取最近一次觸發棒最低點;"
-                        f"≤−10%視為已跌破線(節目原意=避開/反彈賣,非等拉回買)、±3%內=貼近線的回測買點區(節目原意的買點)。"
-                        f"⚠僅合理性檢查未嚴謹回測,不進分數'>{_kl_txt}</td>")
+                        f"距離=現價÷線−1={_kd:+.1f}%。規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最高收盤,取最近一次觸發棒最低點。"
+                        f"⚠2026-09-25 嚴謹回測拆兩個主張分開判:①『貼近線買』DROP——21年史勝率僅42~43%(比丟銅板差)、"
+                        f"IS期96%超額集中在前5檔(剔除後歸零)、10~20日扣50bps成本轉負、逐年正負不一致,只是少數噴出股撐起的假象。"
+                        f"②『無線要避開』KEEP——見上方『沒有』狀態說明,IS/OOS同號且OOS t+9.6~+15.6,動能延續效應真實存在。"
+                        f"故此距離%僅供參考位置,≤−10%(已破線)對應②的弱勢訊號,正值/貼近線**不是**驗證過的買點。不進分數'>{_kl_txt}</td>")
         c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
         c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
@@ -2775,7 +2775,7 @@ def render():
 <th title="壓縮 =(現價 ÷ 近12個5分桶均價 − 1)%,需≥8桶;與全日大戶佔比聯合、多空對稱:黃粗體(多)= 大戶佔比≥+10% ∧ 壓縮<0(價壓著,127日隔夜 +139/t2.9);黃粗體(空)= 大戶佔比≤−10% ∧ 壓縮>0(大戶倒完價仍在均價上,−28~−80,勿抱非放空);其餘淡化。基準 +73。">壓縮<span class="sub">對1h均% × 大戶佔比</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="20MA(月線)正乖離率 = 現價 ÷ 20日均價(PIT,用昨收含之前20日收盤,不含今日)− 1。2026-09-25 jack 交辦:取代『距離當天漲停%』——乖離率抓的是相對過去一個月成本的超買程度,不受個股漲跌停%上限差異影響。≥+30% 粗體黃字=短線漲幅過熱、超買回檔壓力極高的經驗法則;純描述性警示,不進分數、不做嚴謹回測。">20MA乖離<span class="sub">正乖離%</span></th>
-<th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』(節目原意:避開,不建議承接)。≤−10%=已跌破線(節目原意:避開/反彈賣,非買點);±3%內=貼近線的回測區(節目原意的買點)。⚠合理性檢查(scratch/key_line_research_2026-09-25.txt):粗略回測拉回線±2%買、持10/20日 +5.1%/t9.6、+11.4%/t12.5,但未拆IS/OOS、未日聚類(同批股票多年趨勢重疊,t值灌水)、未扣大盤同期報酬、未計成本、單一高波動宇宙——不是驗證過的訊號,純描述性,不進分數。42檔高波動宇宙目前無線比例0%,與節目口頭估計30~50%不符,因宇宙本身已篩選過易噴股票,非規則錯誤。">關鍵一條線<span class="sub">距離%</span></th>
+<th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_2026-09-25.txt,t<1.1),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
