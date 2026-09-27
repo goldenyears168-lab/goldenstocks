@@ -11,10 +11,21 @@
 """
 from __future__ import annotations
 
+import sys
+
+# 2026-09-27：直接執行(python3 biglot_dashboard.py)時，這支檔案在 sys.modules 裡叫
+# "__main__"，不叫 "biglot_dashboard"。底下 biglot/*.py 子模組全部 `import biglot_dashboard`
+# ——如果沒有這一行，Python 找不到 sys.modules["biglot_dashboard"]，會把這支檔案「當成
+# 另一個模組」重新執行一次，在還沒執行完的 import 敘述式上撞出循環 import
+# ImportError(2026-09-27 批次二上線時真的炸過一次，正式站台因此中斷)。這裡手動把
+# 「正在執行的這個模組」也註冊成 "biglot_dashboard"，兩個名字指向同一個模組物件，
+# 之後任何 `import biglot_dashboard` 都會直接命中、不會觸發第二次執行。
+# 用 setdefault：正常當套件匯入時 __name__ 已經是 "biglot_dashboard"，這行是無害的 no-op。
+sys.modules.setdefault("biglot_dashboard", sys.modules[__name__])
+
 import html as html_mod
 import json
 import sqlite3
-import sys
 import threading
 import time
 import urllib.parse as urllib_parse
