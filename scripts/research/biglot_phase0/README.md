@@ -71,6 +71,33 @@ PYTHONPATH=src .venv/bin/python scripts/research/biglot_phase0/check_daily_rebin
 已知限制：`UNI5` 兩次都算出 `None` 時 `id()` 判不出來（`None` 是 CPython 單例），
 工具會標成「N/A」不算失敗，不要誤讀成 bug。
 
+## 踩過的坑：golden-diff/smoke-test 都測不到的 __main__ 循環 import（正式站台真的斷過）
+
+`_fixture_lib.py` 一律用 `import biglot_dashboard as bd` 載入來測試，但正式站台的真實
+啟動指令是 `python3 biglot_dashboard.py` **直接執行**——這時檔案在 `sys.modules` 裡叫
+`"__main__"` 不叫 `"biglot_dashboard"`。2026-09-27 批次二重啟正式站台時，`biglot/*.py`
+子模組全部 `import biglot_dashboard`，Python 找不到既有物件，把整支檔案當成「另一個
+模組」重新執行一次，在自己還沒執行完的 import 敘述式上撞出循環 import
+`ImportError`——golden-diff 跟 smoke-test 兩支工具**都測不到**這個崩潰（因為它們從不
+用 `__main__` 這條路徑載入），正式站台因此真的中斷過一段時間才修好。
+
+修法：`biglot_dashboard.py` 檔案最上面加一行
+`sys.modules.setdefault("biglot_dashboard", sys.modules[__name__])`，把正在執行的
+模組也註冊成 `"biglot_dashboard"`，之後任何 `import biglot_dashboard` 都直接命中
+同一個物件。**新增的 `check_prod_launch.py` 專門補這個測試缺口**：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/research/biglot_phase0/check_prod_launch.py \
+    --fixture ${GOLDENSTOCKS_DATA_DIR}/scratch/biglot_fixture/2026-09-17
+```
+
+用「生產真實指令」（`python3 biglot_dashboard.py`）啟動一個對著 fixture 的 process，
+只檢查有沒有在印出啟動 banner 之前就死掉（不檢查 port 有沒有真的綁定成功——如果
+正式站台剛好也在跑，這裡因為 port 衝突印錯誤是預期中的，不是這支工具要抓的 bug）。
+**往後每次改動 `biglot_dashboard.py` 或新增 `biglot/*.py` 模組，這三支都要跑：
+golden-diff、smoke-test、check_prod_launch，缺一不可**——這次事故就是只跑了前兩支
+就以為安全，結果正式重啟直接炸掉。
+
 ## 踩過的坑：新模組自己 import datetime 會讓凍結時鐘失效（真的搬出過一次 bug）
 
 2026-09-27 多agent分工搬移第二批 42 個函式時，4 個新檔案（`reference_loaders.py`/
