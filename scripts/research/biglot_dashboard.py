@@ -88,6 +88,11 @@ from biglot.detail_charts import _stock_series, _stock_series_locked, _svg_detai
 # class S/ST 是唯一的核心可變狀態單例，搬到 biglot/state.py 純屬檔案位置改變，
 # `biglot_dashboard.ST` 這個屬性存取路徑對其他模組完全不變(見 state.py 檔頭說明)。
 from biglot.state import ST  # noqa: E402
+# ingest() 是全系統唯一處理即時tick的路徑，會一次寫入17個危險全域(見
+# biglot/ingest.py 檔頭的完整風險說明)，搬移時逐一把 global X; X = ... 轉成
+# biglot_dashboard.X = ... 屬性賦值，已用「去除前綴後逐行比對原始碼」驗證過
+# 沒有遺漏或誤改任何一行邏輯。
+from biglot.ingest import ingest  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -400,123 +405,6 @@ ICEBERG_REPLENISH_FRAC = 0.5   # 補回到耗盡前≥50%,第一次補回=「偵
 ICEBERG_GRACE_SEC = 20 * 60    # 價位暫時滑出五檔的寬限期(原文:keeps state until expected replenishment has not occurred)
 ICEBERG_TRADE_TOL = 0.003      # 成交價須在守價位±0.3%內才算confirm(交叉比對真實逐筆成交)
 ICEBERG_TRADE_LOOKBACK = 30    # 秒,confirm用的成交回看窗
-
-
-def ingest():
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-    if ST.date != today:
-        ST.__init__()
-        ST.date = today
-        _refresh_vol_risk_if_needed()
-        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS, ATR_STATE, XQ_STYLE, VIXTWN
-        global HIST_BIG, Y_PMLOW, UNI5, ETF981_HOLD, ETF981_ASOF, ETF981_PREV_ASOF
-        DAILY_TREND = _load_daily_trend()
-        KEY_LINE = _load_key_line()
-        PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
-        ATR_STATE = _load_atr_state()
-        XQ_STYLE = _load_xq_style()
-        VIXTWN = _load_vixtwn()
-        PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
-        # 2026-09-27 補漏(稽核發現):_load_hist()/_load_etf981_holdings() 先前只在 import 當下
-        # 跑過一次,process 若連續跑超過一天不重啟,HIST_BIG(連續買賣streak)/Y_PMLOW(破昨午後低點)/
-        # UNI5(宇宙近5日累積,餵閘門banner+OOS盤中gating)/ETF981_*(981A同步觀察)都會停在啟動當天,
-        # 從未跟著換日更新。PREV_CLOSE 故意不從這裡的回傳值覆蓋——上面那行 update(_load_prev_close_db())
-        # 已經是正確的官方昨收來源,這裡只補三個真正缺漏的全域,不要引入第二個互相打架的 PREV_CLOSE 賦值。
-        HIST_BIG, _, Y_PMLOW, UNI5 = _load_hist()
-        ETF981_HOLD, ETF981_ASOF, ETF981_PREV_ASOF = _load_etf981_holdings()
-    raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
-    if raw.exists():
-        with open(raw) as f:
-            f.seek(ST.raw_off)
-            while True:
-                line = f.readline()
-                if not line or not line.endswith("\n"):
-                    break                     # 尾行未寫完,下輪再讀
-                ST.raw_off = f.tell()
-                _ingest_trade(line)
-    bookf = DATA_DIR / "cache" / "watchlist_books" / f"watchlist_books_{today}.jsonl"
-    if bookf.exists():
-        with open(bookf) as f:
-            f.seek(ST.book_off)
-            while True:
-                line = f.readline()
-                if not line or not line.endswith("\n"):
-                    break
-                ST.book_off = f.tell()
-                try:
-                    r = json.loads(line)
-                    ST.book[r["sym"]] = r
-                    _iceberg_update(r)
-                except Exception:
-                    pass
-    # 盤前試撮快照 + 個股期貨即時價(小檔,每輪重讀)
-    global PREOPEN, FUT_PX
-    _bd = DATA_DIR.parent / "cache" / "biglot_live_watch"
-    try:
-        pf = _bd / f"preopen_{today}.json"
-        PREOPEN = json.loads(pf.read_text()).get("trial", {}) if pf.exists() else {}
-    except Exception:
-        PREOPEN = {}
-    try:
-        ff = _bd / f"futprice_{today}.json"
-        FUT_PX = json.loads(ff.read_text()) if ff.exists() else {}
-    except Exception:
-        FUT_PX = {}
-    global WRT
-    try:
-        wf = _bd / f"warrantflow_{today}.json"
-        WRT = json.loads(wf.read_text()) if wf.exists() else {}
-    except Exception:
-        WRT = {}
-    # 台指近月 10 秒樣本(collect_biglot_futprice 落地),增量讀,供頂部台指校準圖
-    try:
-        if TX_SER["day"] != today:
-            TX_SER.update({"day": today, "t": [], "px": [], "off": 0})
-        tf = _bd / f"txf_10s_{today}.jsonl"
-        if tf.exists():
-            with open(tf, "rb") as f:
-                f.seek(TX_SER["off"])
-                chunk = f.read()
-            nl = chunk.rfind(b"\n")
-            if nl != -1:
-                TX_SER["off"] += nl + 1
-                for line in chunk[:nl].split(b"\n"):
-                    try:
-                        o = json.loads(line)
-                        ts = datetime.fromisoformat(f"{today}T{o['t']}+08:00").timestamp()
-                        if o.get("px") and (not TX_SER["t"] or ts > TX_SER["t"][-1]):
-                            TX_SER["t"].append(ts)
-                            TX_SER["px"].append(float(o["px"]))
-                    except Exception:  # noqa: BLE001
-                        continue
-    except Exception:  # noqa: BLE001
-        pass
-    # 權證逐筆(collect_warrant_ws 落地)增量聚合成每分鐘簽號淨額:購 +dirn、售 −dirn
-    try:
-        if WRT_MIN["day"] != today:
-            WRT_MIN.update({"day": today, "off": 0, "data": {}})
-        wtf = _bd.parent / "warrant_trades_ws" / f"warrant_trades_{today}.jsonl"
-        if wtf.exists():
-            with open(wtf, "rb") as f:
-                f.seek(WRT_MIN["off"])
-                chunk = f.read()
-            nl = chunk.rfind(b"\n")
-            if nl != -1:
-                WRT_MIN["off"] += nl + 1
-                for line in chunk[:nl].split(b"\n"):
-                    try:
-                        o = json.loads(line)
-                        sgn = (o.get("dirn") or 0) * (1 if o.get("side") == "購" else -1)
-                        if not sgn:
-                            continue
-                        hm = o["ts"][11:16]
-                        dd = WRT_MIN["data"].setdefault(str(o["sid"]), {})
-                        dd[hm] = dd.get(hm, 0.0) + sgn * float(o["price"]) * float(o["size"]) * 1000
-                    except Exception:  # noqa: BLE001
-                        continue
-    except Exception:  # noqa: BLE001
-        pass
-    _ingest_mini_fut(today)                        # 期散:小型契約 1 口成交(FUT_MINI 檔)
 
 
 SHADOW = {"date": None, "events": []}

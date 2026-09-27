@@ -204,10 +204,27 @@
   `_ingest_trade`/`_iceberg_update`/所有 `_load_*` 都已搬走），但它是**這整個重構最早
   修的那個過日重載 bug 的所在地**，而且會一次寫入全部 17 個危險全域（`global X; X = ...`
   × 17）——這跟第四批「只寫 2 個危險全域」的 `_refresh_vol_risk_if_needed` 不是同一個
-  量級的風險，**不建議交給 agent 平行處理，需要單線程、額外謹慎地處理**，對應原始草案
-  Phase 4「建議跟正式 8771 並行跑一個 scratch port 比對」的提醒。`render()` 900+ 行則需要
-  先做設計（怎麼拆成 `_compute_rows()`/`_assemble_html()` 兩段），是全新的、不同性質的
-  工作，對應 Phase 7。
+  量級的風險。`render()` 900+ 行則需要先做設計（怎麼拆成 `_compute_rows()`/
+  `_assemble_html()` 兩段），是全新的、不同性質的工作，對應 Phase 7。
+
+  **狀態＋ingest搬移（已完成 2026-09-27，單線程手動處理，不交給agent）**：
+  1. `class S`/`ST` 搬到 `biglot/state.py`——純位置搬移，`biglot_dashboard.ST`
+     這個屬性存取路徑對其他 15+ 個已搬移模組完全不變。順手清掉變死碼的
+     `from collections import defaultdict, deque` 頂層 import。
+  2. `ingest()` 搬到 `biglot/ingest.py`——這整個重構風險最高的一次搬移，逐一把
+     17 個 `global X; X = ...` 轉成 `biglot_dashboard.X = ...` 屬性賦值，搬移前
+     先用「去除 `biglot_dashboard.` 前綴後逐行比對原始碼」的程式化驗證，確認
+     零邏輯差異（只有兩處因為行長度換行格式改變，語意不變）才動手替換。
+
+  驗證（比照對待這個等級的風險，全部跑過）：golden-diff 全42檔零diff、
+  smoke-test 14/14、check_prod_launch 通過，**外加重跑 `check_daily_rebind.py`
+  的完整18全域清單**（不是只挑一兩個抽查）——19/19 個可判斷的全域確認過日後
+  依然正確整包換物件，跟搬移前行為一致。
+
+  `biglot_dashboard.py` 1794 行。剩 6 個定義：`render()`（約 963 行,全檔案最大單一
+  函式）、`render_stock_frag`、`render_grid_frag`、`render_stock`、`class H`
+  （HTTP composition root）、`loop()`——這些是最後、也是耦合度最高的一批，
+  對應原始草案 Phase 7-8。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用
