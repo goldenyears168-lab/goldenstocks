@@ -846,6 +846,22 @@ jobs:
       standalone 安裝（比照 chip-lot-probe），見 scripts/launchd/vixtwn-daily-sync.command。
       開關：.env RUN_VIXTWN_DAILY_SYNC（預設 1）。
 
+  - label: weekly-sync
+    category: collect
+    order_capable: false
+    status: enabled
+    schedule: "Sunday 20:00"
+    description: >-
+      週深度補庫：scripts/weekly_sync.sh（Beta + 基本面/consensus + benchmark成分股 +
+      yahoo研究補檔 + 視 .env 旗標開啟的成分股法人/籌碼延伸/Sponsor鉅額+分點/股權分散表批次）。
+      根因：weekly_sync.sh 檔頭寫「建議週日20:00排程」但從未真正排程，只能靠人手動雙擊
+      scripts/2000週日補庫.command——2026-09-27 稽核 biglot dashboard(:8771) 個股頁面缺欄位
+      時發現 stock_beta 停在 2026-07-06、stock_consensus 停在 2026-07-03，近12週沒人按過
+      （跟 vixtwn-daily-sync 是同一種「檔頭寫可排程但沒人排」模式）。
+      下游消費者：biglot_dashboard.py(:8771) 個股詳情頁 Beta 欄（見 compute_xq_style_metrics.py）。
+      standalone 安裝（比照 vixtwn-daily-sync/chip-lot-probe，不進 install-launchd.sh
+      LABELS），見 scripts/launchd/weekly-sync.command。開關：.env RUN_WEEKLY_SYNC（預設 1）。
+
   - label: second-disp-expert-pool-watch
     category: research
     order_capable: false

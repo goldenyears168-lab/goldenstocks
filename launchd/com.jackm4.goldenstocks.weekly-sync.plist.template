@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jackm4.goldenstocks.weekly-sync</string>
+	<!-- 每週日 20:00 · 週深度補庫(Beta/基本面/成分股/Sponsor鉅額+分點/股權分散表)。
+	     根因：scripts/weekly_sync.sh 檔頭寫「建議週日20:00排程」但從未被排程，只能
+	     靠人手動雙擊 scripts/2000週日補庫.command，stock_beta/stock_consensus 停擺
+	     近12週(2026-07-03/06起)。standalone 安裝，見
+	     scripts/launchd/weekly-sync.command 檔頭。開關 RUN_WEEKLY_SYNC。 -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{WEEKLY_SYNC_LAUNCHER}}</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/tmp</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>0</integer>
+		<key>Hour</key>
+		<integer>20</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/weekly-sync.launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/weekly-sync.launchd.err.log</string>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>

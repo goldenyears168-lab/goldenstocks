@@ -652,6 +652,12 @@ CREATE TABLE IF NOT EXISTS stock_margin_daily (
 );
 
 CREATE TABLE IF NOT EXISTS stock_lending_daily (
+    -- ⚠ 兩個常見混淆,2026-09-27 補雙向交叉引用(原本只有 stock_sbl_fee_daily 那邊寫了,這裡沒有):
+    --   1) fee_rate 是 FinMind 隨機一筆逐筆議借成交費率,不是日彙總——真正的日彙總(量加權費率)
+    --      在 stock_sbl_fee_daily,兩者不可互換,勿把這欄當代表性費率用。
+    --   2) lending_balance(TWT72U 借券餘額)包含 ETF 造市/避險/套利等非方向性用途,不是真放空——
+    --      真正對應學術文獻 short interest 的欄位是 stock_short_interest_daily.sbl_balance
+    --      (TWT93U),直接拿本表當空單代理會給出反向訊號(見 stock_short_interest_daily 定義旁註記)。
     stock_id TEXT NOT NULL,
     trade_date TEXT NOT NULL,
     lending_balance REAL,
@@ -741,6 +747,11 @@ CREATE TABLE IF NOT EXISTS stock_daytrade_daily (
 );
 
 CREATE TABLE IF NOT EXISTS stock_lending_balance_daily (
+    -- ⚠ 2026-09-27 補交叉引用:本表(TWSE TWT72U)是「借券餘額」,含ETF造市/避險/套利等
+    -- 非方向性用途,不是真放空——真正對應學術文獻 short interest 的是
+    -- stock_short_interest_daily.sbl_balance(TWT93U)。直接拿本表 lending_balance 當空單
+    -- 代理會給出反向訊號(2408 案例:同期只有 47~63% 是真放空,見 src/stock_db/chip.py 註記)。
+    -- 跟 stock_lending_daily(同名 lending_balance 欄,finmind 來源)是兩張不同表,不要混用。
     stock_id TEXT NOT NULL,
     trade_date TEXT NOT NULL,
     prev_balance REAL,
@@ -756,6 +767,9 @@ CREATE TABLE IF NOT EXISTS stock_lending_balance_daily (
 );
 
 CREATE TABLE IF NOT EXISTS stock_short_interest_daily (
+    -- ⚠ 2026-09-27 補交叉引用:sbl_balance 才是真放空(short interest),對應的「假警報」是
+    -- stock_lending_daily.lending_balance 與 stock_lending_balance_daily.lending_balance
+    -- (兩者皆為 TWT72U 借券餘額,含非方向性用途,不能當空單代理)。
     stock_id TEXT NOT NULL,
     trade_date TEXT NOT NULL,
     -- 融券（散戶信用空單）
@@ -1377,29 +1391,38 @@ CREATE TABLE IF NOT EXISTS stock_close_adjusted (
 
 -- 2026-09-27：XQ全球贏家風格欄位補算（jack 交辦，見 scripts/compute_xq_style_metrics.py
 -- docstring 逐欄公式/來源）。範圍僅 biglot dashboard 監控宇宙，非全市場。
+-- 2026-09-27 DB清理路線圖 Step 3:拆表+改名(舊版v14~v17曾把800大戶/10散戶/beta等7欄
+-- 跟日頻技術/籌碼欄混在同一張表,四種不同更新頻率擠一列——已改成只放真正的「日頻事實」,
+-- 800大戶/10散戶持股%改成渲染時即時查 stock_holding_dispersion_weekly,beta改成即時查
+-- stock_beta,不再冗餘存成本表欄位(這兩張來源表本來就是SSOT,存副本只會製造「哪個是新的」
+-- 的過期問題,見 biglot_dashboard.py::_xq_style_block 先前要標四種時間戳的教訓)。
+-- 欄位命名規則(SSOT,新增欄位比照):<指標>_<窗口><單位>當水平值、<指標>_chg<窗口><單位>當
+-- 變化量;沒有窗口token代表「以表格自身頻率為準」;固定參數指標名(macd_dif/dea/hist)不套用。
 CREATE TABLE IF NOT EXISTS stock_xq_style_daily (
     stock_id TEXT NOT NULL,
     trade_date TEXT NOT NULL,
     turnover_pct REAL,              -- 換手率% = 當日量(股)÷已發行股數×100
-    ret_1w_pct REAL,                -- 一週% = close(t)/close(t-5)−1，按交易日非日曆日
-    sma20 REAL,
-    ema20 REAL,
-    ema_sma20_diff REAL,            -- EMA-SMA(20日)
+    ret_chg5d_pct REAL,             -- 一週% = close(t)/close(t-5)−1，按交易日非日曆日(5個交易日≈1週)
+    sma_20d REAL,
+    ema_20d REAL,
+    ema_sma_20d_diff REAL,          -- EMA-SMA(20日)
     macd_dif REAL,                  -- EMA12−EMA26
     macd_dea REAL,                  -- DIF的9日EMA
     macd_hist REAL,                 -- (DIF−DEA)×2，台股慣例乘2
-    hist_vol20_pct REAL,            -- 20日日報酬標準差×sqrt(252)×100，年化
+    hist_vol_20d_pct REAL,          -- 20日日報酬標準差×sqrt(252)×100，年化
     concentration_pct REAL,         -- 集中度% = 當日三大法人合計買賣超(股)÷當日成交量(股)×100（2026-09-27 jack 給的精確公式）
-    foreign_pct REAL,               -- 外資買賣超比% = foreign_net÷當日量×100（類推自集中度%公式，非使用者逐一確認）
-    trust_pct REAL,                 -- 投信買賣超比%，同上類推
-    dealer_pct REAL,                -- 自營商買賣超比%，同上類推
-    sbl_sell_chg_1d REAL,           -- 借券賣出餘額增減（stock_short_interest_daily.sbl_balance差分，非stock_lending_daily）
-    sbl_sell_chg_5d REAL,           -- 5日借券賣出餘額增減
-    big800_holder_pct REAL,         -- 800大戶持股% = stock_holding_dispersion_weekly中level_lo>=800001各級percent加總，PIT取≤當日最近一週
-    big800_holder_pct_chg_w REAL,   -- 800大戶持股比%(週) = 與前一週同一彙總值的差
-    retail10_holder_pct REAL,       -- 10散戶持股% = level_lo<=10000各級percent加總
-    retail10_holder_pct_chg_w REAL, -- 10散戶持股比%(週)
-    holder_asof_week TEXT,          -- 引用的集保股權分散表週別（PIT追溯用）
+    foreign_net_pct REAL,           -- 外資買賣超比%(流量) = foreign_net÷當日量×100（類推自集中度%公式，非使用者逐一確認）
+    trust_net_pct REAL,             -- 投信買賣超比%，同上類推
+    dealer_net_pct REAL,            -- 自營商買賣超比%，同上類推
+    sbl_sell_chg1d REAL,            -- 借券賣出餘額增減（stock_short_interest_daily.sbl_balance差分，非stock_lending_daily）
+    sbl_sell_chg5d REAL,            -- 5日借券賣出餘額增減
+    daytrade_pct REAL,              -- 當沖比例% = stock_daytrade_daily.daytrade_volume ÷ 當日成交量(股)×100
+                                     -- ⚠ 不用該表自帶的 daytrade_ratio_pct/total_volume 欄(常是NULL,見
+                                     -- backfill_stock_chip_extras.py 對「整欄恆等99%」舊bug的說明)，自己重算。
+    foreign_holding_pct REAL,       -- 外資持股比例(水位,非流量) = stock_shareholding_daily.foreign_remaining_ratio，PIT取≤當日最近一筆
+    block_volume REAL,              -- 鉅額交易(大額逐筆)當日成交量(股)，無交易為NULL(稀疏事件，非每日都有)
+    block_amount REAL,              -- 鉅額交易當日成交金額(元)
+    block_count INTEGER,            -- 鉅額交易當日筆數
     source TEXT NOT NULL DEFAULT 'computed',
     synced_at TEXT NOT NULL,
     PRIMARY KEY (stock_id, trade_date, source)
@@ -1480,6 +1503,36 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE stock_daily_bars ADD COLUMN shares_outstanding REAL",
         ),
         ("us_daily_bars", "adj_close", "ALTER TABLE us_daily_bars ADD COLUMN adj_close REAL"),
+        # 2026-09-27：CREATE TABLE IF NOT EXISTS 不會替既有表補新欄，stock_xq_style_daily
+        # 在 SCHEMA_VERSION 14 已建過表，15 才加的五欄要靠 ALTER 才會真的補上。
+        (
+            "stock_xq_style_daily", "daytrade_ratio_pct",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN daytrade_ratio_pct REAL",
+        ),
+        (
+            "stock_xq_style_daily", "foreign_holding_pct",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN foreign_holding_pct REAL",
+        ),
+        (
+            "stock_xq_style_daily", "block_volume",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN block_volume REAL",
+        ),
+        (
+            "stock_xq_style_daily", "block_amount",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN block_amount REAL",
+        ),
+        (
+            "stock_xq_style_daily", "block_count",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN block_count INTEGER",
+        ),
+        (
+            "stock_xq_style_daily", "beta",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN beta REAL",
+        ),
+        (
+            "stock_xq_style_daily", "beta_asof",
+            "ALTER TABLE stock_xq_style_daily ADD COLUMN beta_asof TEXT",
+        ),
     ]
     for table, col, ddl in migrations:
         try:
@@ -1492,10 +1545,51 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     _migrate_flow_tape_regime_column(conn)
     _drop_retired_stock_daily_lens_table(conn)
     _drop_retired_execution_tables(conn)
+    _migrate_xq_style_split(conn)
 
 
 def _drop_retired_stock_daily_lens_table(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS stock_daily_lens")
+    conn.commit()
+
+
+def _migrate_xq_style_split(conn: sqlite3.Connection) -> None:
+    """2026-09-27 DB清理路線圖 Step 3:stock_xq_style_daily 拆表+改名。既有DB(v14~v17建過表)
+    要靠 RENAME/DROP COLUMN 補到新形狀;全新DB直接由上面的 CREATE TABLE 產生新形狀,這裡
+    的 RENAME/DROP 全部是「查得到舊欄位才動」,對全新DB是no-op。"""
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(stock_xq_style_daily)")}
+    except sqlite3.OperationalError:
+        return
+    if not cols:
+        return
+    renames = (
+        ("ret_1w_pct", "ret_chg5d_pct"),
+        ("sma20", "sma_20d"),
+        ("ema20", "ema_20d"),
+        ("ema_sma20_diff", "ema_sma_20d_diff"),
+        ("hist_vol20_pct", "hist_vol_20d_pct"),
+        ("foreign_pct", "foreign_net_pct"),
+        ("trust_pct", "trust_net_pct"),
+        ("dealer_pct", "dealer_net_pct"),
+        ("sbl_sell_chg_1d", "sbl_sell_chg1d"),
+        ("sbl_sell_chg_5d", "sbl_sell_chg5d"),
+        ("daytrade_ratio_pct", "daytrade_pct"),
+    )
+    for old, new in renames:
+        if old in cols and new not in cols:
+            conn.execute(f"ALTER TABLE stock_xq_style_daily RENAME COLUMN {old} TO {new}")
+            cols.discard(old)
+            cols.add(new)
+    drops = (
+        "big800_holder_pct", "big800_holder_pct_chg_w",
+        "retail10_holder_pct", "retail10_holder_pct_chg_w",
+        "holder_asof_week", "beta", "beta_asof",
+    )
+    for col in drops:
+        if col in cols:
+            conn.execute(f"ALTER TABLE stock_xq_style_daily DROP COLUMN {col}")
+            cols.discard(col)
     conn.commit()
 
 

@@ -24,6 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, "src")
 from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
+from source_dedup import dedup_query  # noqa: E402
+from compute_xq_style_metrics import _load_holder_tiers, _load_beta  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -371,14 +373,25 @@ def _load_prev_close_db():
     try:
         today = datetime.now(TZ).strftime("%Y-%m-%d")
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        for sid in NAMES:
-            row = conn.execute(
-                "SELECT close FROM stock_daily_bars WHERE stock_id=? AND trade_date<? "
-                "AND close IS NOT NULL ORDER BY trade_date DESC LIMIT 1",
-                (sid, today)).fetchone()
-            if row and row[0]:
-                out[sid] = float(row[0])
+        sids = list(NAMES)
+        ph = ",".join("?" * len(sids))
+        # 2026-09-27 DB清理Step2:改成一次撈全部42檔再Python分組,不要逐檔各開一次窗函數查詢
+        # (逐檔查詢實測42次各~15秒,SQLite沒辦法對包了ROW_NUMBER()的巢狀子查詢逐檔下推索引;
+        # 一次IN(...)撈完只要~1秒,跟既有_load_vol_risk_flags的寫法一致)。
+        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
+                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date<? AND close IS NOT NULL "
+                                          f"AND trade_date>=date(?,'-30 day')")
+        rows = conn.execute(
+            f"SELECT stock_id, trade_date, close FROM ({dd_sql}) ORDER BY stock_id, trade_date DESC",
+            (*sids, today, today)).fetchall()
         conn.close()
+        seen = set()
+        for sid, _td, c in rows:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            if c:
+                out[sid] = float(c)
     except Exception:
         pass
     return out
@@ -395,12 +408,22 @@ def _load_daily_trend():
     out = {}
     try:
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        for sid in NAMES:
-            rows = conn.execute(
-                "SELECT trade_date, MAX(close) FROM stock_daily_bars "
-                "WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT 21",
-                (sid,)).fetchall()
-            closes = [c for _, c in rows if c]
+        sids = list(NAMES)
+        ph = ",".join("?" * len(sids))
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
+        # 一次撈全部42檔(45日曆天涵蓋21個交易日綽綽有餘)再Python分組,理由同 _load_prev_close_db。
+        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
+                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-45 day')")
+        rows = conn.execute(
+            f"SELECT stock_id, trade_date, close FROM ({dd_sql}) ORDER BY stock_id, trade_date DESC",
+            (*sids, today)).fetchall()
+        conn.close()
+        by_sid = defaultdict(list)
+        for sid, td, c in rows:
+            if len(by_sid[sid]) < 21:
+                by_sid[sid].append((td, c))
+        for sid, sid_rows in by_sid.items():
+            closes = [c for _, c in sid_rows if c]
             if len(closes) < 4:
                 continue
             last = closes[0]
@@ -411,8 +434,7 @@ def _load_daily_trend():
             out[sid] = {"above_ma5": last > ma5,
                         "above_ma10": (last > ma10) if ma10 else None,
                         "ma20": ma20,
-                        "ret5d": ret5, "last": last, "asof": rows[0][0]}
-        conn.close()
+                        "ret5d": ret5, "last": last, "asof": sid_rows[0][0]}
     except Exception as e:
         print(f"[daily_trend] load failed: {e}", file=sys.stderr)
     return out
@@ -439,11 +461,23 @@ def _load_key_line(lookback=500):
     out = {}
     try:
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        for sid in NAMES:
-            rows = conn.execute(
-                "SELECT trade_date, MAX(open) o, MAX(high) h, MAX(low) l, MAX(close) c "
-                "FROM stock_daily_bars WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT ?",
-                (sid, lookback)).fetchall()
+        sids = list(NAMES)
+        ph = ",".join("?" * len(sids))
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
+        # 一次撈全部42檔(lookback個交易日約需 lookback*1.6 個日曆天緩衝週末/假日)再Python分組。
+        cal_days = int(lookback * 1.6) + 30
+        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
+                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-{cal_days} day')")
+        all_rows = conn.execute(
+            f"SELECT stock_id, trade_date, open, high, low, close FROM ({dd_sql}) "
+            f"ORDER BY stock_id, trade_date DESC",
+            (*sids, today)).fetchall()
+        conn.close()
+        by_sid = defaultdict(list)
+        for sid, td, o, h, lo, c in all_rows:
+            if len(by_sid[sid]) < lookback:
+                by_sid[sid].append((td, o, h, lo, c))
+        for sid, rows in by_sid.items():
             rows = [r for r in rows if all(r[1:])][::-1]   # 反轉成由舊到新,才能用 i-60:i 當「前 60 日」
             if len(rows) < 65:
                 continue
@@ -457,7 +491,6 @@ def _load_key_line(lookback=500):
                     line_price, line_date = lo, rows[i][0]
             if line_price is not None:
                 out[sid] = {"price": line_price, "date": line_date}
-        conn.close()
     except Exception as e:
         print(f"[key_line] load failed: {e}", file=sys.stderr)
     return out
@@ -496,6 +529,45 @@ def _load_pe_peer():
 
 PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
 
+
+def _load_etf981_holdings():
+    """00981A(中信ARK創新)持股市值 + 對前一快照的變動金額(2026-09-27 jack 交辦)。
+
+    讀 etf_holdings(etf_code='00981A')最新兩個 snapshot_date 的 amount 欄(ezmoney 快照
+    當日市值=股數×當時收盤價,非即時重算)。只在最新快照出現=新進(視為從 0 增加);
+    只在前一快照出現=出清(視為降到 0)——兩者都是真實變動金額,不是資料缺漏。
+    與跟單研究線 00981a-l1h9(見 copytrade_l1h9_daily.py)共用同一張表,純展示欄,
+    不進分數、不影響任何評分或訊號。
+    """
+    out: dict[str, dict] = {}
+    asof = prev_asof = None
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        dates = [row[0] for row in conn.execute(
+            "SELECT DISTINCT snapshot_date FROM etf_holdings WHERE etf_code='00981A' "
+            "ORDER BY snapshot_date DESC LIMIT 2").fetchall()]
+        if dates:
+            asof = dates[0]
+            prev_asof = dates[1] if len(dates) > 1 else None
+            cur = dict(conn.execute(
+                "SELECT stock_id, amount FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
+                (asof,)).fetchall())
+            prev = dict(conn.execute(
+                "SELECT stock_id, amount FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
+                (prev_asof,)).fetchall()) if prev_asof else {}
+            for sid, amt in cur.items():
+                out[sid] = {"amount": amt or 0.0, "delta": (amt or 0.0) - (prev.get(sid) or 0.0)}
+            for sid, amt in prev.items():
+                if sid not in out:
+                    out[sid] = {"amount": 0.0, "delta": -(amt or 0.0)}
+        conn.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"[etf981] load failed: {e}", file=sys.stderr)
+    return out, asof, prev_asof
+
+
+ETF981_HOLD, ETF981_ASOF, ETF981_PREV_ASOF = _load_etf981_holdings()
+
 ATR_N = 14            # Wilder(1978)慣例期數,節目原話「5或20皆可」,14是業界折衷慣例
 ATR_SQUEEZE_LOOKBACK = 120
 ATR_SQUEEZE_PCTL = 0.30
@@ -527,11 +599,22 @@ def _load_atr_state(n_bars=260):
     out = {}
     try:
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        for sid in NAMES:
-            rows = conn.execute(
-                "SELECT trade_date, MAX(high) h, MAX(low) l, MAX(close) c "
-                "FROM stock_daily_bars WHERE stock_id=? GROUP BY trade_date ORDER BY trade_date DESC LIMIT ?",
-                (sid, n_bars)).fetchall()
+        sids = list(NAMES)
+        ph = ",".join("?" * len(sids))
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
+        cal_days = int(n_bars * 1.6) + 30
+        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
+                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-{cal_days} day')")
+        all_rows = conn.execute(
+            f"SELECT stock_id, trade_date, high, low, close FROM ({dd_sql}) "
+            f"ORDER BY stock_id, trade_date DESC",
+            (*sids, today)).fetchall()
+        conn.close()
+        by_sid = defaultdict(list)
+        for sid, td, h_, lo_, c_ in all_rows:
+            if len(by_sid[sid]) < n_bars:
+                by_sid[sid].append((td, h_, lo_, c_))
+        for sid, rows in by_sid.items():
             rows = [r for r in rows if all(r[1:])][::-1]
             if len(rows) < ATR_SQUEEZE_LOOKBACK + ATR_N + 20:
                 continue
@@ -553,7 +636,6 @@ def _load_atr_state(n_bars=260):
             pctl = sum(1 for x in hist if x < cur) / len(hist)
             out[sid] = {"atr14": atr[last_i], "atr_pct": cur * 100,
                         "squeeze": pctl <= ATR_SQUEEZE_PCTL, "asof": rows[last_i][0]}
-        conn.close()
     except Exception as e:  # noqa: BLE001
         print(f"[atr_state] load failed: {e}", file=sys.stderr)
     return out
@@ -564,33 +646,80 @@ ATR_STATE = _load_atr_state()
 
 def _load_xq_style():
     """XQ全球贏家風格欄位(2026-09-27 jack 交辦):讀 compute_xq_style_metrics.py 算好寫進
-    stock_xq_style_daily 的最新一列。純展示欄，不進分數。逐欄公式/來源見該腳本 docstring。"""
+    stock_xq_style_daily 的最新一列(日頻技術/籌碼欄)。純展示欄，不進分數。逐欄公式/來源見
+    該腳本 docstring。
+
+    2026-09-27 DB清理路線圖 Step 3 拆表後,800大戶/10散戶持股%與Beta不再存在這張日頻表裡
+    (兩者都不是「日頻事實」,存成本表欄位只會製造過期問題),改成這裡直接呼叫
+    compute_xq_style_metrics 的 _load_holder_tiers()/_load_beta() 即時查詢
+    stock_holding_dispersion_weekly/stock_beta,merge 回同一個 dict。"""
+    live_keys = ("holder_asof_week", "big800_holder_pct", "big800_holder_pct_chg_w",
+                 "retail10_holder_pct", "retail10_holder_pct_chg_w", "beta", "beta_asof")
     out = {}
     try:
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
         for sid in NAMES:
             row = conn.execute(
-                "SELECT trade_date, turnover_pct, ret_1w_pct, sma20, ema20, ema_sma20_diff, "
-                "macd_dif, macd_dea, macd_hist, hist_vol20_pct, concentration_pct, "
-                "foreign_pct, trust_pct, dealer_pct, sbl_sell_chg_1d, sbl_sell_chg_5d, "
-                "big800_holder_pct, big800_holder_pct_chg_w, retail10_holder_pct, "
-                "retail10_holder_pct_chg_w, holder_asof_week "
+                "SELECT trade_date, turnover_pct, ret_chg5d_pct, sma_20d, ema_20d, ema_sma_20d_diff, "
+                "macd_dif, macd_dea, macd_hist, hist_vol_20d_pct, concentration_pct, "
+                "foreign_net_pct, trust_net_pct, dealer_net_pct, sbl_sell_chg1d, sbl_sell_chg5d, "
+                "daytrade_pct, foreign_holding_pct, block_volume, block_amount, block_count "
                 "FROM stock_xq_style_daily WHERE stock_id=? ORDER BY trade_date DESC LIMIT 1",
                 (sid,)).fetchone()
-            if row:
-                keys = ("asof", "turnover_pct", "ret_1w_pct", "sma20", "ema20", "ema_sma20_diff",
-                        "macd_dif", "macd_dea", "macd_hist", "hist_vol20_pct", "concentration_pct",
-                        "foreign_pct", "trust_pct", "dealer_pct", "sbl_sell_chg_1d", "sbl_sell_chg_5d",
-                        "big800_holder_pct", "big800_holder_pct_chg_w", "retail10_holder_pct",
-                        "retail10_holder_pct_chg_w", "holder_asof_week")
-                out[sid] = dict(zip(keys, row))
+            if not row:
+                continue
+            keys = ("asof", "turnover_pct", "ret_chg5d_pct", "sma_20d", "ema_20d", "ema_sma_20d_diff",
+                    "macd_dif", "macd_dea", "macd_hist", "hist_vol_20d_pct", "concentration_pct",
+                    "foreign_net_pct", "trust_net_pct", "dealer_net_pct", "sbl_sell_chg1d", "sbl_sell_chg5d",
+                    "daytrade_pct", "foreign_holding_pct", "block_volume", "block_amount", "block_count")
+            d = dict(zip(keys, row))
+            d.update(dict.fromkeys(live_keys))  # 先全部補 None,下面即時查詢查得到才覆蓋,確保鍵永遠存在
+            # 即時查詢(不落地):800大戶/10散戶持股%(週頻)+ Beta(非時間序列,只有最新值)
+            weeks_sorted, big800_wk, retail10_wk = _load_holder_tiers(conn, sid)
+            if weeks_sorted:
+                wk = weeks_sorted[-1]
+                d["holder_asof_week"] = wk
+                d["big800_holder_pct"] = big800_wk.get(wk)
+                d["retail10_holder_pct"] = retail10_wk.get(wk)
+                if len(weeks_sorted) >= 2:
+                    pwk = weeks_sorted[-2]
+                    if d["big800_holder_pct"] is not None and big800_wk.get(pwk) is not None:
+                        d["big800_holder_pct_chg_w"] = d["big800_holder_pct"] - big800_wk[pwk]
+                    if d["retail10_holder_pct"] is not None and retail10_wk.get(pwk) is not None:
+                        d["retail10_holder_pct_chg_w"] = d["retail10_holder_pct"] - retail10_wk[pwk]
+            beta_val, beta_asof = _load_beta(conn, sid)
+            if beta_val is not None:
+                d["beta"] = beta_val
+                d["beta_asof"] = beta_asof
+            out[sid] = d
         conn.close()
     except Exception as e:  # noqa: BLE001
         print(f"[xq_style] load failed: {e}", file=sys.stderr)
     return out
 
 
+def _load_vixtwn():
+    """台灣VIX(2026-09-27 jack 交辦「稽核」後同意放進個別頁面):market_vix_daily 表,
+    vixtwn-daily-sync launchd job 每日產生,市場層級(非個股),各詳情頁共用同一組數字。"""
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        rows = conn.execute(
+            "SELECT date, close FROM market_vix_daily WHERE symbol='VIXTWN' "
+            "ORDER BY date DESC LIMIT 2").fetchall()
+        conn.close()
+        if not rows:
+            return {}
+        cur = rows[0]
+        prev = rows[1] if len(rows) > 1 else None
+        chg = ((cur[1] / prev[1] - 1) * 100) if (prev and prev[1]) else None
+        return {"asof": cur[0], "close": cur[1], "chg_pct": chg}
+    except Exception as e:  # noqa: BLE001
+        print(f"[vixtwn] load failed: {e}", file=sys.stderr)
+        return {}
+
+
 XQ_STYLE = _load_xq_style()
+VIXTWN = _load_vixtwn()
 
 # ---- 融資/借券變化幅度 → 波動風險分數（非方向訊號，只預測盤中振幅，多空都適用）------
 # 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
@@ -626,26 +755,25 @@ def _pctile_rank(values):
 
 
 def _load_vol_risk_flags():
-    """算出每檔股票「最新一筆」融資/借券變化幅度(不分方向)的歷史分位平均分數。"""
+    """算出每檔股票「最新一筆」融資/借券變化幅度(不分方向)的歷史分位平均分數。
+    來源去重統一走 source_dedup.dedup_query(2026-09-27 DB清理路線圖 Step 2 SSOT),
+    不再各自刻 ROW_NUMBER/漏刻去重。"""
     conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
     sids = list(NAMES)
     ph = ",".join("?" * len(sids))
     mg_by_sid = defaultdict(list)
+    mg_sql = dedup_query("stock_margin_daily", ("stock_id", "trade_date"),
+                          inner_where=f"WHERE stock_id IN ({ph})")
     for sid, td, bal in conn.execute(
-            f"""SELECT stock_id, trade_date, margin_balance FROM (
-                    SELECT stock_id, trade_date, margin_balance,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY stock_id, trade_date
-                               ORDER BY CASE source WHEN 'twse_mi_margn' THEN 0 ELSE 1 END
-                           ) AS rn
-                      FROM stock_margin_daily WHERE stock_id IN ({ph})
-                ) WHERE rn=1 ORDER BY stock_id, trade_date""", sids):
+            f"SELECT stock_id, trade_date, margin_balance FROM ({mg_sql}) "
+            f"ORDER BY stock_id, trade_date", sids):
         mg_by_sid[sid].append((td, bal))
     ln_by_sid = defaultdict(list)
+    ln_sql = dedup_query("stock_lending_balance_daily", ("stock_id", "trade_date"),
+                          inner_where=f"WHERE stock_id IN ({ph})")
     for sid, td, prev_bal, bal in conn.execute(
-            f"""SELECT stock_id, trade_date, prev_balance, lending_balance
-                  FROM stock_lending_balance_daily WHERE stock_id IN ({ph})
-                  ORDER BY stock_id, trade_date""", sids):
+            f"SELECT stock_id, trade_date, prev_balance, lending_balance FROM ({ln_sql}) "
+            f"ORDER BY stock_id, trade_date", sids):
         ln_by_sid[sid].append((td, prev_bal, bal))
     conn.close()
 
@@ -1113,13 +1241,22 @@ def ingest():
         ST.__init__()
         ST.date = today
         _refresh_vol_risk_if_needed()
-        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS, ATR_STATE, XQ_STYLE
+        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS, ATR_STATE, XQ_STYLE, VIXTWN
+        global HIST_BIG, Y_PMLOW, UNI5, ETF981_HOLD, ETF981_ASOF, ETF981_PREV_ASOF
         DAILY_TREND = _load_daily_trend()
         KEY_LINE = _load_key_line()
         PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
         ATR_STATE = _load_atr_state()
         XQ_STYLE = _load_xq_style()
+        VIXTWN = _load_vixtwn()
         PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
+        # 2026-09-27 補漏(稽核發現):_load_hist()/_load_etf981_holdings() 先前只在 import 當下
+        # 跑過一次,process 若連續跑超過一天不重啟,HIST_BIG(連續買賣streak)/Y_PMLOW(破昨午後低點)/
+        # UNI5(宇宙近5日累積,餵閘門banner+OOS盤中gating)/ETF981_*(981A同步觀察)都會停在啟動當天,
+        # 從未跟著換日更新。PREV_CLOSE 故意不從這裡的回傳值覆蓋——上面那行 update(_load_prev_close_db())
+        # 已經是正確的官方昨收來源,這裡只補三個真正缺漏的全域,不要引入第二個互相打架的 PREV_CLOSE 賦值。
+        HIST_BIG, _, Y_PMLOW, UNI5 = _load_hist()
+        ETF981_HOLD, ETF981_ASOF, ETF981_PREV_ASOF = _load_etf981_holdings()
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
         with open(raw) as f:
@@ -2999,6 +3136,20 @@ def render():
             c_pe = (f"<td class='{_pcls}' title='本益比=現價(即時)÷TTM近四季EPS(至{_pasof};⚠非分析師預估EPS,落後指標,見表頭說明)。"
                     f"同族群『{_pgrp}』{_pn or 0}檔中排第{_prk_txt}低(百分位{_psub},≤20%=族群內相對便宜·≥80%=族群內相對昂貴)。"
                     f"族群完整成員清單+各自本益比見個股詳情頁。僅供參考位置,未經嚴謹回測,不進分數'>{_pev:.1f}<span class=\"sub\">{_psub}</span></td>")
+        _e981 = ETF981_HOLD.get(r["sid"])
+        _e981_asof_txt = ETF981_ASOF or "—"
+        _e981_prev_txt = ETF981_PREV_ASOF or "—"
+        if _e981 is None:
+            c_etf981 = (f"<td class='dim' title='00981A(中信ARK創新)最近兩次快照({_e981_asof_txt}"
+                        f" / {_e981_prev_txt})皆未持有此股。純展示欄,不進分數'>—</td>")
+        else:
+            _eamt, _edelta = _e981["amount"], _e981["delta"]
+            _ecls = "up" if _edelta > 0 else ("dn" if _edelta < 0 else "")
+            _eamt_e, _edelta_e = _eamt / 1e8, _edelta / 1e8
+            c_etf981 = (f"<td class='{_ecls}' title='00981A(中信ARK創新)持股市值(ezmoney快照{_e981_asof_txt},"
+                        f"股數×當時收盤價,非即時)vs前次快照({_e981_prev_txt})的變動金額;"
+                        f"正=加碼/新進、負=減碼/出清。純展示欄,不進分數;跟單訊號另見 00981a-l1h9 daily brief'>"
+                        f"{_eamt_e:.2f}億<span class=\"sub\">{_edelta_e:+.2f}億</span></td>")
         _ib_tip = ("隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06 演算法重建,"
                    "取代第一版寬鬆定義)。方法:追蹤五檔全部價位(非僅最優價),量耗盡到接近零(≤原量15%)"
                    "且交叉比對逐筆真實成交確認打在該價位,第一次補回=偵測到(原文:detected after the first "
@@ -3089,7 +3240,7 @@ def render():
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_iceberg + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群、隱形大戶守價位)
+            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_etf981 + c_iceberg + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群、00981A持股、隱形大戶守價位)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -3146,6 +3297,7 @@ def render():
 <th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_42only_2026-09-25.txt,限定這42檔中有逐筆資料的28檔,t<1.4),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
 <th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
+<th title="00981A(中信ARK創新)持股市值(2026-09-27 jack 交辦)。金額=ezmoney快照當日市值(股數×當時收盤價,非即時);Δ=對前一個快照日的變動金額,正(紅)=加碼/新進、負(綠)=減碼/出清,無資料(—)=近兩次快照皆未持有。純展示欄,與 00981a-l1h9 跟單研究線共用同一張 etf_holdings 表,不進分數、不影響任何評分或訊號,快照通常落後即時盤況一個交易日">00981A持股<span class="sub">市值億·Δ前次</span></th>
 <th title="隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06《The Impact of Iceberg Orders in Limit Order Books》原始演算法重建)。原文:『an iceberg to be detected after the first replenishment...keeps the detection state until...an expected replenishment has not occurred』『remembers the indicator values for multiple prices...undercut but later becomes the best quote again...still there』——本版修正三個與原文的落差:①觸發條件改成量耗盡到接近零(≤15%)才算,不是任意減少;②追蹤五檔全部價位(用價位當鍵),不是只追最優價,排名滑動仍持續追蹤;③交叉比對逐筆真實成交確認耗盡打在該價位,不只看當天總量。⚠14個交易日重跑結果:靠山(backing)兩側仍是雜訊(未復現原文Table V的顯著效果);跌破支撐(breakout_bear)延遲30秒後消失,確認雜訊;**突破壓力(breakout_bull)通過完整檢定**(即時/延遲30秒/Table V原文30筆成交口徑三種算法t值都達-2.2~-2.9,集中度55%不極端,安慰劑對照真實值在隨機範圍外)——方向是突破後回落(fade)非延續,已用0.5倍縮水、30分鐘線性淡出納入淨分,唯一進分數的部分。">隱形大戶<span class="sub">守價位</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
@@ -3955,18 +4107,26 @@ def _xq_style_block(sid):
     daily_tag = f"日頻·收盤{html_mod.escape(asof)}" if asof else "—"
     weekly_tag = f"週頻·集保{html_mod.escape(holder_wk)}" if holder_wk else "—"
     static_tag = f"人工·{html_mod.escape(EMPLOYEE_REVENUE_ASOF)}"
+    beta_asof = d.get("beta_asof") if d else None
+    beta_tag = f"週頻·weekly-sync {html_mod.escape(beta_asof)}" if beta_asof else "—"
     items = []
     if d:
         items = [
+            ("Beta(vs 加權指數)", fa(d.get("beta")), beta_tag),
             ("換手率%", fa(d["turnover_pct"], "%"), daily_tag),
-            ("一週%", f(d["ret_1w_pct"], "%"), daily_tag),
-            ("SMA(20日)", fa(d["sma20"]), daily_tag),
-            ("EMA-SMA(20日)", f(d["ema_sma20_diff"]), daily_tag),
+            ("一週%", f(d["ret_chg5d_pct"], "%"), daily_tag),
+            ("SMA(20日)", fa(d["sma_20d"]), daily_tag),
+            ("EMA-SMA(20日)", f(d["ema_sma_20d_diff"]), daily_tag),
             ("MACD(DIF/DEA/HIST)", f"{fa(d['macd_dif'])}/{fa(d['macd_dea'])}/{fa(d['macd_hist'])}", daily_tag),
-            ("歷史波動率%(20日年化)", fa(d["hist_vol20_pct"], "%"), daily_tag),
+            ("歷史波動率%(20日年化)", fa(d["hist_vol_20d_pct"], "%"), daily_tag),
             ("集中度%(主力買賣超/當日量)", f(d["concentration_pct"], "%"), daily_tag),
-            ("外資/投信/自營買賣超比%", f"{f(d['foreign_pct'])}/{f(d['trust_pct'])}/{f(d['dealer_pct'])}%", daily_tag),
-            ("借券賣出餘額增減(1日/5日)", f"{f(d['sbl_sell_chg_1d'])}/{f(d['sbl_sell_chg_5d'])}", daily_tag),
+            ("外資/投信/自營買賣超比%", f"{f(d['foreign_net_pct'])}/{f(d['trust_net_pct'])}/{f(d['dealer_net_pct'])}%", daily_tag),
+            ("借券賣出餘額增減(1日/5日)", f"{f(d['sbl_sell_chg1d'])}/{f(d['sbl_sell_chg5d'])}", daily_tag),
+            ("當沖比例%", fa(d["daytrade_pct"], "%"), daily_tag),
+            ("外資持股比例%(水位)", fa(d["foreign_holding_pct"], "%"), daily_tag),
+            ("鉅額交易(量/金額/筆數)",
+             (f"{d['block_volume']:,.0f}股/{d['block_amount']:,.0f}元/{d['block_count']:.0f}筆"
+              if d.get("block_count") else "今日無"), daily_tag),
             ("800大戶持股%(週變化)", f"{fa(d['big800_holder_pct'], '%')}({f(d['big800_holder_pct_chg_w'])})", weekly_tag),
             ("10張以下散戶持股%(週變化)", f"{fa(d['retail10_holder_pct'], '%')}({f(d['retail10_holder_pct_chg_w'])})", weekly_tag),
         ]
@@ -3974,17 +4134,29 @@ def _xq_style_block(sid):
                   f"<td class='asof'>{tag}</td></tr>" for k, v, tag in items)
     emp_row = (f"<tr><td class='k'>員工平均營業額</td><td>{emp_rev:.2f}(未自算)</td>"
                f"<td class='asof'>{static_tag}</td></tr>" if emp_rev is not None else "")
+    vix = VIXTWN or {}
+    vix_row = ""
+    if vix.get("close") is not None:
+        vix_chg = f(vix.get("chg_pct"), "%")
+        vix_tag = f"日頻·大盤(非個股)·{html_mod.escape(vix['asof'])}"
+        vix_row = (f"<tr><td class='k'>台灣VIX(VIXTWN,大盤情緒非個股)</td>"
+                   f"<td>{vix['close']:.2f}({vix_chg})</td><td class='asof'>{vix_tag}</td></tr>")
     return (f"<div class='xqstyle'><div class='xqhead'>XQ全球贏家風格欄位</div>"
             f"<table class='xqtbl'><thead><tr><th></th><th>值</th><th>更新於</th></tr></thead>"
-            f"<tbody>{trs}{emp_row}</tbody></table>"
-            "<div class='xqnote'>盤後批次算(scripts/research/compute_xq_style_metrics.py),不進分數。"
-            "⚠ 目前<b>沒有排程自動更新</b>——這支腳本要手動重跑才會推進日頻/週頻欄的日期"
-            "(compute_xq_style_metrics.py 沒有掛進 daily_sync.sh 或 launchd,job_registry.yaml"
-            "／crontab 皆查無對應項目);上面每列「更新於」的日期就是最後一次手動執行時算到的資料,"
-            "並非當下即時。集中度%=三大法人合計買賣超÷當日成交量×100(jack 2026-09-27 確認公式)；"
+            f"<tbody>{trs}{emp_row}{vix_row}</tbody></table>"
+            "<div class='xqnote'>日頻/週頻欄由 scripts/research/compute_xq_style_metrics.py 盤後批次算,"
+            "已排進 daily_sync.sh（RUN_XQ_STYLE_METRICS,見 src/pipeline_gates.py），跟著收盤管線每日推進；"
+            "不進分數。集中度%=三大法人合計買賣超÷當日成交量×100(jack 2026-09-27 確認公式)；"
             "外資/投信/自營買賣超比%為同一慣例類推,分母是否與XQ相同未逐一驗證；"
+            "外資持股比例%是水位(存量),外資買賣超比%是流量(當天買賣),兩者互補非重複；"
             "借券賣出餘額用 sbl_balance(TWT93U真放空口徑),非融券/借券餘額(TWT72U)；"
+            "當沖比例%自己用daytrade_volume÷當日成交量重算,不用該表原始欄位(常是NULL)；"
+            "鉅額交易是稀疏事件,多數日子「今日無」是正常狀態不是缺資料；"
             "800大戶/10張以下散戶持股%取自TWSE集保股權分散表,PIT只用已公布最近一週；"
+            "台灣VIX(VIXTWN)是大盤層級指標,42檔個股頁面顯示的是同一組數字,不是個股專屬；"
+            "Beta(stock_beta,yahoo_computed vs ^TWII)每週靠 weekly-sync launchd job(週日20:00,"
+            "2026-09-27新掛,根治scripts/weekly_sync.sh先前沒人排程的問題)更新一次,非日頻,"
+            "且該表本身不是時間序列(每次resync覆蓋同一列),故只在最新交易日那列才有值；"
             "員工平均營業額暫沿用XQ截圖數字,FinMind查無員工人數對應資料源，未自算。</div></div>"
             "<style>.xqstyle{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;"
             "margin-bottom:8px;font-size:12px}.xqstyle .xqhead{color:#79c0ff;font-weight:700;margin-bottom:4px}"

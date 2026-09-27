@@ -30,12 +30,22 @@ biglot_dashboard.py 個股詳情頁使用。範圍=biglot 監控宇宙(pe_peer_g
     ⚠ 用 sbl_balance(TWT93U,真正的借券賣出/short interest)而非 stock_lending_daily
     .lending_balance(TWT72U,只約半數是真放空)——見記憶 twse-sbl-balance-vs-short-interest,
     這是本專案自己踩過的坑,弄混會把「借券餘額」誤植成「借券賣出餘額」。
-  - 800大戶持股% / 10散戶持股% = stock_holding_dispersion_weekly(TWSE集保股權分散表,
-    stock_id 各級距 percent)彙總:800大戶=level_lo>=800001各級加總,10張以下散戶=
-    level_lo<=10000各級加總。取「≤該交易日最近一週」的官方快照(PIT,不偷看未來週);
-    比%(週) = 與再前一週同一彙總值的差。兩個來源(tdcc/finmind)理論同值,優先用tdcc
-    (集保結算所直接來源),缺值才退回finmind。
-    已用台積電驗證:算出800大戶持股%=85.46,與XQ截圖85.53幾乎吻合(週別抓取差1~2天的正常誤差)。
+  - 800大戶持股% / 10散戶持股% / Beta:2026-09-27 DB清理路線圖 Step 3 拆表後**不再寫進
+    本表**——兩者都不是「日頻事實」(前者是週頻集保快照、後者是stock_beta非時間序列的單一
+    最新值,存成本表欄位只會製造「哪一列是新的」的過期問題),改成 biglot_dashboard.py 渲染
+    時直接呼叫本檔案的 _load_holder_tiers()/_load_beta() 即時查 stock_holding_dispersion_weekly/
+    stock_beta,不落地。這兩支函式仍留在本檔案(邏輯正確、biglot_dashboard.py 直接 import
+    重用,不重複造一份)。已用台積電驗證過聚合邏輯本身正確:800大戶持股%=85.46,與XQ截圖
+    85.53幾乎吻合(週別抓取差1~2天的正常誤差)。
+
+2026-09-27 追加(jack 交辦「稽核還有哪些已排程但沒接進儀表板的資料」後同意放進個別頁面):
+  - 當沖比例% = stock_daytrade_daily.daytrade_volume ÷ 當日成交量(stock_daily_bars.volume)×100。
+    ⚠ 不用該表自帶的 daytrade_ratio_pct/total_volume 欄位(實測常是NULL,對應
+    backfill_stock_chip_extras.py 記載的舊版「整欄恆等99%」bug 修復前遺留),自己重算才可信。
+  - 外資持股比例%(水位) = stock_shareholding_daily.foreign_remaining_ratio,PIT取≤當日最近一筆。
+    跟既有「外資買賣超比%」是互補的兩件事:一個是流量(當天買賣多少)、一個是存量(現在持有多少)。
+  - 鉅額交易(block_volume/block_amount/block_count) = stock_block_trade 逐日欄位。這是稀疏事件
+    (多數股票多數日子沒有鉅額交易成交,對應欄位為NULL,不是資料缺失)。
 
 用法:PYTHONPATH=src .venv/bin/python scripts/research/compute_xq_style_metrics.py
 """
@@ -50,6 +60,7 @@ sys.path.insert(0, "src")
 sys.path.insert(0, str(Path(__file__).parent))
 import stock_db  # noqa: E402
 from pe_peer_group_research import load_subcat  # noqa: E402
+from source_dedup import dedup_query  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
@@ -78,21 +89,30 @@ def _load_bars(conn, sid: str):
 
 
 def _load_institutional(conn, sid: str) -> dict[str, tuple]:
+    """2026-09-27 DB清理Step2修正:原本用 MAX(foreign_net)/MAX(investment_trust_net)/
+    MAX(dealer_self_net) 各自獨立取MAX,如果同一天兩個來源數字不同,會把不同來源的欄位
+    拼成一列從未真實存在過的組合(dealer_self_net 官方/finmind定義本來就不同,見schema
+    stock_institutional_daily 註記)。改用 source_dedup 先選好唯一一列來源,不逐欄各自MAX。"""
+    sql = dedup_query("stock_institutional_daily", ("stock_id", "trade_date"), inner_where="WHERE stock_id=?")
     rows = conn.execute(
-        "SELECT trade_date, MAX(foreign_net) f, MAX(investment_trust_net) t, MAX(dealer_self_net) d "
-        "FROM stock_institutional_daily WHERE stock_id=? GROUP BY trade_date", (sid,)).fetchall()
+        f"SELECT trade_date, foreign_net, investment_trust_net, dealer_self_net FROM ({sql})",
+        (sid,)).fetchall()
     return {r[0]: (r[1], r[2], r[3]) for r in rows}
 
 
 def _load_sbl(conn, sid: str) -> dict[str, float]:
-    rows = conn.execute(
-        "SELECT trade_date, MAX(sbl_balance) FROM stock_short_interest_daily "
-        "WHERE stock_id=? GROUP BY trade_date", (sid,)).fetchall()
+    sql = dedup_query("stock_short_interest_daily", ("stock_id", "trade_date"), inner_where="WHERE stock_id=?")
+    rows = conn.execute(f"SELECT trade_date, sbl_balance FROM ({sql})", (sid,)).fetchall()
     return {r[0]: r[1] for r in rows if r[1] is not None}
 
 
 def _load_holder_tiers(conn, sid: str):
-    """回傳 (weeks_sorted, big800_by_week, retail10_by_week)。優先 tdcc,缺值退回 finmind。"""
+    """回傳 (weeks_sorted, big800_by_week, retail10_by_week)。優先 tdcc,缺值退回 finmind。
+
+    2026-09-27 DB清理Step3拆表後,這支函式不再被本檔案的 compute_for_stock() 呼叫
+    (800大戶/10散戶不再寫進 stock_xq_style_daily,改由 biglot_dashboard.py 在渲染時
+    直接 `from compute_xq_style_metrics import _load_holder_tiers` 即時查詢最新一兩週)。
+    留在這裡而不搬移,是因為這是本檔案原本就有的正確邏輯(tdcc優先序),不重複造一份。"""
     rows = conn.execute(
         "SELECT as_of_date, level_lo, percent, source FROM stock_holding_dispersion_weekly "
         "WHERE stock_id=? AND level_lo IS NOT NULL ORDER BY as_of_date", (sid,)).fetchall()
@@ -113,6 +133,42 @@ def _load_holder_tiers(conn, sid: str):
         big800[wk] = sum(v for lo, v in tiers.items() if lo >= 800001)
         retail10[wk] = sum(v for lo, v in tiers.items() if lo <= 10000)
     return weeks_sorted, big800, retail10
+
+
+def _load_daytrade(conn, sid: str) -> dict[str, float]:
+    """回傳 trade_date -> daytrade_volume(股)。不用該表自帶的 daytrade_ratio_pct/total_volume
+    (常是NULL,見 backfill_stock_chip_extras.py 對舊版「整欄恆等99%」bug 的說明),自己拿
+    daytrade_volume 除以 stock_daily_bars 的當日成交量重算比例,才不會沿用壞掉的分母。"""
+    sql = dedup_query("stock_daytrade_daily", ("stock_id", "trade_date"), inner_where="WHERE stock_id=?")
+    rows = conn.execute(f"SELECT trade_date, daytrade_volume FROM ({sql})", (sid,)).fetchall()
+    return {r[0]: r[1] for r in rows if r[1] is not None}
+
+
+def _load_foreign_holding(conn, sid: str) -> dict[str, float]:
+    sql = dedup_query("stock_shareholding_daily", ("stock_id", "trade_date"), inner_where="WHERE stock_id=?")
+    rows = conn.execute(f"SELECT trade_date, foreign_remaining_ratio FROM ({sql})", (sid,)).fetchall()
+    return {r[0]: r[1] for r in rows if r[1] is not None}
+
+
+def _load_block_trade(conn, sid: str) -> dict[str, tuple]:
+    """稀疏事件表(不是每天都有鉅額交易),回傳 trade_date -> (volume, amount, count)。"""
+    sql = dedup_query("stock_block_trade", ("stock_id", "trade_date"), inner_where="WHERE stock_id=?")
+    rows = conn.execute(
+        f"SELECT trade_date, block_volume, block_amount, block_count FROM ({sql})", (sid,)).fetchall()
+    return {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+
+def _load_beta(conn, sid: str) -> tuple[float | None, str | None]:
+    """stock_beta 非時間序列(每次 resync 覆蓋同一列,見 schema 註解),只取目前唯一一列。
+    優先 yahoo_computed(目前唯一 source),缺值回 (None, None)。
+
+    2026-09-27 DB清理Step3拆表後不再寫進 stock_xq_style_daily,改由 biglot_dashboard.py
+    渲染時直接 import 呼叫這支函式即時查——理由跟 _load_holder_tiers 一樣:beta 本身
+    不是時間序列,存成本表欄位只會製造「哪一列是新的」的過期問題,不如每次現查。"""
+    row = conn.execute(
+        "SELECT beta, as_of_date FROM stock_beta WHERE stock_id=? "
+        "ORDER BY as_of_date DESC LIMIT 1", (sid,)).fetchone()
+    return (row[0], row[1]) if row else (None, None)
 
 
 def compute_for_stock(conn, sid: str, now_iso: str) -> list[tuple]:
@@ -145,7 +201,10 @@ def compute_for_stock(conn, sid: str, now_iso: str) -> list[tuple]:
 
     inst = _load_institutional(conn, sid)
     sbl = _load_sbl(conn, sid)
-    weeks_sorted, big800_wk, retail10_wk = _load_holder_tiers(conn, sid)
+    daytrade = _load_daytrade(conn, sid)
+    foreign_hold = _load_foreign_holding(conn, sid)
+    foreign_hold_dates = sorted(foreign_hold)
+    block = _load_block_trade(conn, sid)
 
     out = []
     for i in range(n):
@@ -169,25 +228,18 @@ def compute_for_stock(conn, sid: str, now_iso: str) -> list[tuple]:
         sbl_chg1 = (cur_sbl - prev1_sbl) if (cur_sbl is not None and prev1_sbl is not None) else None
         sbl_chg5 = (cur_sbl - prev5_sbl) if (cur_sbl is not None and prev5_sbl is not None) else None
 
-        big800 = big800_chg_w = retail10 = retail10_chg_w = None
-        holder_wk = None
-        if weeks_sorted:
-            wj = bisect.bisect_right(weeks_sorted, d) - 1
-            if wj >= 0:
-                holder_wk = weeks_sorted[wj]
-                big800 = big800_wk.get(holder_wk)
-                retail10 = retail10_wk.get(holder_wk)
-                if wj >= 1:
-                    pwk = weeks_sorted[wj - 1]
-                    if big800 is not None and big800_wk.get(pwk) is not None:
-                        big800_chg_w = big800 - big800_wk[pwk]
-                    if retail10 is not None and retail10_wk.get(pwk) is not None:
-                        retail10_chg_w = retail10 - retail10_wk[pwk]
+        dtv = daytrade.get(d)
+        daytrade_ratio = (dtv / vols[i] * 100) if (dtv is not None and vols[i]) else None
+
+        fh_idx = bisect.bisect_right(foreign_hold_dates, d) - 1
+        foreign_holding = foreign_hold[foreign_hold_dates[fh_idx]] if fh_idx >= 0 else None
+
+        b_vol, b_amt, b_cnt = block.get(d, (None, None, None))
 
         out.append((
             sid, d, turnover, ret1w, sma20[i], ema20[i], ema_sma_diff,
             dif[i], dea[i], hist[i], hist_vol[i], conc, foreign_pct, trust_pct, dealer_pct,
-            sbl_chg1, sbl_chg5, big800, big800_chg_w, retail10, retail10_chg_w, holder_wk,
+            sbl_chg1, sbl_chg5, daytrade_ratio, foreign_holding, b_vol, b_amt, b_cnt,
             "computed", now_iso,
         ))
     return out
@@ -204,11 +256,11 @@ def main():
         if rows:
             conn.executemany(
                 "INSERT OR REPLACE INTO stock_xq_style_daily "
-                "(stock_id, trade_date, turnover_pct, ret_1w_pct, sma20, ema20, ema_sma20_diff, "
-                " macd_dif, macd_dea, macd_hist, hist_vol20_pct, concentration_pct, "
-                " foreign_pct, trust_pct, dealer_pct, sbl_sell_chg_1d, sbl_sell_chg_5d, "
-                " big800_holder_pct, big800_holder_pct_chg_w, retail10_holder_pct, "
-                " retail10_holder_pct_chg_w, holder_asof_week, source, synced_at) "
+                "(stock_id, trade_date, turnover_pct, ret_chg5d_pct, sma_20d, ema_20d, ema_sma_20d_diff, "
+                " macd_dif, macd_dea, macd_hist, hist_vol_20d_pct, concentration_pct, "
+                " foreign_net_pct, trust_net_pct, dealer_net_pct, sbl_sell_chg1d, sbl_sell_chg5d, "
+                " daytrade_pct, foreign_holding_pct, block_volume, block_amount, block_count, "
+                " source, synced_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             conn.commit()
             total += len(rows)
