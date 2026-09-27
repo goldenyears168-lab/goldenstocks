@@ -1517,13 +1517,6 @@ def _rolling(sid, nts):
     return out
 
 
-def _fmt(v, unit=1e4, dec=0, plus=True):
-    if v is None:
-        return "—"
-    s = f"{v/unit:+.{dec}f}" if plus else f"{v/unit:.{dec}f}"
-    return s
-
-
 def _tick_sz(p):
     return (0.01 if p < 10 else 0.05 if p < 50 else 0.1 if p < 100
             else 0.5 if p < 500 else 1.0 if p < 1000 else 5.0)
@@ -2060,14 +2053,10 @@ def _disposal_today(today: str) -> dict:
     return out
 
 
-def _stock_tick(p: float) -> float:
-    return 0.01 if p < 10 else 0.05 if p < 50 else 0.1 if p < 100 else 0.5 if p < 500 else 1.0 if p < 1000 else 5.0
-
-
 def _limit_down(y: float) -> float:
     """跌停價 = 前收 ×0.9 無條件進位到升降單位(TWSE 規則)。"""
     import math
-    raw = y * 0.9; t = _stock_tick(raw)
+    raw = y * 0.9; t = _tick_sz(raw)  # 原本重複定義成 _stock_tick,2026-09-27 稽核後合併
     return round(math.ceil(raw / t - 1e-9) * t, 2)
 
 
