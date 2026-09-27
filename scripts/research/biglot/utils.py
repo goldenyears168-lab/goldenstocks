@@ -60,3 +60,20 @@ def _in_market():
     n = biglot_dashboard.datetime.now(biglot_dashboard.TZ)
     # 08:30 起 = 期貨/現貨盤前試撮(2026-09-24:launchd 也提前到 08:30),試撮價要即時跳動
     return n.weekday() < 5 and "08:30" <= n.strftime("%H:%M") <= "13:35"
+
+
+def _px_class(px, pc, chg):
+    """價格著色類別:漲停紅底白字/跌停綠底白字/接近漲跌停粗字/一般漲跌。"""
+    if px and pc:
+        up, dn = _limits(pc)
+        if px >= up - 1e-6:
+            return "lup"
+        if px <= dn + 1e-6:
+            return "ldn"
+    if chg is None:
+        return ""
+    if chg >= 9.0:
+        return "nlup"
+    if chg <= -9.0:
+        return "nldn"
+    return "up" if chg > 0 else ("dn" if chg < 0 else "")

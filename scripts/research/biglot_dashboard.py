@@ -41,6 +41,7 @@ from compute_xq_style_metrics import _load_holder_tiers, _load_beta  # noqa: E40
 # 下面 8 個函式本體已搬到 biglot/ package,這裡只留 import 綁定同一個名字。
 from biglot.utils import (  # noqa: E402
     _tick_sz, bucket_key, _pctile_rank, _par30, _b30n, _b5n, _in_market, _limits, _limit_down,
+    _px_class,
 )
 from biglot.html_fragments import _book_table, _wrt_td  # noqa: E402
 # _xq_style_block 讀 XQ_STYLE/VIXTWN(每日整包重新賦值的全域，見 biglot/xq_style.py
@@ -61,6 +62,7 @@ from biglot.user_state import (  # noqa: E402
 )
 from biglot.paper_trading import (  # noqa: E402
     _paper_blank, _paper_log, _paper_save, _paper_summary, _paper_fills, _paper_close,
+    _paper_update, _paper_settle,
 )
 from biglot.mini_futures import _ingest_mini_fut, _mini_stats, _mini_td  # noqa: E402
 from biglot.scoring_support import (  # noqa: E402
@@ -82,6 +84,8 @@ from biglot.day_views import (  # noqa: E402
     render_history, render_day, snapshot_day, _mops_load, _prev_mops_day,
 )
 from biglot.score_rows import _score_rows  # noqa: E402
+from biglot.cause_tags import _cause_tags  # noqa: E402
+from biglot.detail_charts import _stock_series, _stock_series_locked, _svg_detail, _svg_mini  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -542,23 +546,6 @@ def ingest():
 SHADOW = {"date": None, "events": []}
 
 
-def _px_class(px, pc, chg):
-    """價格著色類別:漲停紅底白字/跌停綠底白字/接近漲跌停粗字/一般漲跌。"""
-    if px and pc:
-        up, dn = _limits(pc)
-        if px >= up - 1e-6:
-            return "lup"
-        if px <= dn + 1e-6:
-            return "ldn"
-    if chg is None:
-        return ""
-    if chg >= 9.0:
-        return "nlup"
-    if chg <= -9.0:
-        return "nldn"
-    return "up" if chg > 0 else ("dn" if chg < 0 else "")
-
-
 #: 即時標籤引擎(2026-09-24):盤中 7 格改吃每秒滾動窗、條件連續成立 TAG_HOLD_SEC 秒才「首次觸發」,
 #: 觸發後顯示經過分鐘、到基準率時距自動熄(30 分格 1800s / 5 分格 300s),滾動數反向加 ✗,13:00 後觸發加「尾」。
 #: 每次觸發落地 tag_events_{date}.jsonl 供事後對照 127 日(完成桶版)基準率。日級格(蓄勢隔夜/同賣/連3買/破昨/弱開)不變。
@@ -642,59 +629,6 @@ SC_LOGGED: set = set()   # (日, 5分桶, sid) 已落地
 _DISP_CACHE: dict = {"date": None, "sids": {}, "mtime": None}
 
 
-def _cause_tags(rows, today: str):
-    """每檔寫入 r["cause"] = [(標籤, tooltip 說明含來源/時間)];只在 |盤中分|≥10 或急跌/過熱時才算族群,其餘也照標處置/跌停。"""
-    disp = _disposal_today(today); mops = _mops_load(today); pday, pmops = _prev_mops_day(today)
-    grp = {}
-    for r in rows:
-        grp.setdefault(SUBCAT.get(r["sid"]) or CATS.get(r["sid"]), []).append(r)
-    # 大盤狀態(進場過濾器,不計分;jack 2026-09-24):36 檔等權 近5分 / 近30秒
-    _w5s = [q["w_ret_r"] for q in rows if q.get("w_ret_r") is not None]; _r30ss = [q["r30s_r"] for q in rows if q.get("r30s_r") is not None]
-    mkt5 = sum(_w5s) / len(_w5s) if len(_w5s) >= 10 else None; mkt30s = sum(_r30ss) / len(_r30ss) if len(_r30ss) >= 10 else None
-    for r in rows:
-        tags = []; sid = r["sid"]
-        w5_, r30s_ = r.get("w_ret_r"), r.get("r30s_r")
-        if w5_ is not None and w5_ <= -20 and mkt5 is not None:
-            if mkt5 <= -20 and (w5_ - mkt5) > -10:
-                tags.append(("跟盤殺", f"個股5分 {w5_:+.0f} vs 大盤5分 {mkt5:+.0f}bps,相對<10bps=只是跟著大盤;127日:聯合 −2.9/−3.7(t−2.3)、原始後60分 −20/−24 → 不做多(大盤不反轉)"))
-            elif mkt30s is not None and r30s_ is not None and r30s_ <= -10 and mkt30s >= 0:
-                tags.append(("自己殺", f"個股末30秒 {r30s_:+.0f} 而大盤末30秒 {mkt30s:+.0f}bps=大盤止跌它還在殺;127日:聯合 +3.4/+5.6(t2.1)、原始 +6/+7 → 要的格"))
-            elif mkt30s is not None and mkt30s < -5:
-                tags.append(("大盤仍跌", f"大盤末30秒 {mkt30s:+.0f}bps 仍在跌;127日:個股續跌∧大盤續跌 聯合 −3.4/−5.6、原始 −5/−18 → 等大盤止住"))
-        if sid in disp:
-            m, end = disp[sid]; tags.append((f"處置{m}", f"處置窗至 {end}(disposal_windows.csv,分盤撮合、當沖停)"))
-        bk = ST.book.get(sid) or {}
-        try:
-            y = float(bk.get("y")) if bk.get("y") not in (None, "-", "") else None
-            z = float(bk.get("z")) if bk.get("z") not in (None, "-", "") else None
-            lo = float(bk.get("l")) if bk.get("l") not in (None, "-", "") else None
-            if y:
-                ld = _limit_down(y); bq0 = (bk.get("bq") or [0])[0] or 0
-                if z is not None and z <= ld + 1e-9 and not bq0:
-                    tags.append(("跌停鎖", f"現價 {z} ≤ 跌停 {ld} 且買一為空(MIS 五檔 {bk.get('t')});鎖死中不可買→非流動性反轉樣本"))
-                elif lo is not None and lo <= ld + 1e-9:
-                    tags.append(("觸跌停", f"今低 {lo} ≤ 跌停 {ld},現 {z}(MIS {bk.get('t')});打開後反彈屬跌停機制,勿與一般急跌混看"))
-        except Exception:  # noqa: BLE001
-            pass
-        r30 = r.get("r30_r")
-        if r30 is not None and abs(r30) >= 200:
-            peers = [q for q in grp.get(SUBCAT.get(sid) or CATS.get(sid), []) if q["sid"] != sid and q.get("r30_r") is not None]
-            same = [q for q in peers if (q["r30_r"] <= -200 if r30 < 0 else q["r30_r"] >= 200)]
-            if peers:
-                k = len(same)
-                tags.append((f"族群{k}/{len(peers)}", f"同細分產業 {SUBCAT.get(sid) or CATS.get(sid)} 其餘 {len(peers)} 檔中 {k} 檔近30分同向≥2%:" +
-                             ("、".join(q['name'] for q in same) if same else "無") + ";≥半數=族群連鎖(超額已扣籃子但仍屬共同衝擊,反轉率不同)"))
-        if mops and sid in mops:
-            for hm, subj in mops[sid][:2]:
-                tags.append((f"MOPS{hm}", f"今日重大訊息 {hm}:{subj[:60]}(mops_today 快取);有訊息的急跌傾向延續非反轉"))
-        elif mops is None:
-            tags.append(("MOPS?", "今日盤中 MOPS 無即時來源(OpenAPI 只有 T-1 快照)——不是「無訊息」,下單前自行查 mops.twse.com.tw"))
-        if pmops and sid in pmops:
-            for hm, subj in pmops[sid][:2]:
-                tags.append((f"昨MOPS{hm}", f"{pday} 發言 {hm}:{subj[:60]}(TWSE/TPEx OpenAPI 快照,fetch_mops_today.py);盤後訊息會反映在今日跳空與盤中"))
-        r["cause"] = tags
-
-
 # ---- 期散(小型契約 1 口成交 = 期貨市場散戶代理;jack 2026-09-25):只對 FUT_MINI 檔顯示,描述性、不進分數 ----
 from collections import deque as _deque_mini
 MINI_ROOT = {r["sid"]: (r["fut_code"][:-1] if len(r.get("fut_code", "")) == 3 and r["fut_code"].endswith("F") else r.get("fut_code", "")).lower()
@@ -719,107 +653,6 @@ try:
     PAPER: dict = json.loads(PAPER_PATH.read_text(encoding="utf-8"))
 except Exception:  # noqa: BLE001
     PAPER = _paper_blank(None)
-
-
-def _paper_update(rows, now):
-    day = ST.date
-    if PAPER.get("day") != day:
-        PAPER.clear(); PAPER.update(_paper_blank(day)); _paper_save()
-    hm = datetime.fromtimestamp(now, TZ).strftime("%H:%M:%S")
-    if hm < "09:30:00" or hm > "13:25:00":
-        return
-    bkey = hm[:4] + str(int(hm[4]) // 5 * 5)                      # 5 分桶鍵(HH:M0/M5)
-    at_boundary = hm[3:5] in ("00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55") and hm[6:8] <= "03"
-    changed = False
-    for r in rows:
-        sid = r["sid"]; sc = r.get("sc_v2"); px = r.get("px")
-        tags = [t for t, _ in (r.get("cause") or [])]; items = [k for k, _ in (r.get("sc_v2_items") or [])]
-        bid = ST.last_bid.get(sid); ask = ST.last_ask.get(sid)
-        bk = ST.book.get(sid) or {}
-        if bid is None and bk.get("bp"): bid = bk["bp"][0]
-        if ask is None and bk.get("ap"): ask = bk["ap"][0]
-        for book in PAPER_BOOKS:
-            # --- 訊號 → 掛買一 ---
-            if sc is not None and sc >= PAPER_TH and hm <= "13:20:00" and sid not in PAPER["seen"][book]:
-                fire = False
-                if book == "bucket":
-                    if at_boundary and PAPER["last_bkey"].get(sid) != bkey:
-                        PAPER["last_bkey"][sid] = bkey; fire = True
-                else:
-                    fire = True
-                if fire:
-                    PAPER["seen"][book].append(sid); PAPER["n_sig"][book] += 1; changed = True
-                    skip = next((t for t in tags if t.startswith(PAPER_SKIP)), None)
-                    busy = len(PAPER["orders"][book]) + len(PAPER["pos"][book])
-                    if skip or busy >= PAPER_K or bid is None or not px:
-                        _paper_log({"ev": "signal_skip", "book": book, "sid": sid, "score": sc, "why": skip or ("容量" if busy >= PAPER_K else "無買一"), "tags": tags})
-                    else:
-                        PAPER["orders"][book][sid] = {"limit": bid, "t_post": now, "sig": {"hm": hm, "score": sc, "px": px, "bid": bid, "ask": ask, "tags": tags, "items": items}}
-                        _paper_log({"ev": "signal", "book": book, "sid": sid, "score": sc, "px": px, "bid": bid, "ask": ask, "tags": tags, "items": items})
-            # --- 買單管理 ---
-            o = PAPER["orders"][book].get(sid)
-            if o:
-                ts_s, ts_o = _paper_fills(sid, o["t_post"], o["limit"], "buy")
-                if ts_o is not None:
-                    PAPER["pos"][book][sid] = {"entry": o["limit"], "t_fill": ts_o, "strict": ts_s is not None, "low_since": None, "sell": None, "sig": o["sig"]}
-                    PAPER["orders"][book].pop(sid); changed = True
-                    _paper_log({"ev": "fill", "book": book, "sid": sid, "px": o["limit"], "strict": ts_s is not None, "wait_s": ts_o - o["t_post"]})
-                elif now - o["t_post"] > PAPER_BUY_WAIT:
-                    PAPER["orders"][book].pop(sid); changed = True
-                    PAPER["closed"][book].append({"ev": "unfilled", "book": book, "sid": sid, "limit": o["limit"], "px_now": px, "sig": o["sig"]})
-                    _paper_log({"ev": "unfilled", "book": book, "sid": sid, "limit": o["limit"], "px_now": px, "run_bps": ((px / o["limit"] - 1) * 1e4) if px else None})
-            # --- 持倉管理 ---
-            pos = PAPER["pos"][book].get(sid)
-            if not pos: continue
-            if pos.get("sell") is None:
-                if sc is not None and sc <= 0:
-                    if pos.get("low_since") is None: pos["low_since"] = now
-                else:
-                    pos["low_since"] = None
-                reason = None
-                if pos.get("low_since") is not None and now - pos["low_since"] >= 30: reason = "分數≤0·30秒"
-                elif any(k.startswith(HOLD_BAD) for k in items): reason = "壞標籤"
-                elif now - pos["t_fill"] >= PAPER_MAX_HOLD: reason = "到期60分"
-                elif hm >= "13:20:00": reason = "收盤前"
-                if reason and ask:
-                    pos["sell"] = {"limit": ask, "t_post": now, "reason": reason}; changed = True
-                    _paper_log({"ev": "sell_post", "book": book, "sid": sid, "limit": ask, "reason": reason, "score": sc, "hold_min": (now - pos["t_fill"]) / 60})
-            else:
-                so = pos["sell"]; ts_s, ts_o = _paper_fills(sid, so["t_post"], so["limit"], "sell")
-                if ts_o is not None:
-                    pos["sell_strict"] = ts_s is not None; _paper_close(book, sid, pos, so["limit"], "賣一", now); changed = True
-                elif now - so["t_post"] > PAPER_SELL_WAIT or hm >= "13:24:00":
-                    _paper_close(book, sid, pos, bid or px or so["limit"], "買一", now); changed = True
-            if sid in PAPER["pos"][book]:
-                pos = PAPER["pos"][book][sid]
-                r.setdefault("paper", {})[book] = {"entry": pos["entry"], "min": (now - pos["t_fill"]) / 60, "pnl": ((px / pos["entry"] - 1) * 1e4) if px else None,
-                                                    "sell": bool(pos.get("sell")), "strict": pos["strict"]}
-    if changed: _paper_save()
-
-
-def _paper_settle(day):
-    """收盤:強制平掉殘餘部位、寫當日統計到 paper_daily.json(冪等)。"""
-    if PAPER.get("day") != day: return
-    now = time.time()
-    for book in PAPER_BOOKS:
-        for sid, pos in list(PAPER["pos"][book].items()):
-            px = ST.last_px.get(sid) or pos["entry"]; pos["sell"] = pos.get("sell") or {"reason": "收盤強制"}; _paper_close(book, sid, pos, px, "收盤", now)
-        PAPER["orders"][book].clear()
-    try:
-        daily = json.loads(PAPER_DAILY.read_text(encoding="utf-8")) if PAPER_DAILY.exists() else {}
-    except Exception:  # noqa: BLE001
-        daily = {}
-    out = {}
-    for book in PAPER_BOOKS:
-        cl = [c for c in PAPER["closed"][book] if c.get("ev") == "close"]; un = [c for c in PAPER["closed"][book] if c.get("ev") == "unfilled"]
-        st = [c for c in cl if c["strict_entry"]]
-        def _m(xs, k): return (sum(x[k] for x in xs) / len(xs)) if xs else None
-        out[book] = {"n_sig": PAPER["n_sig"][book], "n_post": len(cl) + len(un), "n_fill_opt": len(cl), "n_fill_strict": len(st),
-                     "gross_opt": _m(cl, "gross_bps"), "net_opt": _m(cl, "net_bps"), "net_strict": _m(st, "net_bps"),
-                     "hit_opt": (sum(1 for c in cl if c["net_bps"] > 0) / len(cl)) if cl else None, "ntd_opt": sum(c["ntd_net"] for c in cl), "ntd_strict": sum(c["ntd_net"] for c in st),
-                     "reasons": {str(k): sum(1 for c in cl if c.get("reason") == k) for k in set(c.get("reason") for c in cl)}}
-    daily[day] = out; PAPER_DAILY.parent.mkdir(parents=True, exist_ok=True); PAPER_DAILY.write_text(json.dumps(daily, ensure_ascii=False, indent=1), encoding="utf-8")
-    _paper_log({"ev": "settle", **{b: {k: v for k, v in out[b].items() if k != "reasons"} for b in PAPER_BOOKS}}); _paper_save()
 
 
 def render():
@@ -1785,138 +1618,6 @@ DETAIL: dict = {}
 DETAIL_LOCK = threading.Lock()   # _stock_series 增量讀非執行緒安全:loop(總覽/AGG)與 HTTP(詳情頁)同時呼叫會把同一段 bytes 解析兩次(2026-09-24 大戶累計 2 倍事故)
 
 
-def _stock_series(sid, day):
-    """回傳 {mins:{"HH:MM":{px,vol,big,ret,tot}}, px0, last_px, big_day, ret_day, tot_day}。
-    增量:今天的檔會一路長,只解析新增行;過去日解析一次後快取到 EOF。整段加鎖(見 DETAIL_LOCK)。"""
-    with DETAIL_LOCK:
-        return _stock_series_locked(sid, day)
-
-
-def _stock_series_locked(sid, day):
-    key = (sid, day)
-    st = DETAIL.get(key)
-    if st is None:
-        st = {"off": 0, "lastvol": 0.0, "last_px": None, "last_seen": None,
-              "first_done": False, "px0": None, "mins": {}}
-        DETAIL[key] = st
-    raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{day}.jsonl"
-    if raw.exists():
-        # bytes 大塊讀:seek 到上次 offset,一次讀進新增區段,只保留到最後一個換行(尾行
-        # 未寫完下輪再讀)。bytes 子字串預篩在 C 層跑,冷啟整天(95MB)<1s,遠快於 readline。
-        sidb = sid.encode()
-        with open(raw, "rb") as f:
-            f.seek(st["off"])
-            chunk = f.read()
-        nl = chunk.rfind(b"\n")
-        if nl != -1:
-            st["off"] += nl + 1
-            for line in chunk[:nl].split(b"\n"):
-                if not line or sidb not in line:          # 便宜的子字串預篩(1/36 命中)
-                    continue
-                _stk_trade(sid, line.decode("utf-8", "replace"), st)
-    return st
-
-
-def _svg_detail(sid, day, st, pc):
-    """單圖疊合(2026-09-24):分時價(左軸)+ 成交量(底部淡色柱)+ 累計大戶/散戶淨(右軸,0 線置中)。x 依實際時鐘 09:00–13:30。"""
-    mins = st["mins"]
-    if not mins:
-        return "<div class='meta'>今日尚無成交(或該檔今日無資料)</div>"
-    order = sorted(mins.keys())
-
-    def _mod(hm):
-        h, mm = hm.split(":")
-        return int(h) * 60 + int(mm)
-    x0, x1 = 540, 810                          # 09:00–13:30
-    W, H, PADL, PADR, PADT, PADB = 940, 380, 52, 64, 10, 22
-    plotW, plotH = W - PADL - PADR, H - PADT - PADB
-
-    def X(hm):
-        return PADL + max(0.0, min(1.0, (_mod(hm) - x0) / (x1 - x0))) * plotW
-    pxs = [mins[k]["px"] for k in order if mins[k]["px"]]
-    lo, hi = min(pxs), max(pxs)
-    refs = [pc] if pc else []
-    up = dn = None
-    if pc:
-        up, dn = _limits(pc)
-        if up <= hi * 1.02:
-            refs.append(up)
-        if dn >= lo * 0.98:
-            refs.append(dn)
-    ylo, yhi = min([lo] + refs), max([hi] + refs)
-    if yhi - ylo < 1e-9:
-        yhi = ylo + 1
-    pad = (yhi - ylo) * 0.06
-    ylo -= pad
-    yhi += pad
-
-    def Y(v):                                  # 價格:左軸,佔整個繪圖區
-        return PADT + (yhi - v) / (yhi - ylo) * plotH
-    parts = [f"<svg viewBox='0 0 {W} {H}' style='width:100%;max-width:{W}px;height:auto;background:#0d1117' data-vw='{W}' data-pts='__PTS__'>"]
-    # 成交量:底部 22% 高度的淡色柱(先畫,壓在最底層)
-    VH = plotH * 0.22
-    vmax = max((mins[k]["vol"] for k in order), default=1) or 1
-    for k in order:
-        v = mins[k]["vol"]
-        if v <= 0:
-            continue
-        h = v / vmax * VH
-        parts.append(f"<rect x='{X(k)-1:.1f}' y='{PADT+plotH-h:.1f}' width='2' height='{h:.1f}' fill='#3b5170' opacity='0.55'/>")
-    # 累計大戶/散戶淨:右軸,0 線置中,單位萬
-    cb = cr = 0.0
-    cum = []
-    for k in order:
-        cb += mins[k]["big"]
-        cr += mins[k]["ret"]
-        cum.append((k, cb / 1e4, cr / 1e4))
-    amax = max((max(abs(b), abs(r)) for _, b, r in cum), default=1) or 1
-    fmid = PADT + plotH / 2
-
-    def FY(wan):
-        return fmid - (wan / amax) * (plotH / 2 - 8)
-    parts.append(f"<line x1='{PADL}' y1='{fmid:.1f}' x2='{W-PADR}' y2='{fmid:.1f}' stroke='#30363d' stroke-width='1'/>")
-    bpts = " ".join(f"{X(k):.1f},{FY(b):.1f}" for k, b, _ in cum)
-    rpts = " ".join(f"{X(k):.1f},{FY(r):.1f}" for k, _, r in cum)
-    parts.append(f"<polyline points='{bpts}' fill='none' stroke='#ff7b72' stroke-width='1.8' opacity='0.85'/>")
-    parts.append(f"<polyline points='{rpts}' fill='none' stroke='#58a6ff' stroke-width='1.3' opacity='0.85'/>")
-    wc = _wrt_cum(sid, order); wmax = 0.0
-    if wc and any(abs(v) > 0 for v in wc):
-        wmax = max(abs(v) for v in wc) or 1.0
-        wpts = " ".join(f"{X(k):.1f},{fmid - (v / wmax) * (plotH / 2 - 8):.1f}" for k, v in zip(order, wc))
-        parts.append(f"<polyline points='{wpts}' fill='none' stroke='#d2a8ff' stroke-width='1.2' opacity='0.9'/>")
-        parts.append(f"<text x='{W-PADR+4}' y='{PADT+plotH-2:.1f}' fill='#d2a8ff' font-size='9'>權±{wmax/1e4:,.0f}萬</text>")
-    for wan, y in ((amax, FY(amax)), (0, fmid), (-amax, FY(-amax))):
-        parts.append(f"<text x='{W-PADR+4}' y='{y+3:.1f}' fill='#8b949e' font-size='10'>{wan:+,.0f}萬</text>")
-    # 參考線:昨收(灰)/漲停(紅)/跌停(綠)
-    for val, col, lab in [(pc, "#8b949e", "昨收" if day == datetime.now(TZ).strftime('%Y-%m-%d') else "基準"),
-                          (up, "#d1242f", "漲停"), (dn, "#1a7f37", "跌停")]:
-        if val and ylo <= val <= yhi:
-            y = Y(val)
-            parts.append(f"<line x1='{PADL}' y1='{y:.1f}' x2='{W-PADR}' y2='{y:.1f}' stroke='{col}' "
-                         f"stroke-dasharray='4 3' stroke-width='1' opacity='0.7'/>")
-            parts.append(f"<text x='{W-PADR-2}' y='{y-2:.1f}' fill='{col}' font-size='10' text-anchor='end'>{lab} {val:g}</text>")
-    # 分時價格線(最上層)
-    pts = " ".join(f"{X(k):.1f},{Y(mins[k]['px']):.1f}" for k in order if mins[k]["px"])
-    parts.append(f"<polyline points='{pts}' fill='none' stroke='#e3b341' stroke-width='1.6'/>")
-    for v in (yhi, (yhi + ylo) / 2, ylo):
-        parts.append(f"<text x='2' y='{Y(v)+3:.1f}' fill='#e3b341' font-size='10'>{v:.1f}</text>")
-    # 圖例
-    parts.append(f"<text x='{PADL+4}' y='{PADT+11}' fill='#e3b341' font-size='10'>— 價(左軸)</text>")
-    parts.append(f"<text x='{PADL+80}' y='{PADT+11}' fill='#ff7b72' font-size='10'>— 累計大戶淨(右軸·萬)</text>")
-    parts.append(f"<text x='{PADL+210}' y='{PADT+11}' fill='#58a6ff' font-size='10'>— 累計散戶淨</text>")
-    parts.append(f"<text x='{PADL+300}' y='{PADT+11}' fill='#3b5170' font-size='10'>▮ 量(底部)</text>")
-    parts.append(f"<text x='{PADL+370}' y='{PADT+11}' fill='#d2a8ff' font-size='10'>— 累計權證簽號淨(自訂尺)</text>")
-    for hm in ("09:00", "10:00", "11:00", "12:00", "13:00", "13:30"):
-        parts.append(f"<text x='{X(hm):.1f}' y='{H-6}' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
-    parts.append("</svg>")
-    # hover 資料:每分鐘 [x, y(價), 時間, 價, 累計大戶萬, 累計散戶萬, 量張]
-    cumd = {k: (b, r) for k, b, r in cum}
-    wcd = dict(zip(order, wc)) if wc else {}
-    hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"]), round(wcd.get(k, 0) / 1e4)]
-                      for k in order if mins[k]["px"]])
-    return "".join(parts).replace("__PTS__", html_mod.escape(hov, quote=True), 1)
-
-
 def render_stock_frag(sid, day):
     st = _stock_series(sid, day)
     pc = PREV_CLOSE.get(sid) if day == datetime.now(TZ).strftime("%Y-%m-%d") else st.get("px0")
@@ -1964,59 +1665,6 @@ HOVER_JS = """<script>(function(){
 })();</script>
 <style>#stip{position:fixed;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:2px 8px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:9;white-space:nowrap;line-height:1.5}
 #sline{position:fixed;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:8}</style>"""
-
-
-def _svg_mini(st, pc):
-    """6×6 總覽用迷你疊圖:價(黃)+昨收虛線 + 累計大戶(紅)/散戶(藍)右軸 + 量(底部面積)。無文字、座標取整、preserveAspectRatio=none 拉滿格子。"""
-    mins = st["mins"]
-    if not mins:
-        return "<svg viewBox='0 0 320 170' preserveAspectRatio='none' style='width:100%;height:100%'></svg>", 1, 0
-    order = sorted(mins.keys())
-    W, H = 320, 170
-
-    def _mod(hm):
-        h, mm = hm.split(":")
-        return int(h) * 60 + int(mm)
-
-    def X(hm):
-        return max(0.0, min(1.0, (_mod(hm) - 540) / 270)) * W
-    pxs = [mins[k]["px"] for k in order if mins[k]["px"]]
-    lo, hi = min(pxs), max(pxs)
-    if pc:
-        lo, hi = min(lo, pc), max(hi, pc)
-    if hi - lo < 1e-9:
-        hi = lo + 1
-    pad = (hi - lo) * 0.06
-    lo -= pad; hi += pad
-
-    def Y(v):
-        return 4 + (hi - v) / (hi - lo) * (H - 8)
-    hov = json.dumps([[_mod(k) - 540, mins[k]["px"]] for k in order if mins[k]["px"]], separators=(",", ":"))
-    parts = [f"<svg viewBox='0 0 {W} {H}' preserveAspectRatio='none' style='width:100%;height:100%;display:block' data-pts='{hov}'>"]
-    vmax = max((mins[k]["vol"] for k in order), default=1) or 1
-    VH = H * 0.22
-    area = " ".join(f"{X(k):.0f},{H - mins[k]['vol'] / vmax * VH:.0f}" for k in order)
-    if area:
-        parts.append(f"<polygon points='{X(order[0]):.0f},{H} {area} {X(order[-1]):.0f},{H}' fill='#3b5170' opacity='0.45'/>")
-    cb = cr = 0.0; cum = []
-    for k in order:
-        cb += mins[k]["big"]; cr += mins[k]["ret"]; cum.append((k, cb, cr))
-    amax = max((max(abs(b), abs(r)) for _, b, r in cum), default=1) or 1
-    mid = H / 2
-    FY = lambda v: mid - (v / amax) * (H / 2 - 6)  # noqa: E731
-    parts.append(f"<line x1='0' y1='{mid:.0f}' x2='{W}' y2='{mid:.0f}' stroke='#30363d' stroke-width='1'/>")
-    parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{FY(b):.0f}" for k, b, _ in cum) + "' fill='none' stroke='#ff7b72' stroke-width='1.4' opacity='0.85'/>")
-    parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{FY(r):.0f}" for k, _, r in cum) + "' fill='none' stroke='#58a6ff' stroke-width='1.1' opacity='0.85'/>")
-    wc = _wrt_cum(st.get("sid") or "", order) if st.get("sid") else None
-    wmax = 0.0
-    if wc and any(abs(v) > 0 for v in wc):
-        wmax = max(abs(v) for v in wc) or 1.0
-        parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{mid - (v / wmax) * (H / 2 - 6):.0f}" for k, v in zip(order, wc)) + "' fill='none' stroke='#d2a8ff' stroke-width='1.1' opacity='0.9'/>")
-    if pc:
-        parts.append(f"<line x1='0' y1='{Y(pc):.0f}' x2='{W}' y2='{Y(pc):.0f}' stroke='#8b949e' stroke-dasharray='3 3' opacity='0.7'/>")
-    parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{Y(mins[k]['px']):.0f}" for k in order if mins[k]["px"]) + "' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
-    parts.append("</svg>")
-    return "".join(parts), amax, wmax
 
 
 def render_grid_frag(sort="ind"):

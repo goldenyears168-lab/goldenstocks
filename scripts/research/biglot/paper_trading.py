@@ -11,12 +11,17 @@
 
 這批函式（`_paper_blank`/`_paper_log`/`_paper_save`/`_paper_summary`/`_paper_fills`）是純
 load/save/log/彙總 bookkeeping，經依賴分析確認零呼叫其他頂層函式。`_paper_close`（收單結算，
-呼叫本檔案內的 `_paper_log`）後續一併搬進本檔案——不含 `_paper_update`/`_paper_settle` 那兩支
-真正驅動掛單/成交狀態機的函式（那些還留在 `biglot_dashboard.py`，本次搬移範圍不含）。
+呼叫本檔案內的 `_paper_log`）也已搬進本檔案。`_paper_update`（掛單/成交狀態機，逐檔驅動）與
+`_paper_settle`（收盤強制平倉＋寫日統計）兩支真正驅動狀態機的函式後續一併搬進本檔案——兩者都呼叫
+本檔案內的 `_paper_blank`/`_paper_close`/`_paper_fills`/`_paper_log`/`_paper_save`（bare name，同檔
+不需 import/prefix），並讀取 `biglot_dashboard.py` 的 `HOLD_BAD`/`PAPER`/`PAPER_BOOKS`/`PAPER_DAILY`/
+`PAPER_SKIP`/`PAPER_TH`/`PAPER_K`/`PAPER_BUY_WAIT`/`PAPER_SELL_WAIT`/`PAPER_MAX_HOLD`/`ST`/`TZ`/
+`datetime`——一律 `biglot_dashboard.X` 屬性存取於呼叫當下，不在檔案頂層 `from biglot_dashboard import X`。
 """
 from __future__ import annotations
 
 import json
+import time
 
 from stock_db import DATA_DIR
 
@@ -85,3 +90,104 @@ def _paper_summary():
     except Exception:  # noqa: BLE001
         pass
     return " · ".join(parts)
+
+
+def _paper_update(rows, now):
+    day = biglot_dashboard.ST.date
+    if biglot_dashboard.PAPER.get("day") != day:
+        biglot_dashboard.PAPER.clear(); biglot_dashboard.PAPER.update(_paper_blank(day)); _paper_save()
+    hm = biglot_dashboard.datetime.fromtimestamp(now, biglot_dashboard.TZ).strftime("%H:%M:%S")
+    if hm < "09:30:00" or hm > "13:25:00":
+        return
+    bkey = hm[:4] + str(int(hm[4]) // 5 * 5)                      # 5 分桶鍵(HH:M0/M5)
+    at_boundary = hm[3:5] in ("00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55") and hm[6:8] <= "03"
+    changed = False
+    for r in rows:
+        sid = r["sid"]; sc = r.get("sc_v2"); px = r.get("px")
+        tags = [t for t, _ in (r.get("cause") or [])]; items = [k for k, _ in (r.get("sc_v2_items") or [])]
+        bid = biglot_dashboard.ST.last_bid.get(sid); ask = biglot_dashboard.ST.last_ask.get(sid)
+        bk = biglot_dashboard.ST.book.get(sid) or {}
+        if bid is None and bk.get("bp"): bid = bk["bp"][0]
+        if ask is None and bk.get("ap"): ask = bk["ap"][0]
+        for book in biglot_dashboard.PAPER_BOOKS:
+            # --- 訊號 → 掛買一 ---
+            if sc is not None and sc >= biglot_dashboard.PAPER_TH and hm <= "13:20:00" and sid not in biglot_dashboard.PAPER["seen"][book]:
+                fire = False
+                if book == "bucket":
+                    if at_boundary and biglot_dashboard.PAPER["last_bkey"].get(sid) != bkey:
+                        biglot_dashboard.PAPER["last_bkey"][sid] = bkey; fire = True
+                else:
+                    fire = True
+                if fire:
+                    biglot_dashboard.PAPER["seen"][book].append(sid); biglot_dashboard.PAPER["n_sig"][book] += 1; changed = True
+                    skip = next((t for t in tags if t.startswith(biglot_dashboard.PAPER_SKIP)), None)
+                    busy = len(biglot_dashboard.PAPER["orders"][book]) + len(biglot_dashboard.PAPER["pos"][book])
+                    if skip or busy >= biglot_dashboard.PAPER_K or bid is None or not px:
+                        _paper_log({"ev": "signal_skip", "book": book, "sid": sid, "score": sc, "why": skip or ("容量" if busy >= biglot_dashboard.PAPER_K else "無買一"), "tags": tags})
+                    else:
+                        biglot_dashboard.PAPER["orders"][book][sid] = {"limit": bid, "t_post": now, "sig": {"hm": hm, "score": sc, "px": px, "bid": bid, "ask": ask, "tags": tags, "items": items}}
+                        _paper_log({"ev": "signal", "book": book, "sid": sid, "score": sc, "px": px, "bid": bid, "ask": ask, "tags": tags, "items": items})
+            # --- 買單管理 ---
+            o = biglot_dashboard.PAPER["orders"][book].get(sid)
+            if o:
+                ts_s, ts_o = _paper_fills(sid, o["t_post"], o["limit"], "buy")
+                if ts_o is not None:
+                    biglot_dashboard.PAPER["pos"][book][sid] = {"entry": o["limit"], "t_fill": ts_o, "strict": ts_s is not None, "low_since": None, "sell": None, "sig": o["sig"]}
+                    biglot_dashboard.PAPER["orders"][book].pop(sid); changed = True
+                    _paper_log({"ev": "fill", "book": book, "sid": sid, "px": o["limit"], "strict": ts_s is not None, "wait_s": ts_o - o["t_post"]})
+                elif now - o["t_post"] > biglot_dashboard.PAPER_BUY_WAIT:
+                    biglot_dashboard.PAPER["orders"][book].pop(sid); changed = True
+                    biglot_dashboard.PAPER["closed"][book].append({"ev": "unfilled", "book": book, "sid": sid, "limit": o["limit"], "px_now": px, "sig": o["sig"]})
+                    _paper_log({"ev": "unfilled", "book": book, "sid": sid, "limit": o["limit"], "px_now": px, "run_bps": ((px / o["limit"] - 1) * 1e4) if px else None})
+            # --- 持倉管理 ---
+            pos = biglot_dashboard.PAPER["pos"][book].get(sid)
+            if not pos: continue
+            if pos.get("sell") is None:
+                if sc is not None and sc <= 0:
+                    if pos.get("low_since") is None: pos["low_since"] = now
+                else:
+                    pos["low_since"] = None
+                reason = None
+                if pos.get("low_since") is not None and now - pos["low_since"] >= 30: reason = "分數≤0·30秒"
+                elif any(k.startswith(biglot_dashboard.HOLD_BAD) for k in items): reason = "壞標籤"
+                elif now - pos["t_fill"] >= biglot_dashboard.PAPER_MAX_HOLD: reason = "到期60分"
+                elif hm >= "13:20:00": reason = "收盤前"
+                if reason and ask:
+                    pos["sell"] = {"limit": ask, "t_post": now, "reason": reason}; changed = True
+                    _paper_log({"ev": "sell_post", "book": book, "sid": sid, "limit": ask, "reason": reason, "score": sc, "hold_min": (now - pos["t_fill"]) / 60})
+            else:
+                so = pos["sell"]; ts_s, ts_o = _paper_fills(sid, so["t_post"], so["limit"], "sell")
+                if ts_o is not None:
+                    pos["sell_strict"] = ts_s is not None; _paper_close(book, sid, pos, so["limit"], "賣一", now); changed = True
+                elif now - so["t_post"] > biglot_dashboard.PAPER_SELL_WAIT or hm >= "13:24:00":
+                    _paper_close(book, sid, pos, bid or px or so["limit"], "買一", now); changed = True
+            if sid in biglot_dashboard.PAPER["pos"][book]:
+                pos = biglot_dashboard.PAPER["pos"][book][sid]
+                r.setdefault("paper", {})[book] = {"entry": pos["entry"], "min": (now - pos["t_fill"]) / 60, "pnl": ((px / pos["entry"] - 1) * 1e4) if px else None,
+                                                    "sell": bool(pos.get("sell")), "strict": pos["strict"]}
+    if changed: _paper_save()
+
+
+def _paper_settle(day):
+    """收盤:強制平掉殘餘部位、寫當日統計到 paper_daily.json(冪等)。"""
+    if biglot_dashboard.PAPER.get("day") != day: return
+    now = time.time()
+    for book in biglot_dashboard.PAPER_BOOKS:
+        for sid, pos in list(biglot_dashboard.PAPER["pos"][book].items()):
+            px = biglot_dashboard.ST.last_px.get(sid) or pos["entry"]; pos["sell"] = pos.get("sell") or {"reason": "收盤強制"}; _paper_close(book, sid, pos, px, "收盤", now)
+        biglot_dashboard.PAPER["orders"][book].clear()
+    try:
+        daily = json.loads(biglot_dashboard.PAPER_DAILY.read_text(encoding="utf-8")) if biglot_dashboard.PAPER_DAILY.exists() else {}
+    except Exception:  # noqa: BLE001
+        daily = {}
+    out = {}
+    for book in biglot_dashboard.PAPER_BOOKS:
+        cl = [c for c in biglot_dashboard.PAPER["closed"][book] if c.get("ev") == "close"]; un = [c for c in biglot_dashboard.PAPER["closed"][book] if c.get("ev") == "unfilled"]
+        st = [c for c in cl if c["strict_entry"]]
+        def _m(xs, k): return (sum(x[k] for x in xs) / len(xs)) if xs else None
+        out[book] = {"n_sig": biglot_dashboard.PAPER["n_sig"][book], "n_post": len(cl) + len(un), "n_fill_opt": len(cl), "n_fill_strict": len(st),
+                     "gross_opt": _m(cl, "gross_bps"), "net_opt": _m(cl, "net_bps"), "net_strict": _m(st, "net_bps"),
+                     "hit_opt": (sum(1 for c in cl if c["net_bps"] > 0) / len(cl)) if cl else None, "ntd_opt": sum(c["ntd_net"] for c in cl), "ntd_strict": sum(c["ntd_net"] for c in st),
+                     "reasons": {str(k): sum(1 for c in cl if c.get("reason") == k) for k in set(c.get("reason") for c in cl)}}
+    daily[day] = out; biglot_dashboard.PAPER_DAILY.parent.mkdir(parents=True, exist_ok=True); biglot_dashboard.PAPER_DAILY.write_text(json.dumps(daily, ensure_ascii=False, indent=1), encoding="utf-8")
+    _paper_log({"ev": "settle", **{b: {k: v for k, v in out[b].items() if k != "reasons"} for b in biglot_dashboard.PAPER_BOOKS}}); _paper_save()

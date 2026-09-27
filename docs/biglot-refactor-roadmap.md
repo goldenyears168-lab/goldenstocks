@@ -180,17 +180,34 @@
   額外針對 `_oos_update_at_close`（讀 `DAILY_TREND`/`UNI5`）跑連續兩天過日驗證確認
   不會 stale。`biglot_dashboard.py` 2282 行。
 
-  **後續要做的（下次對話）**：重新列出目前仍留在 `biglot_dashboard.py` 的 16 個定義：
-  `class S`、`ingest()`、`_px_class`、`_cause_tags`、`_paper_update`、`_paper_settle`、
-  `render()`（約 963 行，全檔案最大）、`_stock_series`/`_stock_series_locked`、
-  `_svg_detail`、`render_stock_frag`、`_svg_mini`、`render_grid_frag`、`render_stock`、
-  `class H`（HTTP composition root）、`loop()`。這些**互相呼叫**（`render()` 呼叫
-  `_cause_tags`/`_px_class`；`ingest()` 呼叫 `_iceberg_update`/`_hold_update` 等已搬走
-  的函式，但也呼叫還留著的 `_paper_update`；`H`/`loop()` 是最外層組合根），跟前四批
-  「零呼叫、可獨立剪貼」的函式性質完全不同——尤其 `render()` 900+ 行需要先做設計
-  （怎麼拆成 `_compute_rows()`/`_assemble_html()` 兩段），不是機械式搬移，**不適合
-  用同一套多agent平行剪貼手法**，需要單線程、有整體理解的拆分策略，對應原始草案
-  Phase 4-8。
+  **第五批（已完成 2026-09-27，4 agent 平行處理）**：重新跑 dep_graph 又發現 8 個「零呼叫
+  其他仍留在檔案裡的頂層函式」候選（原因同第四批：呼叫的是已搬走的函式）。
+  `_paper_update`/`_paper_settle` 併入既有 `paper_trading.py`、`_px_class` 併入既有
+  `utils.py`、新建 `cause_tags.py`（`_cause_tags`）、新建 `detail_charts.py`
+  （`_stock_series`/`_stock_series_locked`/`_svg_detail`/`_svg_mini` 四個一起搬，因為
+  `_stock_series` 只是 `_stock_series_locked` 外面包一層 `DETAIL_LOCK` 鎖，兩者必須
+  留在同一個檔案——agent 有特別確認這個鎖的用途（防止 2026-09-24 那次大戶累計算兩次
+  的事故重演），沒有把鎖跟被鎖的函式拆開）。
+
+  驗證：golden-diff 全42檔零diff、smoke-test 14/14、check_prod_launch 通過。
+  `biglot_dashboard.py` **1930 行**（原始 4326 行，減少 55%）。
+
+  **後續要做的（下次對話）**：重新列出目前仍留在 `biglot_dashboard.py` 的 8 個定義：
+  `class S`、`ingest()`、`render()`（約 963 行，全檔案最大單一函式）、
+  `render_stock_frag`、`render_grid_frag`、`render_stock`、`class H`
+  （HTTP composition root）、`loop()`。dep_graph 再也找不出「零呼叫其他仍留在檔案裡
+  的頂層函式」的候選了——這 8 個是真正**互相呼叫**的核心（`render()` 呼叫
+  `render_stock_frag` 等；`H` 呼叫 `render()`/`render_day` 等；`loop()` 呼叫
+  `ingest()`+`render()`），前五批「零呼叫、可獨立剪貼」的簡單手法在這裡完全用不上了。
+
+  其中 `ingest()` 本身雖然技術上仍是「零呼叫其他仍留在檔案裡的頂層函式」（它呼叫的
+  `_ingest_trade`/`_iceberg_update`/所有 `_load_*` 都已搬走），但它是**這整個重構最早
+  修的那個過日重載 bug 的所在地**，而且會一次寫入全部 17 個危險全域（`global X; X = ...`
+  × 17）——這跟第四批「只寫 2 個危險全域」的 `_refresh_vol_risk_if_needed` 不是同一個
+  量級的風險，**不建議交給 agent 平行處理，需要單線程、額外謹慎地處理**，對應原始草案
+  Phase 4「建議跟正式 8771 並行跑一個 scratch port 比對」的提醒。`render()` 900+ 行則需要
+  先做設計（怎麼拆成 `_compute_rows()`/`_assemble_html()` 兩段），是全新的、不同性質的
+  工作，對應 Phase 7。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用
