@@ -221,10 +221,23 @@
   的完整18全域清單**（不是只挑一兩個抽查）——19/19 個可判斷的全域確認過日後
   依然正確整包換物件，跟搬移前行為一致。
 
-  `biglot_dashboard.py` 1794 行。剩 6 個定義：`render()`（約 963 行,全檔案最大單一
-  函式）、`render_stock_frag`、`render_grid_frag`、`render_stock`、`class H`
-  （HTTP composition root）、`loop()`——這些是最後、也是耦合度最高的一批，
-  對應原始草案 Phase 7-8。
+  **render_views + render_main（已完成 2026-09-27）**：
+  1. `render_stock_frag`/`render_grid_frag`/`render_stock`（+ `HOVER_JS`/`GRID_SHELL`
+     常數）搬到 `biglot/render_views.py`——三者依賴已全部搬走，走一般搬移流程。
+  2. `render()`（全檔案最大單一函式,860行）搬到 `biglot/render_main.py`——過程中
+     發現並修好 `dep_graph.py` 的一個真 bug：`module_level_names()` 沒處理 tuple
+     解構賦值(`A, B, C = f()`)，導致 `HIST_BIG`/`PREV_CLOSE`/`Y_PMLOW`/`UNI5`/
+     `PE_TABLE`/`PE_PEERS`/`PE_GEN`/`PE_EPS`/`VOLRISK`/`VOLRISK_DATE` 十個全域
+     從未被任何一次 dep_graph 執行正確算進 reads——**手動核對已搬移檔案時全面掃描
+     確認沒有造成實際搬移錯誤**(這幾個名字剛好都在另一份手動核對過的危險全域
+     清單裡，之前搬移時都已個別正確處理)，但工具本身確實修好了，往後才可信。
+     搬移用 AST 腳本精確定位每個要加前綴的識別字，途中又踩到一個坑：Python
+     `ast` 的 `col_offset` 是 UTF-8 **位元組**偏移不是字元偏移，這份檔案中文
+     註解/字串極多，字元索引在含 CJK 的行上一律算錯位置——改用位元組級切割才對。
+
+  驗證兩次都跑滿：golden-diff 全42檔零diff、smoke-test 14/14、check_prod_launch
+  通過。`biglot_dashboard.py` **762 行**。剩 2 個定義：`class H`（HTTP composition
+  root）、`loop()`——原始草案 Phase 8 設想的「檔案降級成薄殼」只差最後這一步。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用

@@ -45,13 +45,27 @@ def _module_level_stmts(stmts):
             yield from _module_level_stmts(getattr(node, "orelse", []))
 
 
+def _assign_target_names(target):
+    """遞迴展開 tuple/list 解構賦值的目標名字——`A, B, C = f()` 的 target 是一個
+    `ast.Tuple`，不是 `ast.Name`，原本的 `isinstance(t, ast.Name)` 檢查會整組漏掉
+    （2026-09-27 手動搬移 render() 時發現：HIST_BIG/PREV_CLOSE/Y_PMLOW/UNI5/
+    PE_TABLE/PE_PEERS/PE_GEN/PE_EPS/VOLRISK/VOLRISK_DATE 全部用這種解構賦值定義，
+    十個全域被這個工具徹底漏算，之前每一次 dep_graph 執行的「reads」清單都是不完整的
+    ——所幸這幾個名字剛好都在另一份手動核對過的「危險全域」清單裡，已個別正確處理，
+    沒有造成實際搬移錯誤，但這個工具本身的 bug 必須修，不能留著繼續騙人）。"""
+    if isinstance(target, ast.Name):
+        yield target.id
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            yield from _assign_target_names(elt)
+
+
 def module_level_names(tree: ast.Module) -> set[str]:
     names = set()
     for node in _module_level_stmts(tree.body):
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Name):
-                    names.add(t.id)
+                names.update(_assign_target_names(t))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
