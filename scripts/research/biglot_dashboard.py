@@ -23,82 +23,31 @@ import sys
 # 用 setdefault：正常當套件匯入時 __name__ 已經是 "biglot_dashboard"，這行是無害的 no-op。
 sys.modules.setdefault("biglot_dashboard", sys.modules[__name__])
 
-import html as html_mod
 import json
-import sqlite3
 import threading
-import time
-import urllib.parse as urllib_parse
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, "src")
-from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
-from source_dedup import dedup_query  # noqa: E402
-from compute_xq_style_metrics import _load_holder_tiers, _load_beta  # noqa: E402
-# 2026-09-27 重構 Phase 1:純葉節點抽離(見 docs/biglot-refactor-roadmap.md),
-# 下面 8 個函式本體已搬到 biglot/ package,這裡只留 import 綁定同一個名字。
-from biglot.utils import (  # noqa: E402
-    _tick_sz, bucket_key, _pctile_rank, _par30, _b30n, _b5n, _in_market, _limits, _limit_down,
-    _px_class,
-)
-from biglot.html_fragments import _book_table, _wrt_td  # noqa: E402
-# _xq_style_block 讀 XQ_STYLE/VIXTWN(每日整包重新賦值的全域，見 biglot/xq_style.py
-# 檔頭說明)，該模組用 `import biglot_dashboard` + 屬性存取避免 stale reference，
-# 不是這裡這種 `from biglot_dashboard import X` 的簡單具名 import。
-from biglot.xq_style import _xq_style_block  # noqa: E402
-# 2026-09-27 重構第二批(多agent分工，見 docs/biglot-refactor-roadmap.md)：以下 7 個模組
-# 內部一律 `import biglot_dashboard` + 屬性存取（不是 `from biglot_dashboard import X`），
-# 避免每日整包重新賦值的全域出現 stale reference，模式跟 biglot/xq_style.py 一致。
+from stock_db import DATA_DIR  # noqa: E402
+# 2026-09-27 重構全部五批完成(見 docs/biglot-refactor-roadmap.md)：原本 70+ 個函式
+# /類別逐批搬進 biglot/ package，這支檔案現在只剩「模組層級常數/設定＋一次性初始化
+# 呼叫」，函式本體全部不在這裡了。以下這些匯入雖然這支檔案自己的程式碼不再直接
+# 呼叫，但仍然要留著，因為它們是「一次性初始化呼叫」的結果會存進模組層級變數
+# （ATR_STATE/DAILY_TREND/PE_TABLE 等），供 ingest() 之後的 `global X; X = ...`
+# 覆寫，或是其他模組透過 `biglot_dashboard.X` 屬性存取讀寫（不是
+# `from biglot_dashboard import X` 那種一次性具名匯入，見 biglot/state.py 檔頭
+# 說明的 stale-reference 原理）：
+#   - ST：核心可變狀態單例（15+ 個已搬移模組共用同一個物件）
+#   - datetime：這支檔案自己的 `datetime` 名字會被 Phase 0 測試工具凍結時鐘置換，
+#     其他模組故意透過 `biglot_dashboard.datetime.now(...)` 存取而不是自己
+#     `from datetime import datetime`，才能吃到同一份凍結時鐘
+from biglot.state import ST  # noqa: E402
+from biglot.utils import _par30, _b30n, _b5n  # noqa: E402
 from biglot.reference_loaders import (  # noqa: E402
     _load_daily_trend, _load_key_line, _load_atr_state, _load_prev_close_db,
-    _load_vol_risk_flags, _load_hist, _load_etf981_holdings, _load_pe_peer,
-    _load_vixtwn, _load_xq_style, _load_snap, _snap_dates, _refresh_vol_risk_if_needed,
+    _load_hist, _load_etf981_holdings, _load_pe_peer, _load_vixtwn, _load_xq_style,
 )
-from biglot.user_state import (  # noqa: E402
-    _load_notes, _save_stock_note, _stock_note_td, _hold_log, _hold_save, _oos_load,
-    _hold_toggle, _hold_update, _oos_summary, _oos_update_at_close,
-)
-from biglot.paper_trading import (  # noqa: E402
-    _paper_blank, _paper_log, _paper_save, _paper_summary, _paper_fills, _paper_close,
-    _paper_update, _paper_settle,
-)
-from biglot.mini_futures import _ingest_mini_fut, _mini_stats, _mini_td  # noqa: E402
-from biglot.scoring_support import (  # noqa: E402
-    _active_tags, _tag_engine, _disposal_today, _agg_lines, _day_sig_counts,
-    _book_of, _iceberg_trade_confirms, _rolling, _score_td, _score_v22_legacy,
-    _wrt_cum, _log_scores,
-)
-from biglot.stock_meta import _stock_info_block, render_help  # noqa: E402
-from biglot.pe_and_shadow import _pe_peer_block, _shadow_triple  # noqa: E402
-from biglot.score_v2 import _score_v2  # noqa: E402
-from biglot.trade_ingest import _ingest_trade, _stk_trade  # noqa: E402
-# 2026-09-27 重構第四批(多agent分工，見 docs/biglot-refactor-roadmap.md)：同上，
-# 一律 import biglot_dashboard 模組本身 + 屬性存取。_refresh_vol_risk_if_needed
-# 是這批唯一「寫」危險全域(VOLRISK/VOLRISK_DATE)的函式，改成
-# biglot_dashboard.VOLRISK = ... 屬性賦值，不再用 global 陳述式。
-from biglot.iceberg import _iceberg_update  # noqa: E402
-from biglot.tx_panel import _tx_panel  # noqa: E402
-from biglot.day_views import (  # noqa: E402
-    render_history, render_day, snapshot_day, _mops_load, _prev_mops_day,
-)
-from biglot.score_rows import _score_rows  # noqa: E402
-from biglot.cause_tags import _cause_tags  # noqa: E402
-from biglot.detail_charts import _stock_series, _stock_series_locked, _svg_detail, _svg_mini  # noqa: E402
-# class S/ST 是唯一的核心可變狀態單例，搬到 biglot/state.py 純屬檔案位置改變，
-# `biglot_dashboard.ST` 這個屬性存取路徑對其他模組完全不變(見 state.py 檔頭說明)。
-from biglot.state import ST  # noqa: E402
-# ingest() 是全系統唯一處理即時tick的路徑，會一次寫入17個危險全域(見
-# biglot/ingest.py 檔頭的完整風險說明)，搬移時逐一把 global X; X = ... 轉成
-# biglot_dashboard.X = ... 屬性賦值，已用「去除前綴後逐行比對原始碼」驗證過
-# 沒有遺漏或誤改任何一行邏輯。
-from biglot.ingest import ingest  # noqa: E402
-from biglot.render_views import (  # noqa: E402
-    render_stock_frag, render_grid_frag, render_stock, GRID_SHELL,
-)
-# render() 是全檔案最大的單一函式(約860行)，只讀不寫全域，搬移方法與風險等級見
-# biglot/render_main.py 檔頭說明(含修好 dep_graph.py 一個真bug的過程)。
-from biglot.render_main import render  # noqa: E402
+from biglot.paper_trading import _paper_blank  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -627,136 +576,9 @@ DETAIL: dict = {}
 DETAIL_LOCK = threading.Lock()   # _stock_series 增量讀非執行緒安全:loop(總覽/AGG)與 HTTP(詳情頁)同時呼叫會把同一段 bytes 解析兩次(2026-09-24 大戶累計 2 倍事故)
 
 
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        path, _, qs = self.path.partition("?")
-        if path == "/frag":
-            body = PAGE["frag"].encode("utf-8")
-        elif path == "/history":
-            body = render_history().encode("utf-8")
-        elif path == "/help":
-            body = render_help().encode("utf-8")
-        elif path == "/grid":
-            body = GRID_SHELL.encode("utf-8")
-        elif path == "/gridfrag":
-            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
-            body = (PAGE.get("grid") or render_grid_frag(str(q.get("sort", "ind"))[:4])).encode("utf-8") if str(q.get("sort", "ind")) == "ind" else render_grid_frag(str(q.get("sort", "ind"))[:4]).encode("utf-8")
-        elif path == "/day":
-            d = qs.split("d=")[-1][:10] if "d=" in qs else ""
-            body = render_day(d).encode("utf-8")
-        elif path in ("/stock", "/stockfrag"):
-            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
-            sid = str(q.get("sid", ""))[:8]
-            day = str(q.get("d", ""))[:10] or datetime.now(TZ).strftime("%Y-%m-%d")
-            if sid not in NAMES:
-                body = "<div class='meta'>未知代碼</div>".encode("utf-8")
-            elif path == "/stockfrag":
-                body = render_stock_frag(sid, day).encode("utf-8")
-            else:
-                body = render_stock(sid, day).encode("utf-8")
-        else:
-            body = SHELL.replace("{NOTES}", _load_notes()).encode("utf-8")   # SHELL 是 f-string,{{NOTES}} 已成 {NOTES}
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        # 手機瀏覽器(尤其 Safari over Tailscale)會積極快取整份 HTML,
-        # 導致看到舊紀律條+卡在「載入中…」。強制不快取。
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_POST(self):
-        """/notes:儲存頁首可編輯筆記(本機/Tailscale 私網用,內容原樣存 HTML,不做權限控制)。"""
-        path, _, _ = self.path.partition("?")
-        if path == "/stocknote":
-            try:
-                n = int(self.headers.get("Content-Length") or 0)
-                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:10_000])
-                sid = str(q.get("sid", ""))[:8]
-                if sid not in NAMES:
-                    raise ValueError("unknown sid")
-                t = _save_stock_note(sid, str(q.get("txt", "")))
-                body, code = json.dumps({"ok": True, "t": t}).encode(), 200
-            except Exception as exc:  # noqa: BLE001
-                body, code = f"err {exc!r}".encode(), 500
-        elif path == "/hold":
-            try:
-                n = int(self.headers.get("Content-Length") or 0)
-                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:1000])
-                sid = str(q.get("sid", ""))[:8]; act = str(q.get("action", ""))
-                if sid not in NAMES or act not in ("open", "close"):
-                    raise ValueError("bad sid/action")
-                _hold_toggle(sid, act, ST.last_px.get(sid))
-                body, code = json.dumps({"ok": True, "holds": list(HOLDS)}).encode(), 200
-            except Exception as exc:  # noqa: BLE001
-                body, code = f"err {exc!r}".encode(), 500
-        elif path == "/notes":
-            try:
-                n = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(n).decode("utf-8", "replace")[:200_000]
-                NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
-                NOTES_PATH.write_text(raw, encoding="utf-8")
-                body = b"ok"
-                code = 200
-            except Exception as exc:  # noqa: BLE001
-                body, code = f"err {exc!r}".encode(), 500
-        else:
-            body, code = b"not found", 404
-        self.send_response(code)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *a):
-        pass
-
-
-def loop():
-    done_close = False
-    while True:
-        try:
-            if _in_market():
-                ingest()
-                render()
-                done_close = False
-                if time.time() - PAGE.get("grid_t", 0) >= 5:
-                    try:
-                        PAGE["grid"] = render_grid_frag("ind")
-                    except Exception as _ge:  # noqa: BLE001
-                        print(f"[grid] {_ge!r}", file=sys.stderr)
-                    PAGE["grid_t"] = time.time()
-            elif not done_close:
-                ingest()          # 收盤後補跑一次定格,之後停工
-                render()
-                try:              # 盤後定格也要有 36 檔加總(台指面板紅/藍/紫線)與總覽快取:先建 AGG 再重繪一次
-                    PAGE["grid"] = render_grid_frag("ind")
-                    PAGE["grid_t"] = time.time()
-                    render()
-                except Exception as _ge:  # noqa: BLE001
-                    print(f"[grid-close] {_ge!r}", file=sys.stderr)
-                snapshot_day()
-                try:
-                    _paper_settle(ST.date)
-                except Exception as _pe:  # noqa: BLE001
-                    print(f"[paper-settle] {_pe!r}", file=sys.stderr)
-                try:
-                    _oos_update_at_close()
-                except Exception:
-                    pass
-                done_close = True
-            elif _refresh_vol_risk_if_needed():
-                # 盤前/盤後定格期間:tick 沒得更新,但 T-1 籌碼分數只要 DB 有新資料
-                # 就該顯示,不用等開盤——重繪一次讓「盤後定格」頁面秀出當天分數
-                render()
-        except Exception as e:
-            PAGE["frag"] = f"<div class='meta'>render error: {html_mod.escape(str(e))}</div>"
-        time.sleep(REFRESH_SEC if _in_market() else 300)
-
-
 if __name__ == "__main__":
-    threading.Thread(target=loop, daemon=True).start()
-    print(f"biglot dashboard on :{PORT}")
-    ThreadingHTTPServer(("", PORT), H).serve_forever()
+    # class H(HTTP 處理器)/loop()(背景排程迴圈)/main()(組合根)都搬到
+    # biglot/http_server.py 了——這是 docs/biglot-refactor-roadmap.md 從一開始
+    # 就設想的「原檔案降級成薄殼」最終型態，見該檔案檔頭說明。
+    from biglot.http_server import main
+    main()

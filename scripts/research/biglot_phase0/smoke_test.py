@@ -22,7 +22,7 @@ from pathlib import Path
 from threading import Thread
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixture_lib import load_dashboard_module  # noqa: E402
+from _fixture_lib import load_dashboard_module, load_entry_points  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 
@@ -54,11 +54,16 @@ def main() -> int:
     frozen_now = datetime.strptime(date, "%Y-%m-%d").replace(hour=hh, minute=mm, tzinfo=TZ)
 
     bd = load_dashboard_module(fixture_dir, frozen_now=frozen_now)
-    bd.ingest()
-    bd.render()
-    bd.PAGE["grid"] = bd.render_grid_frag("ind")  # /gridfrag?sort=ind 讀這個快取
+    ep = load_entry_points(bd)
+    # class H(HTTP 處理器)也搬到 biglot/http_server.py 了，biglot_dashboard 模組
+    # 本身不再有這個屬性，比照正式站台直接從真正的家 import。
+    from biglot.http_server import H
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), bd.H)
+    ep["ingest"]()
+    ep["render"]()
+    bd.PAGE["grid"] = ep["render_grid_frag"]("ind")  # /gridfrag?sort=ind 讀這個快取
+
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), H)
     Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{args.port}"
 

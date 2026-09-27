@@ -236,8 +236,42 @@
      註解/字串極多，字元索引在含 CJK 的行上一律算錯位置——改用位元組級切割才對。
 
   驗證兩次都跑滿：golden-diff 全42檔零diff、smoke-test 14/14、check_prod_launch
-  通過。`biglot_dashboard.py` **762 行**。剩 2 個定義：`class H`（HTTP composition
+  通過。`biglot_dashboard.py` 762 行。剩 2 個定義：`class H`（HTTP composition
   root）、`loop()`——原始草案 Phase 8 設想的「檔案降級成薄殼」只差最後這一步。
+
+  **http_server.py（已完成 2026-09-27，重構全部完成）**：`class H`/`loop()` 搬進
+  `biglot/http_server.py`，原本檔尾 `if __name__ == "__main__":` 的內容包成該檔案的
+  `main()`，`biglot_dashboard.py` 對應改成 `from biglot.http_server import main;
+  main()` 一行——這正是路線圖從最開始就設想的終局型態。
+
+  順手做了一次死碼大掃除：AST 掃描找出這支檔案裡「匯入了但自己程式碼從未真正
+  用到」的名字，交叉比對「其他模組有沒有透過 `biglot_dashboard.X` 屬性存取」
+  （必須排除這類——它們雖然沒被這支檔案自己的程式碼引用，但要留著讓其他模組讀），
+  篩出 **72 個**真死碼 import 全部移除。過程中犯過一次小錯：手滑連 `json`（還在
+  用，STOCK_NOTES/HOLDS/PAPER 的模組層級初始化都靠它）也砍了，被 ruff 的
+  `F821 Undefined name` 抓到才補回來——這正是這類大掃除最容易犯的錯，記錄下來
+  提醒之後同樣手法要做完 lint 才算數。
+
+  **意外發現並修好 Phase 0 工具本身的第三個 bug**：`run_golden_diff.py`/
+  `smoke_test.py`/`check_daily_rebind.py` 三支工具原本都寫死假設
+  `bd.ingest()`/`bd.render()`/`bd.render_grid_frag()`/`bd.H` 這些屬性會一直存在於
+  `biglot_dashboard` 模組上——這在 Phase 1-5 搬移期間都成立（`biglot_dashboard.py`
+  當時還留著重新 export 這些名字的 import），但這次死碼大掃除移除死碼 import 後
+  就不成立了（`ingest`/`render`/`render_grid_frag`/`render_history`/`render_help`/
+  `render_day`/`render_stock`/`render_stock_frag`/`H` 現在只活在各自的新家）。
+  三支工具跑出 `AttributeError`——**不是應用程式碼的 bug，是測試工具的假設過期
+  了**。修法：`_fixture_lib.py` 新增 `load_entry_points(bd)`，直接從各自現在的
+  真正模組 import 這些函式/類別（跟正式站台 `http_server.py` 自己的做法一致），
+  三支工具都改用它，不再假設 `bd.X` 屬性存在。
+
+  最終驗證（用修好的工具重跑）：golden-diff 全42檔零diff、smoke-test 14/14、
+  check_prod_launch 通過、check_daily_rebind 19/19。
+
+  **`biglot_dashboard.py` 最終 584 行**（原始 4326 行，減少 87%）。111 個函式/類別
+  全部分進 `scripts/research/biglot/` 底下 21 個模組檔案，這支檔案現在只剩
+  「模組層級常數/設定 ＋ 一次性初始化呼叫 ＋ 一行 `main()` 呼叫」的薄殼——
+  docs/biglot-refactor-roadmap.md 從第一段就設想的終局型態，五批（含最後單線程
+  處理的 state/ingest/render_views/render_main/http_server）全部完成。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用

@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixture_lib import load_dashboard_module  # noqa: E402
+from _fixture_lib import load_dashboard_module, load_entry_points  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))  # 對齊 biglot_dashboard.py 自己的 TZ 常數
 
@@ -43,7 +43,7 @@ def _safe(label: str, fn) -> str:
         return f"ERROR in {label}:\n{traceback.format_exc()}"
 
 
-def snapshot(bd, date: str, out_dir: Path, stock_ids: list[str]) -> dict[str, Path]:
+def snapshot(bd, ep: dict, date: str, out_dir: Path, stock_ids: list[str]) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "stock").mkdir(exist_ok=True)
     (out_dir / "stockfrag").mkdir(exist_ok=True)
@@ -58,16 +58,16 @@ def snapshot(bd, date: str, out_dir: Path, stock_ids: list[str]) -> dict[str, Pa
     write("frag.html", _safe("render()/PAGE[frag]", lambda: bd.PAGE.get("frag", "")))
     for sort in ("ind", "big", "chg"):
         write(f"grid_{sort}.html", _safe(f"render_grid_frag({sort!r})",
-                                          lambda s=sort: bd.render_grid_frag(s)))
-    write("history.html", _safe("render_history()", bd.render_history))
-    write("help.html", _safe("render_help()", bd.render_help))
-    write(f"day_{date}.html", _safe(f"render_day({date!r})", lambda: bd.render_day(date)))
+                                          lambda s=sort: ep["render_grid_frag"](s)))
+    write("history.html", _safe("render_history()", ep["render_history"]))
+    write("help.html", _safe("render_help()", ep["render_help"]))
+    write(f"day_{date}.html", _safe(f"render_day({date!r})", lambda: ep["render_day"](date)))
 
     for sid in stock_ids:
         write(f"stock/{sid}.html", _safe(f"render_stock({sid!r})",
-                                          lambda s=sid: bd.render_stock(s, date)))
+                                          lambda s=sid: ep["render_stock"](s, date)))
         write(f"stockfrag/{sid}.html", _safe(f"render_stock_frag({sid!r})",
-                                              lambda s=sid: bd.render_stock_frag(s, date)))
+                                              lambda s=sid: ep["render_stock_frag"](s, date)))
     return files
 
 
@@ -111,14 +111,15 @@ def main() -> int:
     frozen_now = datetime.strptime(date, "%Y-%m-%d").replace(hour=hh, minute=mm, tzinfo=TZ)
 
     bd = load_dashboard_module(fixture_dir, frozen_now=frozen_now)
+    ep = load_entry_points(bd)
     stock_ids = args.stocks.split(",") if args.stocks else list(bd.NAMES.keys())
 
     print(f"凍結時鐘：{frozen_now}；跑 {len(stock_ids)} 檔；ingest()+render() 中…")
-    bd.ingest()
-    bd.render()
+    ep["ingest"]()
+    ep["render"]()
 
     out_dir = Path(args.out).resolve()
-    snapshot(bd, date, out_dir, stock_ids)
+    snapshot(bd, ep, date, out_dir, stock_ids)
     print(f"快照已寫入：{out_dir}")
 
     if args.baseline:

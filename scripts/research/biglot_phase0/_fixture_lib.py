@@ -100,3 +100,29 @@ def load_dashboard_module(fixture_dir: Path, frozen_now: _real_datetime | None =
         bd.datetime = make_frozen_datetime(frozen_now)
 
     return bd
+
+
+def load_entry_points(bd) -> dict:
+    """回傳這些工具實際要驅動的函式：`ingest`/`render`/`render_grid_frag`/
+    `render_history`/`render_help`/`render_day`/`render_stock`/`render_stock_frag`。
+
+    2026-09-27 五批重構做完後，`biglot_dashboard.py` 不再重新 export 這些名字
+    （移除死碼 import 時一起清掉了——它自己的程式碼確實不再直接呼叫它們，只有
+    `biglot/http_server.py` 會呼叫）。所以 `bd.ingest()`/`bd.render_grid_frag()`
+    這種寫法會直接 `AttributeError`；測試工具要比照正式站台 `http_server.py`
+    的做法，直接從各自現在住的模組 import，不能假設 biglot_dashboard 模組本身
+    還留著這些屬性。必須在 `bd = load_dashboard_module(...)` **之後**才呼叫這個
+    函式（這些子模組自己會 `import biglot_dashboard`，需要它已經在 sys.modules
+    裡且指向正確的 fixture）。
+    """
+    from biglot.ingest import ingest
+    from biglot.render_main import render
+    from biglot.render_views import render_grid_frag, render_stock, render_stock_frag
+    from biglot.day_views import render_history, render_day
+    from biglot.stock_meta import render_help
+    return {
+        "ingest": ingest, "render": render, "render_grid_frag": render_grid_frag,
+        "render_history": render_history, "render_help": render_help,
+        "render_day": render_day, "render_stock": render_stock,
+        "render_stock_frag": render_stock_frag,
+    }

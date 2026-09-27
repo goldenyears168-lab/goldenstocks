@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixture_lib import load_dashboard_module, make_frozen_datetime  # noqa: E402
+from _fixture_lib import load_dashboard_module, load_entry_points, make_frozen_datetime  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 
@@ -57,6 +57,7 @@ def main() -> int:
     day2_dt = day1_dt + timedelta(days=1)  # 不需要是真的交易日，見檔頭說明
 
     bd = load_dashboard_module(fixture_dir, frozen_now=day1_dt)
+    ep = load_entry_points(bd)
 
     def is_identity_unsafe(v) -> bool:
         # None/bool/小整數/空 tuple 在 CPython 是單例或被 intern，id() 相同不代表
@@ -67,14 +68,14 @@ def main() -> int:
         return v is None or isinstance(v, (bool, int)) or v == ()
 
     print(f"第一天 {day1_dt}：呼叫 ingest()…")
-    bd.ingest()
+    ep["ingest"]()
     before = {name: getattr(bd, name, None) for name in DANGEROUS_REBIND_GLOBALS}
     # 模擬「Phase 2 某支新模組在這個時間點做了 from biglot_dashboard import X」
     stale_refs = dict(before)
 
     print(f"第二天 {day2_dt}：換日、再呼叫一次 ingest()…")
     bd.datetime = make_frozen_datetime(day2_dt)
-    bd.ingest()
+    ep["ingest"]()
     after = {name: getattr(bd, name, None) for name in DANGEROUS_REBIND_GLOBALS}
 
     print(f"\n{'全域':<18}{'判定':<14}{'天真 import 搬移會不會壞掉':<18}")
@@ -96,8 +97,10 @@ def main() -> int:
         print("有全域沒有換——去查 docs/biglot-refactor-roadmap.md 的清單是不是要更新，"
               "或這次 fixture 沒有觸發到某個 reload 路徑。")
         return 1
-    print("結論：這 18 個全域在 state.py 化之前，任何要移動的函式若讀到它們，"
-          "禁止用 `from biglot_dashboard import X` 這種簡單 import 手法搬移。")
+    print("結論：任何要移動的函式若讀到這 18 個全域，"
+          "禁止用 `from biglot_dashboard import X` 這種簡單具名 import 手法搬移——"
+          "改用 `import biglot_dashboard` + 呼叫當下 `biglot_dashboard.X` 屬性存取"
+          "（不需要另建 state.py，見 docs/biglot-refactor-roadmap.md 的說明）。")
     return 0
 
 
