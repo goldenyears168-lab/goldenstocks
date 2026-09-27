@@ -138,11 +138,33 @@
   `scripts/research/biglot_phase0/README.md`「踩過的坑」。修好後：golden-diff 全 42 檔
   零 diff、smoke test 14/14、`_pe_peer_block`/`_shadow_triple` 額外過連續兩天過日驗證。
 
-  **後續要做的（下次對話）**：`_score_v2`（核心計分引擎，需要專門一輪細看，不跟其他函式
-  一起批次處理）；`_ingest_trade`/`_stk_trade` 兩支維持原計畫排在更後面、需要人工
-  side-by-side 比對重倉股詳情頁才能搬（本來就有 drift，風險較高）；`biglot_dashboard.py`
-  目前約 3059 行，`render()`/`ingest()`/`http_server` composition root 等大型函式尚未拆分，
-  對應原始草案 Phase 4-8，屬於下一階段。
+  **第三批（已完成 2026-09-27，2 個 agent 平行處理）**：`_score_v2`（核心 V2.5 計分引擎，
+  搬進 `biglot/score_v2.py`）+ `_ingest_trade`/`_stk_trade`（搬進同一個 `biglot/trade_ingest.py`，
+  刻意不合併）。驗證：golden-diff 全 42 檔零 diff、smoke-test 14/14、`check_prod_launch` 通過
+  （正式站台真實指令啟動無崩潰——這是上一個事故後補的第三道關卡，這次確實有跑）。
+  `biglot_dashboard.py` 2862 行。
+
+  `_ingest_trade`/`_stk_trade` 搬移時 agent 逐項列出兩者的 drift（只報告不決定要不要統一）：
+  1. 狀態物件：前者寫共用的 `ST`（跨42檔）、後者寫傳入的單檔 `st` dict
+  2. 分桶粒度：前者5分桶、後者逐分桶
+  3. 只有前者追蹤 bid/ask（餵給 iceberg 偵測）
+  4. `first_done`：前者是 set（跨檔）、後者是單一 bool
+  5. 前者處理全宇宙 feed、後者用 sid 參數過濾成單檔
+  6. 只有前者追蹤當日高低點(`ds["hi"]/["lo"]`)
+  7. 前者有明確的「中實戶」第三桶、後者中實單直接丟棄不累計
+  8. 前者散戶欄拆「淨額」與「無方向成交額」兩個獨立欄位、後者只有淨額一個
+  9. 只有前者追蹤午盤後大單(`ds["big_pm"]`)
+  10. 只有前者追蹤開盤(09:00-09:25)/尾盤(12:55-13:20)兩個 SMFI 觀察窗
+  11. 只有前者維護餵給 `_rolling`(scoring_support.py)的 3700 秒滾動 deque(`ST.recent`)
+  12. `side` fallback 寫法不同(`.get()` vs 直接索引)，語意等價
+
+  這 12 點目前**維持現狀不動**——是否該統一是產品/研究決策，不是重構該擅自決定的事，
+  已完整記錄在這裡等 jack 之後決定。
+
+  **後續要做的（下次對話）**：`biglot_dashboard.py` 目前約 2862 行，`render()`/`ingest()`/
+  `http_server` composition root 等大型函式尚未拆分，對應原始草案 Phase 4-8，屬於下一階段——
+  這些函式互相呼叫、耦合度遠高於前三批搬移的葉節點/次順位函式，需要更謹慎的拆分策略
+  （不能再用「整個函式剪貼」的簡單手法）。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用
