@@ -26,6 +26,10 @@ sys.path.insert(0, "src")
 from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
 from source_dedup import dedup_query  # noqa: E402
 from compute_xq_style_metrics import _load_holder_tiers, _load_beta  # noqa: E402
+# 2026-09-27 重構 Phase 1:純葉節點抽離(見 docs/biglot-refactor-roadmap.md),
+# 下面 8 個函式本體已搬到 biglot/ package,這裡只留 import 綁定同一個名字。
+from biglot.utils import _tick_sz, bucket_key, _pctile_rank, _par30, _b30n, _b5n  # noqa: E402
+from biglot.html_fragments import _book_table, _wrt_td  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -745,15 +749,6 @@ VOLRISK_STALE_DAYS = 7            # 融資/借券最新一筆超過這麼多天�
 VOLRISK_TIERS = ((92, "🌊🌊"), (86, "🌊"), (80, ""))  # 第三級只上色不加圖示,由極端到寬鬆
 
 
-def _pctile_rank(values):
-    """回傳每個元素在序列中的百分位排名(0~1,含自己;越大越極端)。"""
-    order = sorted(range(len(values)), key=lambda i: values[i])
-    ranks = [0.0] * len(values)
-    for pos, i in enumerate(order):
-        ranks[i] = (pos + 1) / len(values)
-    return ranks
-
-
 def _load_vol_risk_flags():
     """算出每檔股票「最新一筆」融資/借券變化幅度(不分方向)的歷史分位平均分數。
     來源去重統一走 source_dedup.dedup_query(2026-09-27 DB清理路線圖 Step 2 SSOT),
@@ -1231,10 +1226,6 @@ def _iceberg_update(r):
                 del levels[key]
 
 
-def bucket_key(dt):
-    return dt.replace(minute=(dt.minute // 5) * 5, second=0, microsecond=0)
-
-
 def ingest():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     if ST.date != today:
@@ -1517,11 +1508,6 @@ def _rolling(sid, nts):
     return out
 
 
-def _tick_sz(p):
-    return (0.01 if p < 10 else 0.05 if p < 50 else 0.1 if p < 100
-            else 0.5 if p < 500 else 1.0 if p < 1000 else 5.0)
-
-
 def _limits(pc):
     """台股漲跌停價(±10%,對齊 tick):漲停=不超過+10%的最大tick、跌停=不低於−10%的最小tick。"""
     import math
@@ -1585,31 +1571,6 @@ def _shadow_triple(rows, now):
             pass
 
 
-def _wrt_td(c, p, bull, bear, tip):
-    """權證多空一格:購額/售額(未簽號活動量,萬)+ 小字=簽號後多方占比(主動買call+主動賣put ÷ 全部主動額);
-    顏色依簽號淨額:紅=多方>空方、綠=空方>多方、灰=皆0。簽號欄缺時退回未簽號(舊檔相容)。"""
-    if bull is None or bear is None:
-        bull, bear = c, p
-    tot = bull + bear
-    # 權證單價低(幾毛~幾塊),一筆 1 張只有幾百元;<10 萬顯示一位小數,免得「0/0 100%」。
-    def _w(v):
-        return f"{v/1e4:,.1f}" if v < 1e5 else f"{v/1e4:,.0f}"
-    MIN_JUDGE = 1e5                                  # 主動額 <10 萬不下判斷(幾百元的成交不算方向)
-    if tot >= MIN_JUDGE:
-        pct = bull / tot * 100
-        shr = f"{pct:.0f}%"
-        # 判斷帶:≥60% 偏多(紅)、≤40% 偏空(綠)、其間中性(灰)——顏色與文字同一規則
-        cls, lab = ("up", "偏多") if pct >= 60 else (("dn", "偏空") if pct <= 40 else ("dim", "中性"))
-    elif tot > 0:
-        shr, cls, lab = f"{bull / tot * 100:.0f}%", "dim", "量小"
-    else:
-        shr, cls, lab = "—", "dim", ""
-    return (f"<td class='{cls}' style='font-size:11px' title='{tip} · 活動量 購{_w(c)}萬/售{_w(p)}萬 · "
-            f"簽號 多方{_w(bull)}萬/空方{_w(bear)}萬 · 多方占比{shr} {lab}(主動額<10萬不判斷)'>"
-            f"{_w(c)}/{_w(p)}<span class='dim' style='font-size:9px'> {shr}</span>"
-            f"{(' <b>' + lab + '</b>') if lab else ''}</td>")
-
-
 def _px_class(px, pc, chg):
     """價格著色類別:漲停紅底白字/跌停綠底白字/接近漲跌停粗字/一般漲跌。"""
     if px and pc:
@@ -1634,12 +1595,6 @@ TAG_HOLD_SEC = 10
 TAG_STATE: dict = {}          # (sid, tag) -> {"pend": ts|None, "t0": ts|None, "hz": sec, "dead": bool, "tail": bool, "txt": str}
 TAG_LOG_DAY = {"d": None}
 #: (tag, 方向, 時距秒, 條件(r)->bool|None, 反向失效(r)->bool, 顯示名(r)->str)
-def _par30(r):
-    return None if (r.get("rbuy30_r") is None or r["unm"]) else (r["rbuy30_r"] + r["rsell30_r"])
-def _b30n(r):
-    return (r["big30_r"] / r["tot30_r"] * 100) if (r.get("big30_r") is not None and r.get("tot30_r")) else None
-def _b5n(r):
-    return (r["big5_r"] / r["tot5_r"] * 100) if (r.get("big5_r") is not None and r.get("tot5_r")) else None
 TAG_DEFS = [
     ("主力點火", "bull", 1800,
      lambda r: (r.get("big30_r") or 0) >= 3e7 and (_par30(r) is None or _par30(r) < 45),
@@ -3797,26 +3752,6 @@ def _svg_detail(sid, day, st, pc):
     hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"]), round(wcd.get(k, 0) / 1e4)]
                       for k in order if mins[k]["px"]])
     return "".join(parts).replace("__PTS__", html_mod.escape(hov, quote=True), 1)
-
-
-def _book_table(bk):
-    if not bk:
-        return "<div class='meta'>無五檔資料</div>"
-    bp, bq = bk.get("bp") or [], bk.get("bq") or []
-    ap, aq = bk.get("ap") or [], bk.get("aq") or []
-    rows = []
-    for i in range(5):                                   # 賣五~賣一 由上而下
-        j = 4 - i
-        ax = f"{ap[j]:g}" if j < len(ap) and ap[j] else "—"
-        aqx = f"{aq[j]:g}" if j < len(aq) and aq[j] else ""
-        rows.append(f"<tr><td class='dim'>賣{j+1}</td><td class='dn'>{ax}</td><td>{aqx}</td></tr>")
-    for i in range(5):                                   # 買一~買五
-        bx = f"{bp[i]:g}" if i < len(bp) and bp[i] else "—"
-        bqx = f"{bq[i]:g}" if i < len(bq) and bq[i] else ""
-        rows.append(f"<tr><td class='dim'>買{i+1}</td><td class='up'>{bx}</td><td>{bqx}</td></tr>")
-    tsline = f"<div class='meta'>五檔快照 {bk.get('t','')} · 委買/委賣量單位:張</div>"
-    return (tsline + "<table class='book'><thead><tr><th></th><th>價</th><th>量(張)</th></tr></thead>"
-            "<tbody>" + "".join(rows) + "</tbody></table>")
 
 
 def render_stock_frag(sid, day):
