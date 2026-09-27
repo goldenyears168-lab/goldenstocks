@@ -29,7 +29,6 @@ import sqlite3
 import threading
 import time
 import urllib.parse as urllib_parse
-from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -86,6 +85,9 @@ from biglot.day_views import (  # noqa: E402
 from biglot.score_rows import _score_rows  # noqa: E402
 from biglot.cause_tags import _cause_tags  # noqa: E402
 from biglot.detail_charts import _stock_series, _stock_series_locked, _svg_detail, _svg_mini  # noqa: E402
+# class S/ST 是唯一的核心可變狀態單例，搬到 biglot/state.py 純屬檔案位置改變，
+# `biglot_dashboard.ST` 這個屬性存取路徑對其他模組完全不變(見 state.py 檔頭說明)。
+from biglot.state import ST  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -391,32 +393,6 @@ tick();
 </script>
 </body></html>"""
 
-
-class S:
-    """解析狀態（當日）。"""
-    def __init__(self):
-        self.date = None
-        self.raw_off = 0
-        self.book_off = 0
-        self.lastvol = defaultdict(float)
-        self.last_px = {}
-        self.last_bid = {}; self.last_ask = {}     # 逐筆帶的買一/賣一(紙上交易掛價用)
-        self.last_seen = {}
-        self.first_done = set()
-        self.buckets = {}                       # sid -> {bk: {...}}
-        self.day = defaultdict(lambda: {"big": 0., "ret": 0., "ret2": 0., "mid": 0.,
-                                        "tot": 0., "big_pm": 0., "px0": None, "hi": None, "lo": None,
-                                        "ret_open": 0., "tot_open": 0., "ret_close": 0., "tot_close": 0.})   # 散戶開盤/尾盤段(SMFI 觀察欄)
-        self.book = {}                          # sid -> latest snapshot
-        # 每檔最近 ~60 分鐘逐筆 (ts, px, amt, sgn, is_big, is_retail):供 5分/30分 欄位**每秒滾動窗**
-        # (2026-09-23 jack 要求)。標籤/旗標仍依完成的 5 分桶判定(=127 日回測定義),不走這裡。
-        self.recent = defaultdict(deque)
-        # 隱形大戶守價位偵測(2026-09-25 jack 交辦,見 _iceberg_update docstring):
-        # sid -> {"bid":{price_key:state}, "ask":{price_key:state}, "last_breakout":{...}|None}
-        self.iceberg = defaultdict(lambda: {"bid": {}, "ask": {}, "last_breakout": None})
-
-
-ST = S()
 
 ICEBERG_EXHAUST_FRAC = 0.15    # 量降到≤原量15%(或≤5張)才算「耗盡」(Frey&Sandås:trade exhausts all displayed depth)
 ICEBERG_EXHAUST_MIN_ABS = 5.0
