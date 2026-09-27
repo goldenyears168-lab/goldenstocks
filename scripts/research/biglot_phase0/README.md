@@ -58,6 +58,19 @@ Port 固定 8772（只 bind 127.0.0.1），跟正式 8771 不衝突，可以在�
 權證影子帳），建議另建一個那個功能確實有觸發過的日期當 fixture，不要只靠這
 一天。
 
+## 跨日 stale-reference 檢查（Phase 2+ 之前必跑）
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/research/biglot_phase0/check_daily_rebind.py \
+    --fixture ${GOLDENSTOCKS_DATA_DIR}/scratch/biglot_fixture/2026-09-17
+```
+
+動態證明 `docs/biglot-refactor-roadmap.md` 列出的 18 個「每日整包重新賦值」全域
+真的會在過日時換成新物件——不需要第二天的真實資料，模擬連續兩個 `ingest()`
+呼叫（第二天只是日期往後一天，換日重載機制在讀 tick 檔「之前」就會觸發）。
+已知限制：`UNI5` 兩次都算出 `None` 時 `id()` 判不出來（`None` 是 CPython 單例），
+工具會標成「N/A」不算失敗，不要誤讀成 bug。
+
 ## 踩過的坑：fixture 會被自己跑過的結果污染
 
 第一版工具直接把 `GOLDENSTOCKS_DATA_DIR` 指向 canonical fixture，結果 `smoke_test.py`
