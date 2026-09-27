@@ -1374,6 +1374,39 @@ CREATE TABLE IF NOT EXISTS stock_close_adjusted (
     synced_at TEXT NOT NULL,
     PRIMARY KEY (stock_id, trade_date, source)
 );
+
+-- 2026-09-27：XQ全球贏家風格欄位補算（jack 交辦，見 scripts/compute_xq_style_metrics.py
+-- docstring 逐欄公式/來源）。範圍僅 biglot dashboard 監控宇宙，非全市場。
+CREATE TABLE IF NOT EXISTS stock_xq_style_daily (
+    stock_id TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    turnover_pct REAL,              -- 換手率% = 當日量(股)÷已發行股數×100
+    ret_1w_pct REAL,                -- 一週% = close(t)/close(t-5)−1，按交易日非日曆日
+    sma20 REAL,
+    ema20 REAL,
+    ema_sma20_diff REAL,            -- EMA-SMA(20日)
+    macd_dif REAL,                  -- EMA12−EMA26
+    macd_dea REAL,                  -- DIF的9日EMA
+    macd_hist REAL,                 -- (DIF−DEA)×2，台股慣例乘2
+    hist_vol20_pct REAL,            -- 20日日報酬標準差×sqrt(252)×100，年化
+    concentration_pct REAL,         -- 集中度% = 當日三大法人合計買賣超(股)÷當日成交量(股)×100（2026-09-27 jack 給的精確公式）
+    foreign_pct REAL,               -- 外資買賣超比% = foreign_net÷當日量×100（類推自集中度%公式，非使用者逐一確認）
+    trust_pct REAL,                 -- 投信買賣超比%，同上類推
+    dealer_pct REAL,                -- 自營商買賣超比%，同上類推
+    sbl_sell_chg_1d REAL,           -- 借券賣出餘額增減（stock_short_interest_daily.sbl_balance差分，非stock_lending_daily）
+    sbl_sell_chg_5d REAL,           -- 5日借券賣出餘額增減
+    big800_holder_pct REAL,         -- 800大戶持股% = stock_holding_dispersion_weekly中level_lo>=800001各級percent加總，PIT取≤當日最近一週
+    big800_holder_pct_chg_w REAL,   -- 800大戶持股比%(週) = 與前一週同一彙總值的差
+    retail10_holder_pct REAL,       -- 10散戶持股% = level_lo<=10000各級percent加總
+    retail10_holder_pct_chg_w REAL, -- 10散戶持股比%(週)
+    holder_asof_week TEXT,          -- 引用的集保股權分散表週別（PIT追溯用）
+    source TEXT NOT NULL DEFAULT 'computed',
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (stock_id, trade_date, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_xq_style_date
+    ON stock_xq_style_daily (trade_date, stock_id);
 """
 
 

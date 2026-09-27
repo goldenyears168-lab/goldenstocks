@@ -77,6 +77,7 @@ _apply_sync_profile() {
   case "${SYNC_PROFILE:-}" in
     slim)
       export RUN_RRG_UNIVERSE_CLOSE=0
+      export RUN_XQ_STYLE_METRICS=0
       export RUN_RRG_MONO_DAILY=0
       export RUN_RRG_MONO_SWAP_ACCEL_DAILY=0
       export RUN_RRG_IMPROVING_WATCH=0
@@ -448,6 +449,14 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
   else
     log_line "--- RRG universe close snapshot ---"
     log_line "  SKIP（RUN_RRG_UNIVERSE_CLOSE=0）"
+  fi
+
+  if [[ "${RUN_XQ_STYLE_METRICS:-1}" != "0" ]]; then
+    run_step_if_pipeline_enabled "xq_style_metrics" "XQ style metrics (biglot dashboard)" \
+      "$PYTHON" "${ROOT}/scripts/research/compute_xq_style_metrics.py" || true
+  else
+    log_line "--- XQ style metrics (biglot dashboard) ---"
+    log_line "  SKIP（RUN_XQ_STYLE_METRICS=0）"
   fi
 
   if [[ "${RUN_RRG_MONO_DAILY:-1}" != "0" ]]; then

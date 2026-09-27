@@ -68,6 +68,11 @@ except Exception:  # noqa: BLE001 -- 資料檔缺失不影響儀表板
     STOCK_INFO, STOCK_BLOCKS = {}, {}
     def _stock_tip(_sid):
         return ""
+# 員工平均營業額(2026-09-27 jack 交辦):暫時沿用 XQ 截圖數字,FinMind查無員工人數對應dataset。
+try:
+    from xq_manual_metrics import EMPLOYEE_REVENUE_XQ, EMPLOYEE_REVENUE_ASOF
+except Exception:  # noqa: BLE001
+    EMPLOYEE_REVENUE_XQ, EMPLOYEE_REVENUE_ASOF = {}, ""
 # 高波動分數 = 20日日均振幅%((高−低)/收) ,來自 calib;越高越適合本系統的日內波段
 AMP20 = {r["sid"]: r.get("amp20") for r in _cal["universe"]}
 PREOPEN: dict = {}   # 盤前試撮快照 sid->{px,bid,ask,size,t}(collector preopen_*.json,08:30~09:00)
@@ -293,13 +298,15 @@ _CLUSTERS = [
     ("晶圓代工", ["2303", "6770"]),
     ("記憶體", ["2344", "2408", "2337", "3006"]),
     ("封測", ["2449", "6147", "3374"]),
+    ("半導體測試設備/探針卡", ["6223"]),
     ("化合物半導體", ["3105", "2455"]),
     ("被動元件", ["2327", "2492", "6173", "3042"]),
-    ("CCL銅箔基板", ["6213", "6274"]),
+    ("CCL銅箔基板", ["6213", "6274", "2383"]),
     ("ABF載板", ["8046", "3189", "3037"]),
     ("PCB/載板", ["2368", "4958", "8039", "8358"]),
-    ("散熱", ["3324"]),
-    ("光學", ["3406"]),
+    ("散熱", ["3324", "3653", "3017"]),
+    ("光學", ["3406", "3008"]),
+    ("光通訊/光模組", ["3081"]),
     ("功率二極體", ["2481"]),
     ("電源光電", ["2301"]),
     ("系統品牌", ["2357"]),
@@ -553,6 +560,37 @@ def _load_atr_state(n_bars=260):
 
 
 ATR_STATE = _load_atr_state()
+
+
+def _load_xq_style():
+    """XQ全球贏家風格欄位(2026-09-27 jack 交辦):讀 compute_xq_style_metrics.py 算好寫進
+    stock_xq_style_daily 的最新一列。純展示欄，不進分數。逐欄公式/來源見該腳本 docstring。"""
+    out = {}
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        for sid in NAMES:
+            row = conn.execute(
+                "SELECT trade_date, turnover_pct, ret_1w_pct, sma20, ema20, ema_sma20_diff, "
+                "macd_dif, macd_dea, macd_hist, hist_vol20_pct, concentration_pct, "
+                "foreign_pct, trust_pct, dealer_pct, sbl_sell_chg_1d, sbl_sell_chg_5d, "
+                "big800_holder_pct, big800_holder_pct_chg_w, retail10_holder_pct, "
+                "retail10_holder_pct_chg_w, holder_asof_week "
+                "FROM stock_xq_style_daily WHERE stock_id=? ORDER BY trade_date DESC LIMIT 1",
+                (sid,)).fetchone()
+            if row:
+                keys = ("asof", "turnover_pct", "ret_1w_pct", "sma20", "ema20", "ema_sma20_diff",
+                        "macd_dif", "macd_dea", "macd_hist", "hist_vol20_pct", "concentration_pct",
+                        "foreign_pct", "trust_pct", "dealer_pct", "sbl_sell_chg_1d", "sbl_sell_chg_5d",
+                        "big800_holder_pct", "big800_holder_pct_chg_w", "retail10_holder_pct",
+                        "retail10_holder_pct_chg_w", "holder_asof_week")
+                out[sid] = dict(zip(keys, row))
+        conn.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"[xq_style] load failed: {e}", file=sys.stderr)
+    return out
+
+
+XQ_STYLE = _load_xq_style()
 
 # ---- 融資/借券變化幅度 → 波動風險分數（非方向訊號，只預測盤中振幅，多空都適用）------
 # 方法論：scripts/research/margin_lending_spike_next_day_amplitude.py（45檔高波動宇宙
@@ -1075,11 +1113,12 @@ def ingest():
         ST.__init__()
         ST.date = today
         _refresh_vol_risk_if_needed()
-        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS, ATR_STATE
+        global DAILY_TREND, KEY_LINE, PE_TABLE, PE_PEERS, PE_GEN, PE_EPS, ATR_STATE, XQ_STYLE
         DAILY_TREND = _load_daily_trend()
         KEY_LINE = _load_key_line()
         PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
         ATR_STATE = _load_atr_state()
+        XQ_STYLE = _load_xq_style()
         PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
     raw = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"raw_{today}.jsonl"
     if raw.exists():
@@ -3865,7 +3904,7 @@ def render_stock(sid, day):
             f"<span style='font-size:17px;font-weight:700;margin-left:12px'>{sid} {name}</span>"
             f"<span class='cat' style='margin-left:6px'>{cat}{ampx}</span>"
             f"{'' if live else ' · <span class=warnv>歷史回放 '+day+'</span>'}</div>"
-            f"{_stock_info_block(sid)}{_pe_peer_block(sid)}"
+            f"{_stock_info_block(sid)}{_pe_peer_block(sid)}{_xq_style_block(sid)}"
             f"<div id='sd'>{frag}</div>{js}</body></html>")
 
 
@@ -3897,6 +3936,63 @@ def _pe_peer_block(sid):
             "border-bottom:1px solid #21262d}.petbl th:nth-child(2),.petbl td:nth-child(2){text-align:left}"
             ".petbl tr.self{background:rgba(31,111,235,0.25);font-weight:700}"
             ".pepeer .penote{color:#8b949e;font-size:11px;margin-top:4px}</style>")
+
+
+def _xq_style_block(sid):
+    """XQ全球贏家風格欄位(2026-09-27 jack 交辦):盤後算好的技術/籌碼衍生欄,見
+    compute_xq_style_metrics.py docstring 逐欄公式。純展示,不進分數。"""
+    d = XQ_STYLE.get(sid)
+    emp_rev = EMPLOYEE_REVENUE_XQ.get(sid)
+    if not d and emp_rev is None:
+        return ""
+    f = lambda v, u="": f"{v:+.2f}{u}" if v is not None else "—"  # noqa: E731
+    fa = lambda v, u="": f"{v:.2f}{u}" if v is not None else "—"  # noqa: E731
+    asof = d.get("asof") if d else None
+    holder_wk = d.get("holder_asof_week") if d else None
+    # 三種更新頻率各自的「更新於」標籤(2026-09-27 jack 交辦:每欄要標最後更新時間,
+    # 因為更新頻率不同——日頻技術/籌碼欄跟著 stock_daily_bars 收盤走、持股分散表是週頻、
+    # 員工平均營業額是人工貼的靜態值,三者不能共用同一個時間戳,否則會誤導成「都是即時」)
+    daily_tag = f"日頻·收盤{html_mod.escape(asof)}" if asof else "—"
+    weekly_tag = f"週頻·集保{html_mod.escape(holder_wk)}" if holder_wk else "—"
+    static_tag = f"人工·{html_mod.escape(EMPLOYEE_REVENUE_ASOF)}"
+    items = []
+    if d:
+        items = [
+            ("換手率%", fa(d["turnover_pct"], "%"), daily_tag),
+            ("一週%", f(d["ret_1w_pct"], "%"), daily_tag),
+            ("SMA(20日)", fa(d["sma20"]), daily_tag),
+            ("EMA-SMA(20日)", f(d["ema_sma20_diff"]), daily_tag),
+            ("MACD(DIF/DEA/HIST)", f"{fa(d['macd_dif'])}/{fa(d['macd_dea'])}/{fa(d['macd_hist'])}", daily_tag),
+            ("歷史波動率%(20日年化)", fa(d["hist_vol20_pct"], "%"), daily_tag),
+            ("集中度%(主力買賣超/當日量)", f(d["concentration_pct"], "%"), daily_tag),
+            ("外資/投信/自營買賣超比%", f"{f(d['foreign_pct'])}/{f(d['trust_pct'])}/{f(d['dealer_pct'])}%", daily_tag),
+            ("借券賣出餘額增減(1日/5日)", f"{f(d['sbl_sell_chg_1d'])}/{f(d['sbl_sell_chg_5d'])}", daily_tag),
+            ("800大戶持股%(週變化)", f"{fa(d['big800_holder_pct'], '%')}({f(d['big800_holder_pct_chg_w'])})", weekly_tag),
+            ("10張以下散戶持股%(週變化)", f"{fa(d['retail10_holder_pct'], '%')}({f(d['retail10_holder_pct_chg_w'])})", weekly_tag),
+        ]
+    trs = "".join(f"<tr><td class='k'>{html_mod.escape(k)}</td><td>{v}</td>"
+                  f"<td class='asof'>{tag}</td></tr>" for k, v, tag in items)
+    emp_row = (f"<tr><td class='k'>員工平均營業額</td><td>{emp_rev:.2f}(未自算)</td>"
+               f"<td class='asof'>{static_tag}</td></tr>" if emp_rev is not None else "")
+    return (f"<div class='xqstyle'><div class='xqhead'>XQ全球贏家風格欄位</div>"
+            f"<table class='xqtbl'><thead><tr><th></th><th>值</th><th>更新於</th></tr></thead>"
+            f"<tbody>{trs}{emp_row}</tbody></table>"
+            "<div class='xqnote'>盤後批次算(scripts/research/compute_xq_style_metrics.py),不進分數。"
+            "⚠ 目前<b>沒有排程自動更新</b>——這支腳本要手動重跑才會推進日頻/週頻欄的日期"
+            "(compute_xq_style_metrics.py 沒有掛進 daily_sync.sh 或 launchd,job_registry.yaml"
+            "／crontab 皆查無對應項目);上面每列「更新於」的日期就是最後一次手動執行時算到的資料,"
+            "並非當下即時。集中度%=三大法人合計買賣超÷當日成交量×100(jack 2026-09-27 確認公式)；"
+            "外資/投信/自營買賣超比%為同一慣例類推,分母是否與XQ相同未逐一驗證；"
+            "借券賣出餘額用 sbl_balance(TWT93U真放空口徑),非融券/借券餘額(TWT72U)；"
+            "800大戶/10張以下散戶持股%取自TWSE集保股權分散表,PIT只用已公布最近一週；"
+            "員工平均營業額暫沿用XQ截圖數字,FinMind查無員工人數對應資料源，未自算。</div></div>"
+            "<style>.xqstyle{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;"
+            "margin-bottom:8px;font-size:12px}.xqstyle .xqhead{color:#79c0ff;font-weight:700;margin-bottom:4px}"
+            ".xqtbl{border-collapse:collapse}.xqtbl td,.xqtbl th{padding:1px 10px 1px 0;text-align:left}"
+            ".xqtbl th{color:#8b949e;font-weight:400;font-size:10px}"
+            ".xqtbl td.k{color:#8b949e;white-space:nowrap}"
+            ".xqtbl td.asof{color:#6e7681;font-size:10px;white-space:nowrap}"
+            ".xqstyle .xqnote{color:#8b949e;font-size:11px;margin-top:4px;line-height:1.5}</style>")
 
 
 def _stock_info_block(sid):

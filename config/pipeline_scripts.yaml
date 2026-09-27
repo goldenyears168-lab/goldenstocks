@@ -13,6 +13,13 @@ scripts:
     module: src/rrg_universe_snapshot.py
     env_flag: RUN_RRG_UNIVERSE_CLOSE
 
+  compute_xq_style_metrics:
+    path: scripts/research/compute_xq_style_metrics.py
+    layer: pipeline
+    pipeline: daily_close
+    node: xq_style_metrics
+    env_flag: RUN_XQ_STYLE_METRICS
+
   run_vcp_funnel_close:
     path: scripts/run_vcp_funnel_close.py
     layer: pipeline

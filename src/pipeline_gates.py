@@ -22,6 +22,13 @@ _DAILY_SYNC_STEPS: dict[str, dict[str, Any]] = {
         "run_env": "RUN_RRG_UNIVERSE_CLOSE",
         "run_default": "1",
     },
+    # Infra, not strategy-owned: writes stock_xq_style_daily(換手率/集中度/MACD/800大戶
+    # 持股%等)供 biglot_dashboard.py(:8771)個股詳情頁展示,純參考不進分數,不下單。
+    "xq_style_metrics": {
+        "strategy_ids": (),
+        "run_env": "RUN_XQ_STYLE_METRICS",
+        "run_default": "1",
+    },
     "rrg_mono_daily": {
         "strategy_ids": ("rrg-mono-hold7",),
         "run_env": "RUN_RRG_MONO_DAILY",

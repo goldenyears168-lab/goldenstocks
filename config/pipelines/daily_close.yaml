@@ -95,6 +95,16 @@ phases:
           - constituent stock_daily_bars for as_of（建議 RUN_STOCK_MARKET_SYNC=1）
         fail_kind: aux
 
+      - id: xq_style_metrics
+        label: XQ style metrics for biglot dashboard (:8771 個股詳情頁,純展示不進分數)
+        module: scripts/research/compute_xq_style_metrics.py
+        run_script: scripts/research/compute_xq_style_metrics.py
+        env_flag: RUN_XQ_STYLE_METRICS
+        env_default: "1"
+        requires:
+          - constituent stock_daily_bars/stock_institutional_daily for as_of（建議 RUN_STOCK_MARKET_SYNC=1）
+        fail_kind: aux
+
       - id: rrg_mono_daily
         label: RRG mono daily brief + slot confirm（併入 16:30 daily_sync）
         module: src/rrg_mono_daily_brief.py
