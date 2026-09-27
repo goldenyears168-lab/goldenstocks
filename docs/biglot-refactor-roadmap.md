@@ -161,10 +161,36 @@
   這 12 點目前**維持現狀不動**——是否該統一是產品/研究決策，不是重構該擅自決定的事，
   已完整記錄在這裡等 jack 之後決定。
 
-  **後續要做的（下次對話）**：`biglot_dashboard.py` 目前約 2862 行，`render()`/`ingest()`/
-  `http_server` composition root 等大型函式尚未拆分，對應原始草案 Phase 4-8，屬於下一階段——
-  這些函式互相呼叫、耦合度遠高於前三批搬移的葉節點/次順位函式，需要更謹慎的拆分策略
-  （不能再用「整個函式剪貼」的簡單手法）。
+  **第四批（已完成 2026-09-27，8 agent 平行處理）**：重新跑 dep_graph 發現前三批之後，
+  「零呼叫其他頂層函式」候選其實還有 18 個（不是原本以為的 0 個——這些函式呼叫的是
+  「已經搬走的函式」，不是還留在 biglot_dashboard.py 的函式，dep_graph 的呼叫圖只認
+  當下檔案裡的頂層定義，這批 agent 呼叫的都是前幾批搬走的函式，所以仍然安全）。
+  8 個 agent 平行處理，4 個擴充既有檔案（`utils.py`+3、`user_state.py`+4、
+  `paper_trading.py`+1、`reference_loaders.py`+1）、4 個建新檔案（`iceberg.py`、
+  `tx_panel.py`、`day_views.py`+5、`score_rows.py`）。
+
+  這批第一次出現「寫」危險全域的函式：`_refresh_vol_risk_if_needed` 原本
+  `global VOLRISK, VOLRISK_DATE` 後直接賦值，搬移後改成
+  `biglot_dashboard.VOLRISK = ...` 屬性賦值（不再宣告 `global`）——agent 正確做對，
+  額外手動驗證：模擬「需要刷新」狀態呼叫一次，確認寫入真的反映回
+  `biglot_dashboard` 自己的命名空間（`id()` 有換、值有更新、42 筆資料寫入正確），
+  第二次呼叫正確判斷「已是當天不用再刷新」而回傳 False。
+
+  驗證：golden-diff 全42檔零diff、smoke-test 14/14、check_prod_launch 通過，
+  額外針對 `_oos_update_at_close`（讀 `DAILY_TREND`/`UNI5`）跑連續兩天過日驗證確認
+  不會 stale。`biglot_dashboard.py` 2282 行。
+
+  **後續要做的（下次對話）**：重新列出目前仍留在 `biglot_dashboard.py` 的 16 個定義：
+  `class S`、`ingest()`、`_px_class`、`_cause_tags`、`_paper_update`、`_paper_settle`、
+  `render()`（約 963 行，全檔案最大）、`_stock_series`/`_stock_series_locked`、
+  `_svg_detail`、`render_stock_frag`、`_svg_mini`、`render_grid_frag`、`render_stock`、
+  `class H`（HTTP composition root）、`loop()`。這些**互相呼叫**（`render()` 呼叫
+  `_cause_tags`/`_px_class`；`ingest()` 呼叫 `_iceberg_update`/`_hold_update` 等已搬走
+  的函式，但也呼叫還留著的 `_paper_update`；`H`/`loop()` 是最外層組合根），跟前四批
+  「零呼叫、可獨立剪貼」的函式性質完全不同——尤其 `render()` 900+ 行需要先做設計
+  （怎麼拆成 `_compute_rows()`/`_assemble_html()` 兩段），不是機械式搬移，**不適合
+  用同一套多agent平行剪貼手法**，需要單線程、有整體理解的拆分策略，對應原始草案
+  Phase 4-8。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用

@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import biglot_dashboard
+
 
 def _tick_sz(p):
     return (0.01 if p < 10 else 0.05 if p < 50 else 0.1 if p < 100
@@ -38,3 +40,23 @@ def _b30n(r):
 
 def _b5n(r):
     return (r["big5_r"] / r["tot5_r"] * 100) if (r.get("big5_r") is not None and r.get("tot5_r")) else None
+
+
+def _limits(pc):
+    """台股漲跌停價(±10%,對齊 tick):漲停=不超過+10%的最大tick、跌停=不低於−10%的最小tick。"""
+    import math
+    up, dn = pc * 1.1, pc * 0.9
+    return math.floor(up / _tick_sz(up)) * _tick_sz(up), math.ceil(dn / _tick_sz(dn)) * _tick_sz(dn)
+
+
+def _limit_down(y: float) -> float:
+    """跌停價 = 前收 ×0.9 無條件進位到升降單位(TWSE 規則)。"""
+    import math
+    raw = y * 0.9; t = _tick_sz(raw)  # 原本重複定義成 _stock_tick,2026-09-27 稽核後合併
+    return round(math.ceil(raw / t - 1e-9) * t, 2)
+
+
+def _in_market():
+    n = biglot_dashboard.datetime.now(biglot_dashboard.TZ)
+    # 08:30 起 = 期貨/現貨盤前試撮(2026-09-24:launchd 也提前到 08:30),試撮價要即時跳動
+    return n.weekday() < 5 and "08:30" <= n.strftime("%H:%M") <= "13:35"

@@ -10,9 +10,9 @@
 `DATA_DIR`來自 `stock_db`（不是 `biglot_dashboard.py` 自己定義的名字），直接從 `stock_db` import。
 
 這批函式（`_paper_blank`/`_paper_log`/`_paper_save`/`_paper_summary`/`_paper_fills`）是純
-load/save/log/彙總 bookkeeping，經依賴分析確認零呼叫其他頂層函式——不含 `_paper_update`/
-`_paper_close`/`_paper_settle` 那幾支真正驅動掛單/成交/收盤結算狀態機的函式（那些還留在
-`biglot_dashboard.py`，本次搬移範圍不含）。
+load/save/log/彙總 bookkeeping，經依賴分析確認零呼叫其他頂層函式。`_paper_close`（收單結算，
+呼叫本檔案內的 `_paper_log`）後續一併搬進本檔案——不含 `_paper_update`/`_paper_settle` 那兩支
+真正驅動掛單/成交狀態機的函式（那些還留在 `biglot_dashboard.py`，本次搬移範圍不含）。
 """
 from __future__ import annotations
 
@@ -57,6 +57,14 @@ def _paper_fills(sid, t_post, limit, side):
             if px > limit and ts_s is None: ts_s = ts
         if ts_s is not None and ts_o is not None: break
     return ts_s, ts_o
+
+
+def _paper_close(book, sid, pos, exit_px, how, now):
+    g = (exit_px / pos["entry"] - 1) * 1e4; net = g - biglot_dashboard.PAPER_COST
+    rec = {"ev": "close", "book": book, "sid": sid, "entry": pos["entry"], "exit": exit_px, "how": how, "reason": (pos.get("sell") or {}).get("reason"),
+           "gross_bps": g, "net_bps": net, "ntd_net": net / 1e4 * pos["entry"] * 2000, "hold_min": (now - pos["t_fill"]) / 60,
+           "strict_entry": pos["strict"], "strict_exit": how in ("買一", "收盤") or bool(pos.get("sell_strict")), "sig": pos["sig"]}
+    biglot_dashboard.PAPER["closed"][book].append(rec); _paper_log(rec); biglot_dashboard.PAPER["pos"][book].pop(sid, None)
 
 
 def _paper_summary():

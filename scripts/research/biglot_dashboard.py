@@ -39,7 +39,9 @@ from source_dedup import dedup_query  # noqa: E402
 from compute_xq_style_metrics import _load_holder_tiers, _load_beta  # noqa: E402
 # 2026-09-27 重構 Phase 1:純葉節點抽離(見 docs/biglot-refactor-roadmap.md),
 # 下面 8 個函式本體已搬到 biglot/ package,這裡只留 import 綁定同一個名字。
-from biglot.utils import _tick_sz, bucket_key, _pctile_rank, _par30, _b30n, _b5n  # noqa: E402
+from biglot.utils import (  # noqa: E402
+    _tick_sz, bucket_key, _pctile_rank, _par30, _b30n, _b5n, _in_market, _limits, _limit_down,
+)
 from biglot.html_fragments import _book_table, _wrt_td  # noqa: E402
 # _xq_style_block 讀 XQ_STYLE/VIXTWN(每日整包重新賦值的全域，見 biglot/xq_style.py
 # 檔頭說明)，該模組用 `import biglot_dashboard` + 屬性存取避免 stale reference，
@@ -51,13 +53,14 @@ from biglot.xq_style import _xq_style_block  # noqa: E402
 from biglot.reference_loaders import (  # noqa: E402
     _load_daily_trend, _load_key_line, _load_atr_state, _load_prev_close_db,
     _load_vol_risk_flags, _load_hist, _load_etf981_holdings, _load_pe_peer,
-    _load_vixtwn, _load_xq_style, _load_snap, _snap_dates,
+    _load_vixtwn, _load_xq_style, _load_snap, _snap_dates, _refresh_vol_risk_if_needed,
 )
 from biglot.user_state import (  # noqa: E402
     _load_notes, _save_stock_note, _stock_note_td, _hold_log, _hold_save, _oos_load,
+    _hold_toggle, _hold_update, _oos_summary, _oos_update_at_close,
 )
 from biglot.paper_trading import (  # noqa: E402
-    _paper_blank, _paper_log, _paper_save, _paper_summary, _paper_fills,
+    _paper_blank, _paper_log, _paper_save, _paper_summary, _paper_fills, _paper_close,
 )
 from biglot.mini_futures import _ingest_mini_fut, _mini_stats, _mini_td  # noqa: E402
 from biglot.scoring_support import (  # noqa: E402
@@ -69,6 +72,16 @@ from biglot.stock_meta import _stock_info_block, render_help  # noqa: E402
 from biglot.pe_and_shadow import _pe_peer_block, _shadow_triple  # noqa: E402
 from biglot.score_v2 import _score_v2  # noqa: E402
 from biglot.trade_ingest import _ingest_trade, _stk_trade  # noqa: E402
+# 2026-09-27 重構第四批(多agent分工，見 docs/biglot-refactor-roadmap.md)：同上，
+# 一律 import biglot_dashboard 模組本身 + 屬性存取。_refresh_vol_risk_if_needed
+# 是這批唯一「寫」危險全域(VOLRISK/VOLRISK_DATE)的函式，改成
+# biglot_dashboard.VOLRISK = ... 屬性賦值，不再用 global 陳述式。
+from biglot.iceberg import _iceberg_update  # noqa: E402
+from biglot.tx_panel import _tx_panel  # noqa: E402
+from biglot.day_views import (  # noqa: E402
+    render_history, render_day, snapshot_day, _mops_load, _prev_mops_day,
+)
+from biglot.score_rows import _score_rows  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -154,114 +167,6 @@ except Exception:  # noqa: BLE001
 HOLD_BAD = ("散戶虛拉", "噴後過熱", "急跌·竭盡∧散戶接")
 
 
-def _hold_toggle(sid: str, action: str, px):
-    now = time.time()
-    if action == "open" and sid not in HOLDS:
-        HOLDS[sid] = {"t0": now, "hm": datetime.now(TZ).strftime("%H:%M:%S"), "px0": px, "low_since": None, "fired": []}
-        _hold_log({"ev": "open", "sid": sid, "px0": px})
-    elif action == "close" and sid in HOLDS:
-        h = HOLDS.pop(sid); pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
-        _hold_log({"ev": "close", "sid": sid, "px0": h.get("px0"), "px": px, "pnl_bps": pnl, "hold_min": (now - h["t0"]) / 60, "reason": "manual", "fired": h.get("fired", [])})
-    _hold_save()
-
-
-def _hold_update(rows):
-    """每輪:持倉分=當下 V2.5;分數≤0 連續 30 秒 / 壞標籤 / 60 分到期 → 出場旗標;獲利≥50 提示。首次觸發落地。"""
-    now = time.time()
-    for r in rows:
-        h = HOLDS.get(r["sid"])
-        if not h:
-            r["hold"] = None; continue
-        px = r.get("px"); sc = r.get("sc_v2"); items = [k for k, _ in (r.get("sc_v2_items") or [])]
-        pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
-        hold_min = (now - h["t0"]) / 60
-        if sc is not None and sc <= 0:
-            if h.get("low_since") is None: h["low_since"] = now
-        else:
-            h["low_since"] = None
-        flags = []
-        if h.get("low_since") is not None and now - h["low_since"] >= 30: flags.append("分數≤0·30秒")
-        bad = [k for k in items if any(k.startswith(b) for b in HOLD_BAD)]
-        if bad: flags.append("壞標籤:" + "/".join(x.split("(")[0] for x in bad))
-        if hold_min >= 60: flags.append("到期60分")
-        hint = "停利+50" if (pnl is not None and pnl >= 50) else ""
-        for fl in flags:
-            key = fl.split(":")[0]
-            if key not in h.setdefault("fired", []):
-                h["fired"].append(key); _hold_log({"ev": "flag", "sid": r["sid"], "flag": fl, "pnl_bps": pnl, "hold_min": hold_min, "score": sc})
-        r["hold"] = {"hm": h["hm"], "px0": h.get("px0"), "pnl": pnl, "min": hold_min, "score": sc, "flags": flags, "hint": hint,
-                     "low_s": (now - h["low_since"]) if h.get("low_since") is not None else 0}
-
-
-def _tx_panel(now):
-    """頂部右側:台指近月即時價 + 對昨結 + 5分/30分 bps + 1分 z(影子帳砍尾同口徑)+ 10 秒線 SVG。無資料回空字串。"""
-    t, px = TX_SER["t"], TX_SER["px"]
-    tx = FUT_PX.get("TXF") if isinstance(FUT_PX.get("TXF"), dict) else None
-    if not t or not tx or not tx.get("px"):
-        return ""
-    last = float(tx["px"]); fpc = tx.get("fpc"); nts = t[-1]
-    import bisect as _bs
-    def _at(sec):
-        i = _bs.bisect_right(t, nts - sec) - 1
-        return px[i] if i >= 0 else None
-    p5, p30 = _at(300), _at(1800)
-    b5 = (last / p5 - 1) * 1e4 if p5 else None
-    b30 = (last / p30 - 1) * 1e4 if p30 else None
-    # 1 分 z:30 秒格點的 1 分報酬歷史 σ(與 zcrash_shadow 相同)
-    z = None
-    if len(t) > 12:
-        r1 = []
-        g = t[0] + 60
-        while g <= nts:
-            i = _bs.bisect_right(t, g) - 1; j = _bs.bisect_right(t, g - 60) - 1
-            if i >= 0 and j >= 0 and px[j]:
-                r1.append(px[i] / px[j] - 1)
-            g += 30
-        if len(r1) >= 10:
-            m = sum(r1) / len(r1); sd = (sum((x - m) ** 2 for x in r1) / len(r1)) ** 0.5
-            p60 = _at(60)
-            if sd > 0 and p60:
-                z = (last / p60 - 1) / sd
-    chg = (last / fpc - 1) * 100 if fpc else None
-    TX_LAST["z"] = z
-    cls = "up" if (chg or 0) > 0 else ("dn" if (chg or 0) < 0 else "")
-    zcls = " style='background:#6e1a1a;color:#ffb3b3;padding:0 4px'" if (z is not None and z <= -1) else (
-        " style='background:#1a4d2e;color:#b3ffcc;padding:0 4px'" if (z is not None and z >= 1) else "")
-    # SVG:固定 08:45→13:45 時間軸,y 含昨結
-    W, H, L, R = 470, 250, 4, 4          # 頂部說明文字隱藏後,圖高拉到 250
-    t0 = datetime.fromisoformat(f"{TX_SER['day']}T08:45:00+08:00").timestamp(); t1 = t0 + 5 * 3600
-    ys = px + ([fpc] if fpc else [])
-    lo, hi = min(ys), max(ys)
-    if hi - lo < 1e-9:
-        hi = lo + 1
-    def X(ts): return L + (ts - t0) / (t1 - t0) * (W - L - R)
-    def Y(v): return 6 + (hi - v) / (hi - lo) * (H - 12)
-    step = max(1, len(t) // 600)
-    samp = list(zip(t, px))[::step]
-    pts = " ".join(f"{X(a):.1f},{Y(b):.1f}" for a, b in samp)
-    # hover 用:每個取樣點的 (x 像素, y 像素, 時間, 價),前端找最近 x 顯示
-    hov = json.dumps([[round(X(a), 1), round(Y(b), 1), datetime.fromtimestamp(a, TZ).strftime("%H:%M:%S"), b] for a, b in samp])
-    col = "#ff7b72" if (chg or 0) > 0 else "#3fb950"
-    svg = (f"<svg width='{W}' height='{H}' style='display:block' data-pts='{hov}'>"
-           + (f"<line x1='{L}' y1='{Y(fpc):.1f}' x2='{W-R}' y2='{Y(fpc):.1f}' stroke='#8b949e' stroke-dasharray='3,3'/>" if fpc else "")
-           + f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.2'/>"
-           + f"<circle cx='{X(nts):.1f}' cy='{Y(last):.1f}' r='2.5' fill='{col}'/>"
-           + _agg_lines(t0, t1, W, H, L, R)
-           + f"<text x='{L}' y='10' font-size='9' fill='#8b949e'>{hi:,.0f}</text>"
-           + f"<text x='{L}' y='{H-1}' font-size='9' fill='#8b949e'>{lo:,.0f}</text></svg>")
-    f = lambda v: f"{v:+.0f}" if v is not None else "—"  # noqa: E731
-    fp = lambda v: f"{v/100:+.2f}%" if v is not None else "—"  # noqa: E731  # 統一用 %
-    # 左文右圖:文字欄固定 200px 直排,圖吃剩餘寬度、高度拉滿
-    left = (f"<div><b>台指近月</b> <span class='dim'>{tx.get('t', '')}</span></div>"
-            f"<div><span class='{cls}' style='font-size:24px;font-weight:700'>{last:,.0f}</span></div>"
-            + (f"<div class='{cls}'>{last - fpc:+,.0f} ({chg:+.2f}%) <span class='dim'>對昨結 {fpc:,.0f}</span></div>" if fpc else ""))
-    if z is not None:
-        left += (f"<div>5分 <b>{fp(b5)}</b> · 30分 <b>{fp(b30)}</b></div>"
-                 f"<div>1分z <b{zcls}>{z:+.1f}</b>"
-                 + (f" · 買{tx.get('bid')}/賣{tx.get('ask')}" if tx.get("bid") else "") + "</div>"
-                 "<div class='dim' style='font-size:10px;line-height:1.3'>校準:z≤−1 紅=急殺做多砍尾中<br>z≥+1 綠=急拉做空砍尾中</div>")
-    return (f"<div id='txsrc' hidden><div style='display:flex;gap:10px;align-items:stretch'>"
-            f"<div style='flex:0 0 200px'>{left}</div><div style='flex:1 1 auto'>{svg}</div></div></div>")
 # 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
 # 產業交界畫粗線(band)。查無的股票排最後。
 _CLUSTERS = [
@@ -353,139 +258,8 @@ VOLRISK_TIERS = ((92, "🌊🌊"), (86, "🌊"), (80, ""))  # 第三級只上色
 VOLRISK, VOLRISK_DATE = {}, None
 
 
-def _refresh_vol_risk_if_needed() -> bool:
-    """依實際日曆日期(非 ST.date)刷新——T-1 籌碼資料跟有沒有開盤無關，不该被
-    ingest()/render() 只在盤中才跑的邏輯卡住,否則開盤前使用者看到的都是前一個
-    交易日收盤時算出的舊分數(2026-09-21 發現:盤前完全看不到當天該有的分數)。
-    回傳是否真的重算了,讓呼叫端決定要不要順便重繪一次盤後定格頁面。
-    """
-    global VOLRISK, VOLRISK_DATE
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-    if VOLRISK_DATE == today:
-        return False
-    try:
-        VOLRISK = _load_vol_risk_flags()
-    except Exception:
-        VOLRISK = {}
-    VOLRISK_DATE = today
-    return True
-
 OOS_FILE = DATA_DIR.parent / "cache" / "biglot_live_watch" / "oos_scoreboard.json"
 
-
-def _oos_summary():
-    o = _oos_load()
-    parts = []
-    it = o.get("intraday", [])
-    if it:
-        rets = [x["ret"] for x in it]
-        parts.append(f"💎終版 {len(it)}筆 均{sum(rets)/len(rets):+.0f}bps "
-                     f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
-    ov = o.get("overnight", [])
-    if ov:
-        rets = [x["ret"] for x in ov]
-        parts.append(f"隔夜 {len(ov)}筆 均{sum(rets)/len(rets):+.0f}bps "
-                     f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
-        # 影子分層:只留日線站上5日線(回測+63.5bps)——並行OOS,不改選股
-        ma = [x["ret"] for x in ov if x.get("above_ma5") is True]
-        if ma:
-            parts.append(f"↳日線多{len(ma)}筆 均{sum(ma)/len(ma):+.0f}bps "
-                         f"勝{sum(1 for x in ma if x > 0)}/{len(ma)}")
-    sh = o.get("overnight_short", [])
-    if sh:
-        rets = [x["ret"] for x in sh]
-        parts.append(f"隔夜空 {len(sh)}筆 均{sum(rets)/len(rets):+.0f}bps "
-                     f"勝{sum(1 for x in rets if x > 0)}/{len(rets)}")
-        ms = [x["ret"] for x in sh if x.get("above_ma5") is False]
-        if ms:
-            parts.append(f"↳日線空{len(ms)}筆 均{sum(ms)/len(ms):+.0f}bps "
-                         f"勝{sum(1 for x in ms if x > 0)}/{len(ms)}")
-    pend = len(o.get("overnight_pending", []))
-    if pend:
-        parts.append(f"待結算{pend}")
-    return " | ".join(parts) if parts else "OOS帳本累積中"
-
-
-def _oos_update_at_close():
-    """收盤後:結算昨日隔夜腿、記今日盤中終版訊號、掛今日隔夜候選。冪等(按日期)。"""
-    o = _oos_load()
-    today = ST.date
-    if any(x.get("date") == today for x in o["intraday"]) or \
-       any(x.get("date") == today for x in o["overnight_pending"]):
-        return
-    # a) 結算pending(用今日首價)
-    still = []
-    for p in o["overnight_pending"]:
-        px0 = ST.day.get(p["sid"], {}).get("px0")
-        if px0 and p.get("close"):
-            o["overnight"].append({**p, "resolve_date": today,
-                                   "ret": (px0 / p["close"] - 1) * 1e4})
-        else:
-            still.append(p)
-    o["overnight_pending"] = still
-    # 做空腿結算:做空報酬=-(次開/今收-1)
-    still_s = []
-    for p in o.get("overnight_short_pending", []):
-        px0 = ST.day.get(p["sid"], {}).get("px0")
-        if px0 and p.get("close"):
-            o.setdefault("overnight_short", []).append(
-                {**p, "resolve_date": today, "ret": -(px0 / p["close"] - 1) * 1e4})
-        else:
-            still_s.append(p)
-    o["overnight_short_pending"] = still_s
-    # b) 今日盤中終版訊號實績(三窗<5%∧pb5<0∧pb30<=-3千萬∧買>=3千萬>10%,45分)
-    for sid, m in ST.buckets.items():
-        if sid in RET_UNM:
-            continue
-        bks = sorted(m)
-        for i in range(7, len(bks)):
-            a = m[bks[i]]
-            if not a["tot"] or a["big"] < 3e7 or a["big"] <= 0.10 * a["tot"]:
-                continue
-            shs = [m[bks[j]]["ret2"] / m[bks[j]]["tot"] * 100 if m[bks[j]]["tot"] else 99
-                   for j in (i, i - 1, i - 2)]
-            if max(shs) >= 5:
-                continue
-            if m[bks[i - 1]]["big"] >= 0 or sum(m[b]["big"] for b in bks[i - 6:i]) > -3e7:
-                continue
-            if i + 9 >= len(bks) or not a["px"] or not m[bks[i + 9]]["px"]:
-                continue
-            o["intraday"].append({"date": today, "sid": sid,
-                                  "bucket": bks[i].strftime("%H:%M"),
-                                  "ret": (m[bks[i + 9]]["px"] / a["px"] - 1) * 1e4,
-                                  "gate": bool(UNI5 is not None and UNI5 < -5)})
-    # c) 今日隔夜候選:做多3檔(佔比前10∧壓縮深)+ 做空3檔(佔比最負前10∧彈開最多∧日線空)
-    cand = []
-    for sid in NAMES:
-        ds = ST.day.get(sid)
-        px = ST.last_px.get(sid)
-        pc = PREV_CLOSE.get(sid)
-        if not ds or not px or not ds["tot"]:
-            continue
-        m = ST.buckets.get(sid, {})
-        bks = sorted(m)
-        last12 = [m[b]["px"] for b in bks[-12:] if m[b]["px"]]
-        if len(last12) < 8:
-            continue
-        cand.append({"sid": sid, "big": ds["big"], "close": px,
-                     "cmp": px / (sum(last12) / len(last12)) - 1,
-                     "locked": bool(pc and px / pc - 1 >= 0.09),
-                     "above_ma5": DAILY_TREND.get(sid, {}).get("above_ma5")})
-    # 做多:大戶淨買>0∧未鎖漲停,佔比前10取壓縮最深3
-    lp = [c for c in cand if c["big"] > 0 and not c["locked"]]
-    lp = sorted(lp, key=lambda r: -r["big"])[:10]
-    for p in sorted(lp, key=lambda r: r["cmp"])[:3]:
-        o["overnight_pending"].append({
-            "date": today, "sid": p["sid"], "close": p["close"],
-            "above_ma5": p["above_ma5"]})
-    # 做空:大戶淨賣<0,淨賣量最大前10取彈開最多3,再要日線↓空(回測+74.5/t3.82)
-    sp = [c for c in cand if c["big"] < 0]
-    sp = sorted(sp, key=lambda r: r["big"])[:10]
-    for p in sorted(sp, key=lambda r: -r["cmp"])[:3]:
-        o.setdefault("overnight_short_pending", []).append({
-            "date": today, "sid": p["sid"], "close": p["close"],
-            "above_ma5": p["above_ma5"]})
-    json.dump(o, open(OOS_FILE, "w"))
 
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
@@ -648,99 +422,6 @@ ICEBERG_TRADE_TOL = 0.003      # 成交價須在守價位±0.3%內才算confirm(
 ICEBERG_TRADE_LOOKBACK = 30    # 秒,confirm用的成交回看窗
 
 
-def _iceberg_update(r):
-    """隱形大戶守價位·即時串流版,依 Frey & Sandås (2009) 原始演算法重建
-    (2026-09-25 jack 交辦:「給你五個小時,你慢慢仔細地完成,請你一字一句的參考文獻的真正
-    正確用法」)。文獻:Frey, S. & Sandås, P. (2009) "The Impact of Iceberg Orders in Limit
-    Order Books", CFR Working Paper No. 09-06, University of Cologne。
-
-    原文 Appendix A3 逐字引用:"The algorithm assumes an iceberg to be detected after the
-    first replenishment. After the detection the algorithm keeps the detection state until
-    all visible volume of the quote is cancelled or an expected replenishment has not
-    occurred."、"The algorithm remembers the indicator values for multiple prices so if the
-    current best quote...is undercut but later becomes the best quote again the algorithm
-    assumes that the iceberg order is still there."
-
-    第一版(2026-09-25 稍早)跟原文有三個落差,這版修正:
-      落差一(觸發條件):原版「量降≥5張」就算被吃,太寬鬆;原文是「trade EXHAUSTS ALL
-        displayed depth」——改成量降到接近零(≤原量15%或≤5張)才算「耗盡」。
-      落差二(追蹤對象):原版只追「當下最優價」,排名一換就重置;原文追蹤「固定價位」,
-        排名滑動仍持續追蹤——改成五檔全部價位都用價位當鍵追蹤,見 ST.iceberg[sid][side]
-        現在是 {price_key: state} 字典,不是單一 cur。
-      落差三(耗盡確認):原版只看「當天累計量 v 有沒有動」,不知道打在哪個價位;
-        改成交叉比對 ST.recent[sid] 的逐筆真實成交價格是否落在該價位附近。
-
-    2026-09-25 用 14 個交易日重跑(scripts/research/iceberg_frey_sandas_rebuild.py,
-    scratch/iceberg_frey_sandas_2026-09-25.txt)结果,跟修正前差很多:
-      · 靠山(backing,現在= 當下最優買/賣剛好是已偵測價位):兩側都還是雜訊,|t|<1.5,
-        安慰劑對照沒有明顯脫離隨機範圍——沒有復現 Frey&Sandås 原文 Table V 測到的顯著效果,
-        可能是 TWSE 五檔快照的解析度不夠(原文用 Xetra 完整逐筆重建),仍是 NULL。
-      · 跌破支撐(breakout_bear):即時 t+0.73、延遲30秒後 t-0.01 幾乎完全消失、集中度只
-        5%——確認是雜訊,不是訊號。
-      · 突破壓力(breakout_bull)——**這次修正後,這個是唯一撐過檢定的**:即時 t-2.90、
-        延遲30秒後 t-2.24(沒有像舊版一樣塌陷)、換算成 Table V 原文口徑(後30筆真實成交)
-        t-2.93,三種算法都通過 |t|≥2;集中度前5檔55%(不算極端);安慰劑對照真實值(-10.2)
-        落在隨機5組範圍(-3.2~-1.6)之外。方向是「突破壓力後回落」(fade),不是使用者原本
-        設想的「突破=延續噴出」,但這是這整條研究線第一個通過完整檢定的結果。
-    """
-    sid = r.get("sym")
-    if sid not in NAMES:
-        return
-    v = r.get("v")
-    try:
-        v = float(v) if v not in (None, "") else None
-    except (TypeError, ValueError):
-        v = None
-    ts = r.get("ts")
-    if ts is None:
-        return
-    st_sid = ST.iceberg[sid]
-    for side, price_arr, qty_arr in (("bid", r.get("bp") or [], r.get("bq") or []),
-                                      ("ask", r.get("ap") or [], r.get("aq") or [])):
-        levels = st_sid[side]
-        visible_now = set()
-        for p, q in zip(price_arr, qty_arr):
-            if p is None or q is None or p <= 0:
-                continue
-            key = round(p, 4)
-            visible_now.add(key)
-            st = levels.get(key)
-            if st is None:
-                levels[key] = {"qty": q, "ref_peak": q, "last_seen": ts, "state": "none",
-                                "exhaust_ts": None, "detected": False}
-                continue
-            prev_qty = st["qty"]; st["last_seen"] = ts
-            if st["state"] == "none":
-                if prev_qty > 0 and q <= max(ICEBERG_EXHAUST_MIN_ABS, prev_qty * ICEBERG_EXHAUST_FRAC):
-                    if _iceberg_trade_confirms(sid, ts - ICEBERG_TRADE_LOOKBACK, ts, p):
-                        st["state"] = "exhausted"; st["exhaust_ts"] = ts; st["ref_peak"] = prev_qty
-            elif st["state"] == "exhausted":
-                if q >= st["ref_peak"] * ICEBERG_REPLENISH_FRAC:
-                    st["state"] = "detected"; st["detected"] = True   # 原文:偵測到=第一次補回
-                elif ts - st["exhaust_ts"] > ICEBERG_GRACE_SEC:
-                    st["state"] = "none"
-            elif st["state"] == "detected":
-                if prev_qty > 0 and q <= max(ICEBERG_EXHAUST_MIN_ABS, prev_qty * ICEBERG_EXHAUST_FRAC):
-                    if _iceberg_trade_confirms(sid, ts - ICEBERG_TRADE_LOOKBACK, ts, p):
-                        st["state"] = "exhausted"; st["exhaust_ts"] = ts
-            st["qty"] = q
-        # 落差二收尾:突破檢查優先於寬限期修剪(先前版本的 bug——見研究腳本同名說明)
-        b, _ = (next(((p, q) for p, q in zip(r.get("bp") or [], r.get("bq") or []) if p and q and p > 0), (None, None)))
-        a, _ = (next(((p, q) for p, q in zip(r.get("ap") or [], r.get("aq") or []) if p and q and p > 0), (None, None)))
-        mid = (b + a) / 2 if (b and a) else None
-        for key, st in list(levels.items()):
-            if st["detected"] and mid is not None:
-                breached = (side == "bid" and mid < key * (1 - ICEBERG_TRADE_TOL)) or \
-                           (side == "ask" and mid > key * (1 + ICEBERG_TRADE_TOL))
-                if breached:
-                    kind = "breakout_bear" if side == "bid" else "breakout_bull"
-                    st_sid["last_breakout"] = {"kind": kind, "ts": ts, "price": key}
-                    del levels[key]
-                    continue
-            if key not in visible_now and ts - st["last_seen"] > ICEBERG_GRACE_SEC:
-                del levels[key]
-
-
 def ingest():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     if ST.date != today:
@@ -858,13 +539,6 @@ def ingest():
     _ingest_mini_fut(today)                        # 期散:小型契約 1 口成交(FUT_MINI 檔)
 
 
-def _limits(pc):
-    """台股漲跌停價(±10%,對齊 tick):漲停=不超過+10%的最大tick、跌停=不低於−10%的最小tick。"""
-    import math
-    up, dn = pc * 1.1, pc * 0.9
-    return math.floor(up / _tick_sz(up)) * _tick_sz(up), math.ceil(dn / _tick_sz(dn)) * _tick_sz(dn)
-
-
 SHADOW = {"date": None, "events": []}
 
 
@@ -939,100 +613,6 @@ TAG_DECAY = {"主力點火": (0, 1800), "純機構": (300, 2700), "深接30": (0
              "勿追30": (0, 1800), "勿追5m": (0, 1800), "虛胖接刀": (0, 300)}
 
 
-def _score_rows(rows, mkt30, nts, mkt30_r=None):
-    """隔夜分 / 盤中分:各項權重只用 0/±1/±2,依 127 日基準率;權證依 jack 要求納入盤中分(±1,未驗證)。
-    寫入 r["sc_ov"], r["sc_in"], r["sc_ov_items"], r["sc_in_items"], r["sc_in_nowrt"]。"""
-    for r in rows:
-        sid = r["sid"]
-        ds = ST.day.get(sid) or {}
-        tot = ds.get("tot") or 0
-        bs = r.get("bigsh_d")                      # 全日大戶佔比 %
-        rp = (r["retday"] / tot * 100) if (tot and r.get("retday") is not None and not r["unm"]) else None
-        cmp_ = r.get("cmp1h")
-        ov, ovi = 0, []
-        if bs is not None and bs >= 10:
-            ov += 2; ovi.append(("大戶佔比≥+10%", +2))
-            if rp is not None and rp >= 5:
-                ov -= 1; ovi.append(("散戶佔比≥5%(B格)", -1))
-            if cmp_ is not None and cmp_ > 1.0:
-                ov -= 1; ovi.append(("壓縮>+1% 彈開", -1))
-            if r.get("rvol_day") is not None and r["rvol_day"] >= 1.5:
-                ov += 1; ovi.append(("全日量能≥1.5x", +1))
-        elif bs is not None and bs <= -10:
-            ov -= 2; ovi.append(("大戶佔比≤−10%", -2))
-            if cmp_ is not None and cmp_ > 0.3:
-                ov -= 1; ovi.append(("大戶賣∧壓縮>+0.3%", -1))
-        if "同賣" in (r.get("stamp") or ""):
-            ov -= 1; ovi.append(("同賣", -1))
-        dt = r.get("dtrend") or {}
-        if dt.get("above_ma5"):
-            ov += 1; ovi.append(("日線↑多", +1))
-        elif r.get("rs_live") is not None and r["rs_live"] > 1 and dt:
-            ov -= 1; ovi.append(("相對強弱>+1∧日線↓空", -1))
-        # 散戶版SMFI背離(2026-09-25 採納;scratch/smfi_score_design_2026-09-25.txt):尾盤(12:55-13:20)散戶淨額佔比 −
-        # 開盤(09:00-09:25)散戶淨額佔比。127日精確重建 ov 控制後 IS ret_smfi 係數 t+2.95(次日跳空)/t+1.70(收對收);
-        # 門檻掃描發現正負不對稱——正向(≥10pp)IS/OOS 單調一致(OOS t+2.11~+3.15 隨門檻走強),負向(≤−門檻)OOS 在
-        # ≥15pp 反號(t−0.66~−1.29),故**只計正向、不設負向對稱項**。單邊規則 vs 基準 ov:IS IC 0.155→0.163(跳空)、
-        # 0.063→0.069(收對收);OOS 0.068→0.074、−0.012→−0.007;觸發時勝率 IS 64%→71%、OOS 52%→58%,兩期同向提升。
-        # IS 樣本本身邊緣(單變量控制後 IS t 未必 ≥2 於所有口徑),依使用者明確指示採納,非嚴格 IS/OOS 雙關口徑通過。
-        if r.get("ret_smfi") is not None and r["ret_smfi"] >= 10:
-            ov += 1; ovi.append(("散戶背離(SMFI)≥+10pp", +1))
-        # ---- 盤中分 ----
-        act = _active_tags(sid, nts)
-        sc, sci = 0, []
-        # 同源不累加(2026-09-24 jack 定案):同一筆大戶買會同時點亮 主力點火/純機構/深接30/深接5m → 取最大值一次;
-        # 散戶側 散戶虛拉/勿追 同源 → 取一次 −1;機構暗退、噴後過熱、破昨防線 各自獨立來源。
-        # 時間衰減(2026-09-24 jack 要求):標籤價值 = 權重 × (1 − 經過/時距),基準率是「首次觸發起未來30分」,越晚看剩越少;小數一位
-        bull_src = [(t, p * act[t]) for t, p in (("主力點火", 2), ("純機構", 2), ("深接30", 1), ("深接5m", 1)) if t in act]
-        if bull_src:
-            best = max(bull_src, key=lambda x: x[1])
-            sc += best[1]; sci.append(("大戶買[" + "·".join(f"{t}×{act[t]:.2f}" for t, _ in bull_src) + "]取最大", round(best[1], 1)))
-        for tag, pts in (("機構暗退", -2), ("噴後過熱", -2)):
-            if tag in act:
-                sc += pts * act[tag]; sci.append((f"{tag}×{act[tag]:.2f}", round(pts * act[tag], 1)))
-        ret_src = [t for t in ("散戶虛拉", "勿追30", "勿追5m") if t in act]
-        if ret_src:
-            if ("散戶虛拉" not in ret_src) and mkt30 > 0:
-                sci.append(("勿追(市場30分>0,記0)", 0))
-            else:
-                w_ = max(act[t] for t in ret_src)
-                sc -= w_; sci.append(("散戶側[" + "·".join(ret_src) + f"]×{w_:.2f}", round(-w_, 1)))
-        if r.get("pmlow_warn"):
-            sc -= 1; sci.append(("破昨防線", -1))
-        sc_nowrt = sc
-        # 權證(jack 要求納入;未驗證,±1):30 分認購+認售 ≥100 萬才判
-        w = WRT.get(sid) if isinstance(WRT.get(sid), dict) else None
-        if w:
-            wt = (w.get("call_30") or 0) + (w.get("put_30") or 0)
-            b_, s_ = (w.get("bull_30") or 0), (w.get("bear_30") or 0)
-            sh = b_ / (b_ + s_) if (b_ + s_) > 0 else None
-            b30 = r.get("big30_r") or 0
-            if wt >= 1e6 and sh is not None:
-                if sh >= 0.6 and (r.get("r30_r") or 0) > 0:
-                    sc -= 1; sci.append(("權證偏多∧價漲(槓桿散戶追價)", -1))
-                elif sh >= 0.6 and b30 <= -3e7:
-                    sc -= 1; sci.append(("權證偏多∧大戶賣(散戶接貨)", -1))
-                elif sh <= 0.4 and b30 >= 3e7:
-                    sc += 1; sci.append(("權證偏空∧大戶買(散戶倒·大戶接)", +1))
-        # 委託簿竭盡候選(尚非策略,jack 要求先計分;定義來自 09-23/24 tick 案例,未驗證):
-        #   急殺中(近5分 ≤−0.20%)∧ 近30秒主動賣 ≤40% ∧ 買深 ≥3 分 → +1;急拉中 ∧ 主動買 ≤40%(sell≥60%)∧ 賣深 ≥3 分 → −1
-        sp = r.get("sell30s_r"); w5 = r.get("w_ret_r") or 0
-        bm, am = r.get("bid_min"), r.get("ask_min")
-        if sp is not None:
-            if w5 <= -20 and sp <= 0.40 and (bm or 0) >= 3:
-                sc += 1; sci.append((f"賣盤竭盡候選(30s主動賣{sp*100:.0f}%·買深{bm:.1f}分,未驗證)", +1))
-            elif w5 >= 20 and sp >= 0.60 and (am or 0) >= 3:
-                sc -= 1; sci.append((f"買盤竭盡候選(30s主動買{(1-sp)*100:.0f}%·賣深{am:.1f}分,未驗證)", -1))
-        r["sc_ov"], r["sc_in"], r["sc_in_nowrt"] = ov, sc, sc_nowrt
-        try:
-            _hm = datetime.now(TZ).strftime("%H:%M")
-            r["sc_v2"], r["sc_v2_items"] = _score_v2(r, mkt30 if mkt30_r is None else mkt30_r, _hm)
-            r["sc_v22"] = _score_v22_legacy(r, mkt30, _hm)
-        except Exception as _e:  # noqa: BLE001
-            r["sc_v2"], r["sc_v2_items"], r["sc_v22"] = None, [(f"計分失敗:{type(_e).__name__}", 0)], None
-        r["sc_ov_items"], r["sc_in_items"] = ovi, sci
-
-
 SC_HIST: dict = {}   # sid -> deque[(ts, score)] 近 60 分盤中分歷史(V2.2「近60分極端分」用)
 
 
@@ -1060,34 +640,6 @@ SC_LOGGED: set = set()   # (日, 5分桶, sid) 已落地
 
 # ---- 成因標籤(jack 2026-09-24:極值分數進場前要知道「為什麼」——處置/跌停/族群/MOPS,每項標來源與時間)----
 _DISP_CACHE: dict = {"date": None, "sids": {}, "mtime": None}
-
-
-def _limit_down(y: float) -> float:
-    """跌停價 = 前收 ×0.9 無條件進位到升降單位(TWSE 規則)。"""
-    import math
-    raw = y * 0.9; t = _tick_sz(raw)  # 原本重複定義成 _stock_tick,2026-09-27 稽核後合併
-    return round(math.ceil(raw / t - 1e-9) * t, 2)
-
-
-def _mops_load(day: str) -> dict:
-    """MOPS 重大訊息 sid → [(hh:mm, 主旨)]。來源 ${DATA_DIR}/cache/mops_today_{發言日}.json(fetch_mops_today.py,
-    TWSE/TPEx OpenAPI 每日快照:發言日=前一營業日;盤中即時 MOPS 尚無來源)。無檔回 None(=未抓,非無訊息)。"""
-    f = DATA_DIR / "cache" / f"mops_today_{day}.json"
-    try:
-        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _prev_mops_day(today: str) -> tuple[str, dict] | tuple[None, None]:
-    """往回找最近一個有檔的發言日(≤7 天)。"""
-    from datetime import date as _d, timedelta as _td
-    d0 = _d.fromisoformat(today)
-    for k in range(1, 8):
-        day = (d0 - _td(days=k)).isoformat(); m = _mops_load(day)
-        if m is not None:
-            return day, m
-    return None, None
 
 
 def _cause_tags(rows, today: str):
@@ -1167,14 +719,6 @@ try:
     PAPER: dict = json.loads(PAPER_PATH.read_text(encoding="utf-8"))
 except Exception:  # noqa: BLE001
     PAPER = _paper_blank(None)
-
-
-def _paper_close(book, sid, pos, exit_px, how, now):
-    g = (exit_px / pos["entry"] - 1) * 1e4; net = g - PAPER_COST
-    rec = {"ev": "close", "book": book, "sid": sid, "entry": pos["entry"], "exit": exit_px, "how": how, "reason": (pos.get("sell") or {}).get("reason"),
-           "gross_bps": g, "net_bps": net, "ntd_net": net / 1e4 * pos["entry"] * 2000, "hold_min": (now - pos["t_fill"]) / 60,
-           "strict_entry": pos["strict"], "strict_exit": how in ("買一", "收盤") or bool(pos.get("sell_strict")), "sig": pos["sig"]}
-    PAPER["closed"][book].append(rec); _paper_log(rec); PAPER["pos"][book].pop(sid, None)
 
 
 def _paper_update(rows, now):
@@ -2180,124 +1724,6 @@ SORT_JS = """<script>
 </script>"""
 
 
-def snapshot_day():
-    """收盤後存當日 EOD 快照(冪等)。"""
-    today = ST.date
-    if not today:
-        return
-    f = SNAP_DIR / f"eod_{today}.json"
-    if f.exists() or not ST.day:
-        return
-    sig = _day_sig_counts()
-    rows = []
-    for sid in NAMES:
-        ds = ST.day.get(sid)
-        px = ST.last_px.get(sid)
-        if not ds or px is None:
-            continue
-        s1, s2 = sig.get(sid, (0, 0))
-        m = ST.buckets.get(sid, {})
-        pm_px = [m[bk]["px"] for bk in m if bk.hour >= 12 and m[bk]["px"]]
-        ret_open_sh = (ds["ret_open"] / ds["tot_open"] * 100) if ds["tot_open"] else None
-        ret_close_sh = (ds["ret_close"] / ds["tot_close"] * 100) if ds["tot_close"] else None
-        rows.append({"sid": sid, "name": NAMES[sid], "close": px, "px0": ds["px0"],
-                     "pm_low": min(pm_px) if len(pm_px) >= 3 else None,
-                     "big": ds["big"], "ret2": ds["ret2"], "retn": ds["ret"], "tot": ds["tot"],
-                     "sig1": s1, "sig2": s2,
-                     "ret_open_sh": ret_open_sh, "ret_close_sh": ret_close_sh,          # 散戶版SMFI觀察欄(2026-09-25)
-                     "ret_smfi": ((ret_close_sh - ret_open_sh) if (ret_open_sh is not None and ret_close_sh is not None) else None)})
-    if len(rows) >= 20:                      # 資料太少不存(避免半天斷線垃圾)
-        json.dump({"date": today, "rows": rows}, open(f, "w"))
-
-
-def render_history():
-    ds = _snap_dates()
-    lis = "".join(f"<li><a href='/day?d={d}'>{d}</a></li>" for d in reversed(ds))
-    return (f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width,initial-scale=0.8'>"
-            f"<title>歷史分頁</title>{ARC_CSS}</head><body>"
-            f"<h3>每日收盤快照 <a href='/'>←即時</a></h3><ul>{lis or '<li>尚無</li>'}</ul>"
-            f"<div class='meta'>每頁最後兩欄=次日漲跌/次日排名(次日收盤後自動補上)</div></body></html>")
-
-
-def render_day(d):
-    snap = _load_snap(d)
-    if not snap:
-        return f"<!DOCTYPE html><html><head>{ARC_CSS}</head><body>無 {html_mod.escape(d)} 快照 <a href='/history'>返回</a></body></html>"
-    ds_all = _snap_dates()
-    i = ds_all.index(d) if d in ds_all else -1
-    prev = _load_snap(ds_all[i - 1]) if i > 0 else None
-    nxt = _load_snap(ds_all[i + 1]) if 0 <= i < len(ds_all) - 1 else None
-    pc = {r["sid"]: r["close"] for r in prev["rows"]} if prev else {}
-    nc = {r["sid"]: r["close"] for r in nxt["rows"]} if nxt else {}
-    no = {r["sid"]: r.get("px0") for r in nxt["rows"]} if nxt else {}
-    rows = []
-    for r in snap["rows"]:
-        base = pc.get(r["sid"]) or r["px0"]
-        r["dret"] = (r["close"] / base - 1) * 100 if base else None
-        n = nc.get(r["sid"])
-        r["nret"] = (n / r["close"] - 1) * 100 if (n and r["close"]) else None
-        op = no.get(r["sid"])
-        r["ngap"] = (op / r["close"] - 1) * 100 if (op and r["close"]) else None
-        rows.append(r)
-    rows.sort(key=lambda r: -(r["dret"] if r["dret"] is not None else -99))
-    nrank = {r["sid"]: k + 1 for k, r in enumerate(
-        sorted([r for r in rows if r["nret"] is not None], key=lambda r: -r["nret"]))}
-    grank = {r["sid"]: k + 1 for k, r in enumerate(
-        sorted([r for r in rows if r["ngap"] is not None], key=lambda r: -r["ngap"]))}
-    trs = []
-    for k, r in enumerate(rows, 1):
-        def pct(v):
-            if v is None:
-                return "<td class='dim'>—</td>"
-            return f"<td class='{'up' if v > 0 else 'dn' if v < 0 else ''}'>{v:+.2f}%</td>"
-        unm = r["sid"] in RET_UNM
-        share = (r["ret2"] / r["tot"] * 100) if (r["tot"] and not unm) else None
-        trs.append(
-            f"<tr><td>{k}</td><td class='nm'>{r['sid']} {r['name']}</td>"
-            f"<td>{r['close']:g}</td>" + pct(r["dret"])
-            + f"<td class='{'up' if r['big'] > 0 else 'dn' if r['big'] < 0 else ''}'>{r['big'] / 1e8:+.2f}</td>"
-            + (f"<td class='{'up' if r['big'] > 0 else 'dn'}'>{r['big'] / r['tot'] * 100:+.1f}%</td>"
-               if r['tot'] else "<td class='dim'>—</td>")
-            + (f"<td>{share:.1f}%</td>" if share is not None else "<td class='dim'>不可測</td>")
-            + f"<td>{r['tot'] / 1e8:.1f}</td>"
-            + f"<td>{r['sig1'] or ''}</td>"
-            + f"<td>{r['sig2'] or ''}</td>"
-        )
-        # 次日兩欄
-        if r["ngap"] is None:
-            trs[-1] += "<td class='nx dim'>—</td><td class='nx dim'>—</td>"
-        else:
-            gcl = 'up' if r['ngap'] > 0 else 'dn' if r['ngap'] < 0 else ''
-            gk = grank.get(r['sid'])
-            gk_cl = ('top5' if gk and gk <= 5 else
-                     'bot5' if gk and gk > len(grank) - 5 else '')
-            trs[-1] += (f"<td class='nx {gcl}'>{r['ngap']:+.2f}%</td>"
-                        f"<td class='nx {gk_cl}'>{gk or '—'}</td>")
-        if r["nret"] is None:
-            trs[-1] += "<td class='nx dim'>—</td><td class='nx dim'>—</td></tr>"
-        else:
-            cl = 'up' if r['nret'] > 0 else 'dn' if r['nret'] < 0 else ''
-            rk = nrank.get(r['sid'])
-            rk_cl = ('top5' if rk and rk <= 5 else
-                     'bot5' if rk and rk > len(nrank) - 5 else '')
-            trs[-1] += (f"<td class='nx {cl}'>{r['nret']:+.2f}%</td>"
-                        f"<td class='nx {rk_cl}'>{rk or '—'}</td></tr>")
-    nav_p = f"<a href='/day?d={ds_all[i-1]}'>←{ds_all[i-1]}</a>" if i > 0 else ""
-    nav_n = f"<a href='/day?d={ds_all[i+1]}'>{ds_all[i+1]}→</a>" if 0 <= i < len(ds_all) - 1 else ""
-    return (f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width,initial-scale=0.7'>"
-            f"<title>{d} 收盤</title>{ARC_CSS}</head><body>"
-            f"<h3>{d} 收盤快照 &nbsp;{nav_p} <a href='/history'>索引</a> {nav_n}</h3>"
-            f"<div class='meta'>點欄位標題可排序(再點反向) · 預設=當日漲跌 · 漲跌基準=前一快照收盤(缺則用當日首價) · "
-            f"💎欄=當日核心/強訊號觸發數 · 深底色兩欄=<b>次日</b>漲跌與排名(次日收盤自動補)</div>"
-            f"<table><thead><tr><th>#</th><th class='stk'>股票</th><th>收盤</th><th>當日%</th>"
-            f"<th>全日大戶(億)</th><th title='大戶淨流÷成交,127日驗證次日排名IC+0.043/t3.2=最佳排序鍵'>大戶佔比</th><th>散戶參與</th><th>成交(億)</th><th>💎</th><th>💎💎</th>"
-            f"<th class='nx' title='次日開盤vs今收(隔夜跳空);127日:大戶佔比→開盤IC+0.097/t7.1=最可預測段'>次日開%</th><th class='nx'>開名</th><th class='nx' title='次日收對收;=開盤慣性−日內回吐的殘影'>次日%</th><th class='nx'>收名</th></tr></thead>"
-            f"<tbody>{''.join(trs)}</tbody></table>"
-            + SORT_JS + "</body></html>")
-
-
 _HELP_GROUPS = [
     ("識別", [
         ("股票", "中文名＋細分產業標籤(灰字)。細分產業為宇宙標的手動策展,比大類細一層(如半導體再分晶圓代工/封測/DRAM/矽晶圓;PCB再分CCL/ABF載板/軟板)。",
@@ -2806,12 +2232,6 @@ class H(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
-
-
-def _in_market():
-    n = datetime.now(TZ)
-    # 08:30 起 = 期貨/現貨盤前試撮(2026-09-24:launchd 也提前到 08:30),試撮價要即時跳動
-    return n.weekday() < 5 and "08:30" <= n.strftime("%H:%M") <= "13:35"
 
 
 def loop():

@@ -479,3 +479,20 @@ def _load_snap(d):
         return json.load(open(biglot_dashboard.SNAP_DIR / f"eod_{d}.json"))
     except Exception:
         return None
+
+
+def _refresh_vol_risk_if_needed() -> bool:
+    """依實際日曆日期(非 ST.date)刷新——T-1 籌碼資料跟有沒有開盤無關，不该被
+    ingest()/render() 只在盤中才跑的邏輯卡住,否則開盤前使用者看到的都是前一個
+    交易日收盤時算出的舊分數(2026-09-21 發現:盤前完全看不到當天該有的分數)。
+    回傳是否真的重算了,讓呼叫端決定要不要順便重繪一次盤後定格頁面。
+    """
+    today = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
+    if biglot_dashboard.VOLRISK_DATE == today:
+        return False
+    try:
+        biglot_dashboard.VOLRISK = _load_vol_risk_flags()
+    except Exception:
+        biglot_dashboard.VOLRISK = {}
+    biglot_dashboard.VOLRISK_DATE = today
+    return True
