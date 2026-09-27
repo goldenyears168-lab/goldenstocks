@@ -71,6 +71,24 @@ PYTHONPATH=src .venv/bin/python scripts/research/biglot_phase0/check_daily_rebin
 已知限制：`UNI5` 兩次都算出 `None` 時 `id()` 判不出來（`None` 是 CPython 單例），
 工具會標成「N/A」不算失敗，不要誤讀成 bug。
 
+## 踩過的坑：新模組自己 import datetime 會讓凍結時鐘失效（真的搬出過一次 bug）
+
+2026-09-27 多agent分工搬移第二批 42 個函式時，4 個新檔案（`reference_loaders.py`/
+`user_state.py`/`paper_trading.py`/`scoring_support.py`）各自 `from datetime import
+datetime` 後呼叫 `datetime.now(biglot_dashboard.TZ)`——這個 `datetime` 是它們自己
+匯入的真正 `datetime.datetime`，不是 `_fixture_lib.load_dashboard_module()` 拿來
+凍結時鐘、掛在 `biglot_dashboard.datetime` 上的那個假時鐘子類別。結果：`ingest()`
+本體換日邏輯正確跑在凍結日期上，但這幾個被搬走的函式（尤其 `_load_prev_close_db`）
+的「排除今天」判斷卻用了真實牆鐘日期，抓到 fixture 裡「未來」的收盤價當昨收，
+造成全部 42 檔股票頁面 %漲跌全部算錯——golden-diff 老實地抓到了 88 個檔案差異。
+
+**規則更新**：任何新 `biglot/*.py` 模組只要呼叫 `datetime.now(...)`，一律用
+`biglot_dashboard.datetime.now(biglot_dashboard.TZ)`，不要 `from datetime import
+datetime` 後直接呼叫——`datetime.strptime()`/`timedelta` 等不依賴「現在」的用法
+不受影響，可以繼續直接匯入標準庫。這是因為 `biglot_dashboard.py` 自己的
+`datetime` 名字會被測試工具動態替換，其他名稱不會被替換，`datetime` 是這個
+專案裡唯一的例外，不能套用「標準庫直接匯入」的一般規則。
+
 ## 踩過的坑：fixture 會被自己跑過的結果污染
 
 第一版工具直接把 `GOLDENSTOCKS_DATA_DIR` 指向 canonical fixture，結果 `smoke_test.py`

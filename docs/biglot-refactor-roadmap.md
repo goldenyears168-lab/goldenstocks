@@ -120,11 +120,29 @@
   模組本身零頂層快取狀態、③ 搬移後的函式 `__globals__['biglot_dashboard']` 就是同一個
   正在跑的模組實例——三者合起來構成不可能 stale 的結構性證明,不只是「這次剛好沒事」。
 
-  **後續要做的（下次對話）**：用同一個「import 模組 + 屬性存取」規則，把 dep_graph 抓到的
-  另外 49 個次順位候選（46 個不碰危險全域、3 個還碰危險全域：`_pe_peer_block`/`_score_v2`/
-  `_shadow_triple`）依子系統分組搬完（notes/holds/paper_trading/oos/mini_futures/tag_engine
-  等），`_ingest_trade`/`_stk_trade` 兩支維持原計畫排在更後面、需要人工 side-by-side 比對
-  重倉股詳情頁才能搬（本來就有 drift，風險較高）。
+  **第二批（已完成 2026-09-27，多agent分工）**：用 7 個 general-purpose agent 平行處理，
+  每個只負責「讀 biglot_dashboard.py、寫一個新檔案」，不碰共用檔案，避免並行寫入衝突；
+  移除舊定義＋接 import＋跑驗證這三步集中由主線程序列執行。搬完 42 個函式到 7 個新檔案：
+  `reference_loaders.py`(12)、`scoring_support.py`(12)、`user_state.py`(6)、
+  `paper_trading.py`(5)、`mini_futures.py`(3)、`stock_meta.py`(2)、`pe_and_shadow.py`(2，
+  含 `_pe_peer_block`/`_shadow_triple`，兩者都碰危險全域，用同一套屬性存取規則搬移)。
+  `_score_v2`（核心 V2.5 計分引擎）刻意不列入這批，留待專門一輪處理。
+
+  過程中 golden-diff 抓到一個真的 bug（不是誤報）：4 個新檔案各自 `from datetime import
+  datetime` 後呼叫 `datetime.now(biglot_dashboard.TZ)`——這個 `datetime` 是它們自己匯入的
+  真正時鐘，不是測試工具凍結掛在 `biglot_dashboard.datetime` 上的假時鐘，導致
+  `_load_prev_close_db` 等函式的「排除今天」判斷用了真實牆鐘日期，抓錯昨收，
+  42 檔全部 %漲跌算錯——golden-diff 老實抓到 88 個檔案差異。修法：這幾個檔案的
+  `datetime.now(...)` 全部改成 `biglot_dashboard.datetime.now(biglot_dashboard.TZ)`，
+  `datetime.strptime`/`timedelta` 等不依賴「現在」的用法不受影響。詳見
+  `scripts/research/biglot_phase0/README.md`「踩過的坑」。修好後：golden-diff 全 42 檔
+  零 diff、smoke test 14/14、`_pe_peer_block`/`_shadow_triple` 額外過連續兩天過日驗證。
+
+  **後續要做的（下次對話）**：`_score_v2`（核心計分引擎，需要專門一輪細看，不跟其他函式
+  一起批次處理）；`_ingest_trade`/`_stk_trade` 兩支維持原計畫排在更後面、需要人工
+  side-by-side 比對重倉股詳情頁才能搬（本來就有 drift，風險較高）；`biglot_dashboard.py`
+  目前約 3059 行，`render()`/`ingest()`/`http_server` composition root 等大型函式尚未拆分，
+  對應原始草案 Phase 4-8，屬於下一階段。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用

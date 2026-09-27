@@ -34,6 +34,28 @@ from biglot.html_fragments import _book_table, _wrt_td  # noqa: E402
 # 檔頭說明)，該模組用 `import biglot_dashboard` + 屬性存取避免 stale reference，
 # 不是這裡這種 `from biglot_dashboard import X` 的簡單具名 import。
 from biglot.xq_style import _xq_style_block  # noqa: E402
+# 2026-09-27 重構第二批(多agent分工，見 docs/biglot-refactor-roadmap.md)：以下 7 個模組
+# 內部一律 `import biglot_dashboard` + 屬性存取（不是 `from biglot_dashboard import X`），
+# 避免每日整包重新賦值的全域出現 stale reference，模式跟 biglot/xq_style.py 一致。
+from biglot.reference_loaders import (  # noqa: E402
+    _load_daily_trend, _load_key_line, _load_atr_state, _load_prev_close_db,
+    _load_vol_risk_flags, _load_hist, _load_etf981_holdings, _load_pe_peer,
+    _load_vixtwn, _load_xq_style, _load_snap, _snap_dates,
+)
+from biglot.user_state import (  # noqa: E402
+    _load_notes, _save_stock_note, _stock_note_td, _hold_log, _hold_save, _oos_load,
+)
+from biglot.paper_trading import (  # noqa: E402
+    _paper_blank, _paper_log, _paper_save, _paper_summary, _paper_fills,
+)
+from biglot.mini_futures import _ingest_mini_fut, _mini_stats, _mini_td  # noqa: E402
+from biglot.scoring_support import (  # noqa: E402
+    _active_tags, _tag_engine, _disposal_today, _agg_lines, _day_sig_counts,
+    _book_of, _iceberg_trade_confirms, _rolling, _score_td, _score_v22_legacy,
+    _wrt_cum, _log_scores,
+)
+from biglot.stock_meta import _stock_info_block, render_help  # noqa: E402
+from biglot.pe_and_shadow import _pe_peer_block, _shadow_triple  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))
 PORT = 8771
@@ -94,29 +116,9 @@ WRT_MIN: dict = {"day": None, "off": 0, "data": {}}   # 權證逐筆 → sid -> 
 AGG: dict = {}                                        # 36 檔分鐘加總累計(大戶/散戶/權證),供台指面板;render_grid_frag 每 5 秒更新
 
 
-def _wrt_cum(sid, order):
-    """依分鐘鍵 order 回傳權證簽號淨額的累計序列(元);無資料回 None。"""
-    d = WRT_MIN["data"].get(sid)
-    if not d:
-        return None
-    keys = sorted(d)
-    out, c, j = [], 0.0, 0
-    for k in order:
-        while j < len(keys) and keys[j] <= k:
-            c += d[keys[j]]; j += 1
-        out.append(c)
-    return out   # 台指近月 10 秒樣本(txf_10s_*.jsonl 增量),頂部校準圖用
 #: 頁首可編輯筆記(2026-09-24):存在資料目錄,不進 git;沒有檔案時顯示預設紀律條
 NOTES_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "dashboard_notes.html"
 DEFAULT_NOTES = "（自由書寫的筆記區：點這裡開始輸入；Enter 換行，停止輸入 1.5 秒自動儲存，Ctrl/Cmd+S 立即儲存。紀律條全文見 📖 欄位說明。）"
-
-
-def _load_notes():
-    try:
-        s = NOTES_PATH.read_text(encoding="utf-8")
-        return s if s.strip() else DEFAULT_NOTES
-    except Exception:  # noqa: BLE001
-        return DEFAULT_NOTES
 
 
 #: 每檔筆記(2026-09-24):sid -> {"txt": 純文字, "t": "HH:MM:SS", "d": "YYYY-MM-DD"};存資料目錄,不進 git
@@ -128,16 +130,6 @@ except Exception:  # noqa: BLE001
     STOCK_NOTES = {}
 
 
-def _stock_note_td(sid):
-    n = STOCK_NOTES.get(sid) or {}
-    txt = html_mod.escape(n.get("txt") or "")
-    when = (n.get("t") or "")
-    if n.get("d") and n["d"] != datetime.now(TZ).strftime("%Y-%m-%d"):
-        when = f"{n['d'][5:]} {when}"
-    return (f"<td class='snote'><span class='ne' contenteditable='true' spellcheck='false' data-sid='{sid}'>{txt}</span>"
-            f"<span class='nt dim'>{when}</span></td>")
-
-
 # ---- 持倉監控(jack 2026-09-25):手動標記持倉,持有中每輪重算 V2.5 當「持倉分」,出場提示依 127 日面板對照
 #      (scratch/exit_rules_2026-09-25.txt):分數≤0 出 +23.1/+23.2(t5.2/6.2,均持 11 分,SD 94)、壞標籤出 +24.5/+26.0、
 #      到期 60 分;移動停利/硬停損/破昨低出場皆較差,不做。純提示,不送單。
@@ -147,20 +139,6 @@ try:
 except Exception:  # noqa: BLE001
     HOLDS = {}
 HOLD_BAD = ("散戶虛拉", "噴後過熱", "急跌·竭盡∧散戶接")
-
-
-def _hold_save():
-    HOLDS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    HOLDS_PATH.write_text(json.dumps(HOLDS, ensure_ascii=False, indent=0), encoding="utf-8")
-
-
-def _hold_log(rec: dict):
-    try:
-        f = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"hold_events_{datetime.now(TZ).strftime('%Y-%m-%d')}.jsonl"
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"ts": datetime.now(TZ).strftime("%H:%M:%S"), **rec}, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def _hold_toggle(sid: str, action: str, px):
@@ -200,36 +178,6 @@ def _hold_update(rows):
                 h["fired"].append(key); _hold_log({"ev": "flag", "sid": r["sid"], "flag": fl, "pnl_bps": pnl, "hold_min": hold_min, "score": sc})
         r["hold"] = {"hm": h["hm"], "px0": h.get("px0"), "pnl": pnl, "min": hold_min, "score": sc, "flags": flags, "hint": hint,
                      "low_s": (now - h["low_since"]) if h.get("low_since") is not None else 0}
-
-
-def _save_stock_note(sid, txt):
-    now = datetime.now(TZ)
-    STOCK_NOTES[sid] = {"txt": txt[:2000], "t": now.strftime("%H:%M:%S"), "d": now.strftime("%Y-%m-%d")}
-    STOCK_NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STOCK_NOTES_PATH.write_text(json.dumps(STOCK_NOTES, ensure_ascii=False, indent=0), encoding="utf-8")
-    return STOCK_NOTES[sid]["t"]
-
-
-def _agg_lines(t0, t1, W, H, L, R):
-    """台指面板疊圖:36 檔累計大戶(紅)/散戶(藍)/權證簽號(紫)加總,各自以 ±最大值正規化到同一畫面(0 線置中)。"""
-    if not AGG.get("mins"):
-        return ""
-    mins = AGG["mins"]; mid = H / 2
-    def X(hm):
-        h, m = hm.split(":"); ts = t0 + ((int(h) - 8) * 60 + int(m) - 45) * 60
-        return L + max(0.0, min(1.0, (ts - t0) / (t1 - t0))) * (W - L - R)
-    out = [f"<line x1='{L}' y1='{mid:.0f}' x2='{W-R}' y2='{mid:.0f}' stroke='#30363d' stroke-dasharray='2,3'/>"]
-    lab = []
-    for key, col, nm in (("big", "#ff7b72", "大戶"), ("ret", "#58a6ff", "散戶"), ("wrt", "#d2a8ff", "權證")):
-        v = AGG.get(key) or []
-        if not v:
-            continue
-        mx = max(abs(x) for x in v) or 1.0
-        pts = " ".join(f"{X(k):.0f},{mid - (x / mx) * (H / 2 - 8):.0f}" for k, x in zip(mins, v))
-        out.append(f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.2' opacity='0.85'/>")
-        lab.append(f"<tspan fill='{col}'>{nm} {v[-1]/1e4:+,.0f}萬(尺±{mx/1e4:,.0f})</tspan>")
-    out.append(f"<text x='{W-R}' y='{H-2}' font-size='9' text-anchor='end'>36檔累計 " + " ".join(lab) + "</text>")
-    return "".join(out)
 
 
 def _tx_panel(now):
@@ -335,243 +283,20 @@ PAGE = {"frag": "<div class='meta'>初始化中…</div>"}
 SNAP_DIR = DATA_DIR.parent / "cache" / "biglot_live_watch" / "eod_snapshots"
 SNAP_DIR.mkdir(parents=True, exist_ok=True)
 
-def _load_hist():
-    """近5個快照:每檔前幾日大戶淨流/收盤、宇宙5日累積、昨日午後低。"""
-    # 排除「當日」快照:對昨收/前n日大戶都該用 ≤昨日 的收盤;否則盤後重啟會抓到今收→漲跌恆0
-    _today = datetime.now(TZ).strftime("%Y-%m-%d")
-    files = [f for f in sorted(SNAP_DIR.glob("eod_*.json")) if _today not in f.name][-5:]
-    snaps = []
-    for f in files:
-        try:
-            snaps.append(json.load(open(f)))
-        except Exception:
-            pass
-    hist_big = {}      # sid -> [前n日big,...最舊在前]
-    prev_close = {}
-    y_pmlow = {}
-    for s in snaps:
-        for r in s["rows"]:
-            hist_big.setdefault(r["sid"], []).append(r.get("big", 0))
-            prev_close[r["sid"]] = r.get("close")
-            if "pm_low" in r:
-                y_pmlow[r["sid"]] = r["pm_low"]
-    # 宇宙近5日累積(等權,快照收盤鏈)
-    u5 = None
-    if len(snaps) >= 2:
-        rets = []
-        for i in range(1, len(snaps)):
-            a = {r["sid"]: r["close"] for r in snaps[i-1]["rows"]}
-            b = {r["sid"]: r["close"] for r in snaps[i]["rows"]}
-            vs = [(b[k]/a[k]-1) for k in b if k in a and a[k]]
-            if vs:
-                rets.append(sum(vs)/len(vs))
-        if rets:
-            u5 = sum(rets) * 100
-    return hist_big, prev_close, y_pmlow, u5
 
 HIST_BIG, PREV_CLOSE, Y_PMLOW, UNI5 = _load_hist()
-
-
-def _load_prev_close_db():
-    """昨收改抓官方 stock_daily_bars 的收盤競價價(權威),取代 EOD 快照的『最後一筆 tick』。
-    快照 tick 收盤與官方收盤常差 1~2 檔,會讓漲跌%失真——南電 2026-09-21 快照 1055 vs
-    官方 1060,今日漲停 1165 就被算成 +10.4%(超過±10%上限,不可能)。用『<今日的最近交易日』
-    避免抓到今日盤中殘影;雙來源同價,取一筆即可。"""
-    out = {}
-    try:
-        today = datetime.now(TZ).strftime("%Y-%m-%d")
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        sids = list(NAMES)
-        ph = ",".join("?" * len(sids))
-        # 2026-09-27 DB清理Step2:改成一次撈全部42檔再Python分組,不要逐檔各開一次窗函數查詢
-        # (逐檔查詢實測42次各~15秒,SQLite沒辦法對包了ROW_NUMBER()的巢狀子查詢逐檔下推索引;
-        # 一次IN(...)撈完只要~1秒,跟既有_load_vol_risk_flags的寫法一致)。
-        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
-                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date<? AND close IS NOT NULL "
-                                          f"AND trade_date>=date(?,'-30 day')")
-        rows = conn.execute(
-            f"SELECT stock_id, trade_date, close FROM ({dd_sql}) ORDER BY stock_id, trade_date DESC",
-            (*sids, today, today)).fetchall()
-        conn.close()
-        seen = set()
-        for sid, _td, c in rows:
-            if sid in seen:
-                continue
-            seen.add(sid)
-            if c:
-                out[sid] = float(c)
-    except Exception:
-        pass
-    return out
 
 
 PREV_CLOSE.update(_load_prev_close_db())   # 官方收盤優先,快照昨收僅作 fallback
 
 
-def _load_daily_trend():
-    """每檔日線趨勢(截至最近日收盤):站上5日均線? 5日動能%。
-    回測(127日隔夜候選池):壓縮∧站上5日線 +93.8bps/t5.10 vs 跌破 +30/t1.65,
-    差+63.5bps;純脈絡欄+影子帳分層,不改選股規則。日線雙來源(finmind/tpex/twse)
-    同價,按 trade_date 去重取一筆。"""
-    out = {}
-    try:
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        sids = list(NAMES)
-        ph = ",".join("?" * len(sids))
-        today = datetime.now(TZ).strftime("%Y-%m-%d")
-        # 一次撈全部42檔(45日曆天涵蓋21個交易日綽綽有餘)再Python分組,理由同 _load_prev_close_db。
-        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
-                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-45 day')")
-        rows = conn.execute(
-            f"SELECT stock_id, trade_date, close FROM ({dd_sql}) ORDER BY stock_id, trade_date DESC",
-            (*sids, today)).fetchall()
-        conn.close()
-        by_sid = defaultdict(list)
-        for sid, td, c in rows:
-            if len(by_sid[sid]) < 21:
-                by_sid[sid].append((td, c))
-        for sid, sid_rows in by_sid.items():
-            closes = [c for _, c in sid_rows if c]
-            if len(closes) < 4:
-                continue
-            last = closes[0]
-            ma5 = sum(closes[:5]) / len(closes[:5])
-            ma10 = sum(closes[:10]) / len(closes[:10]) if len(closes) >= 6 else None
-            ma20 = sum(closes[:20]) / len(closes[:20]) if len(closes) >= 20 else None   # 20MA(月線),供正乖離率欄
-            ret5 = (last / closes[5] - 1) * 100 if len(closes) >= 6 and closes[5] else None
-            out[sid] = {"above_ma5": last > ma5,
-                        "above_ma10": (last > ma10) if ma10 else None,
-                        "ma20": ma20,
-                        "ret5d": ret5, "last": last, "asof": sid_rows[0][0]}
-    except Exception as e:
-        print(f"[daily_trend] load failed: {e}", file=sys.stderr)
-    return out
-
 DAILY_TREND = _load_daily_trend()
-
-
-def _load_key_line(lookback=500):
-    """「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師節目逐字稿)。
-
-    規則(逐字稿精確化):某日 K 棒同時滿足下列三條件即為「觸發棒」,線 = 觸發棒的最低點(含影線):
-      (a) 紅K(收盤>開盤) (b) 收盤漲幅>前一日收盤+4% (c) 收盤突破「前 60 個交易日最高收盤」(不含當日)。
-    同一檔股票取**最近一次**觸發棒的最低點當線(新觸發棒出現線才會移動;較舊的觸發棒作廢,線只會愈墊愈高)。
-    掃描不到 500 個交易日內找不到任何觸發棒 → 該股「沒有這條線」。
-
-    2026-09-25 研究(scratch/key_line_research_2026-09-25.txt):
-      · 前高判斷用「收盤突破」比「最高價突破」穩健(不受單日長上影線誤觸發);回顧期 20/60/120 日結果穩定,取 60。
-      · 42 檔高波動宇宙(本身已篩掉不會噴的股票)近 2 年內無線比例 0%,跟節目口頭估計「30~50% 無線」對不上——
-        那是對整個 AI 概念股母體講的,不是對這個已篩選過的高波動子集,不是規則錯,已在欄位說明中註記。
-      · 粗略回測(拉回線±2%內買,持有10/20日):+5.1%/t+9.6、+11.4%/t+12.5,勝率61~62%,n=817/801——
-        ⚠️ 這不是嚴謹回測:未拆IS/OOS、未日聚類(同批股票多年趨勢高度重疊,t值灌水)、未扣大盤同期報酬、
-        未計成本、單一(本身可能上升趨勢)高波動宇宙。只當「規則不荒謬」的合理性檢查,不是驗證過的訊號。
-    """
-    out = {}
-    try:
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        sids = list(NAMES)
-        ph = ",".join("?" * len(sids))
-        today = datetime.now(TZ).strftime("%Y-%m-%d")
-        # 一次撈全部42檔(lookback個交易日約需 lookback*1.6 個日曆天緩衝週末/假日)再Python分組。
-        cal_days = int(lookback * 1.6) + 30
-        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
-                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-{cal_days} day')")
-        all_rows = conn.execute(
-            f"SELECT stock_id, trade_date, open, high, low, close FROM ({dd_sql}) "
-            f"ORDER BY stock_id, trade_date DESC",
-            (*sids, today)).fetchall()
-        conn.close()
-        by_sid = defaultdict(list)
-        for sid, td, o, h, lo, c in all_rows:
-            if len(by_sid[sid]) < lookback:
-                by_sid[sid].append((td, o, h, lo, c))
-        for sid, rows in by_sid.items():
-            rows = [r for r in rows if all(r[1:])][::-1]   # 反轉成由舊到新,才能用 i-60:i 當「前 60 日」
-            if len(rows) < 65:
-                continue
-            closes = [r[4] for r in rows]
-            line_price = line_date = None
-            for i in range(60, len(rows)):
-                _, o, h, lo, c = rows[i]
-                prev_c = closes[i - 1]
-                prior_hi = max(closes[i - 60:i])
-                if c > o and c > prev_c * 1.04 and c > prior_hi:
-                    line_price, line_date = lo, rows[i][0]
-            if line_price is not None:
-                out[sid] = {"price": line_price, "date": line_date}
-    except Exception as e:
-        print(f"[key_line] load failed: {e}", file=sys.stderr)
-    return out
 
 
 KEY_LINE = _load_key_line()
 
 
-def _load_pe_peer():
-    """本益比同族群排名(2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比)。
-
-    讀 scripts/research/pe_peer_group_research.py 產生的靜態快照(scratch/pe_peer_group_*.json)。
-    快照內存的是 TTM(近四季已公布)EPS + 用「快照當時最近收盤價」算出的本益比;EPS 每季才變,
-    快照可以放著不必每次渲染重抓 FinMind——但分子(價格)不該是快照的舊收盤價,渲染時用即時價重算
-    (見 _score_rows 的 r["pe_live"]),這才符合她說的「EPS慢、股價快,本益比要用即時股價每天重算」。
-
-    ⚠ 誠實揭露:她的方法分母是「預估EPS」(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估
-    EPS 的資料源,只能用「已公布 TTM EPS」——落後指標,不是預估指標。這是與原方法唯一的實質差異。
-    族群清單沿用既有 SUBCAT 細分類人工擴充真實上市櫃同業,已用 TaiwanStockInfo 驗證代號存在,
-    多數細分族群天生只有 3~8 檔真實同業,遠不到她說的 20~30 檔,如實呈現不硬湊。
-    """
-    path = DATA_DIR.parent / "scratch" / "pe_peer_group_2026-09-25.json"
-    try:
-        d = json.loads(path.read_text(encoding="utf-8"))
-        table = d.get("table", {})
-        eps = {}
-        for _rows in table.values():
-            for _r in _rows:
-                if _r.get("eps_ttm") is not None:
-                    eps[_r["sid"]] = (_r["eps_ttm"], _r.get("eps_asof"))
-        return table, d.get("peers", {}), d.get("generated"), eps
-    except Exception as e:  # noqa: BLE001
-        print(f"[pe_peer] load failed: {e}", file=sys.stderr)
-        return {}, {}, None, {}
-
-
 PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
-
-
-def _load_etf981_holdings():
-    """00981A(中信ARK創新)持股市值 + 對前一快照的變動金額(2026-09-27 jack 交辦)。
-
-    讀 etf_holdings(etf_code='00981A')最新兩個 snapshot_date 的 amount 欄(ezmoney 快照
-    當日市值=股數×當時收盤價,非即時重算)。只在最新快照出現=新進(視為從 0 增加);
-    只在前一快照出現=出清(視為降到 0)——兩者都是真實變動金額,不是資料缺漏。
-    與跟單研究線 00981a-l1h9(見 copytrade_l1h9_daily.py)共用同一張表,純展示欄,
-    不進分數、不影響任何評分或訊號。
-    """
-    out: dict[str, dict] = {}
-    asof = prev_asof = None
-    try:
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        dates = [row[0] for row in conn.execute(
-            "SELECT DISTINCT snapshot_date FROM etf_holdings WHERE etf_code='00981A' "
-            "ORDER BY snapshot_date DESC LIMIT 2").fetchall()]
-        if dates:
-            asof = dates[0]
-            prev_asof = dates[1] if len(dates) > 1 else None
-            cur = dict(conn.execute(
-                "SELECT stock_id, amount FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
-                (asof,)).fetchall())
-            prev = dict(conn.execute(
-                "SELECT stock_id, amount FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
-                (prev_asof,)).fetchall()) if prev_asof else {}
-            for sid, amt in cur.items():
-                out[sid] = {"amount": amt or 0.0, "delta": (amt or 0.0) - (prev.get(sid) or 0.0)}
-            for sid, amt in prev.items():
-                if sid not in out:
-                    out[sid] = {"amount": 0.0, "delta": -(amt or 0.0)}
-        conn.close()
-    except Exception as e:  # noqa: BLE001
-        print(f"[etf981] load failed: {e}", file=sys.stderr)
-    return out, asof, prev_asof
 
 
 ETF981_HOLD, ETF981_ASOF, ETF981_PREV_ASOF = _load_etf981_holdings()
@@ -582,148 +307,7 @@ ATR_SQUEEZE_PCTL = 0.30
 ATR_BREAKOUT_K = 1.5  # 節目原話:「這個慣性超過1.5倍,我覺得不合理,你要立刻出場,因為方向改變了」
 
 
-def _load_atr_state(n_bars=260):
-    """ATR(平均真實區間)盤整壓縮/突破狀態(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師
-    節目 ATR 段落 + Wilder《New Concepts in Technical Trading Systems》1978 原始定義)。
-
-    TR(真實區間) = max(高−低, |高−昨收|, |低−昨收|);ATR14 = Wilder 平滑(遞迴:
-    ATR_t=(ATR_{t-1}×13+TR_t)/14,種子=前14筆TR簡單平均)。「壓縮」定義=今日ATR%(=ATR14÷收盤)
-    落在近120個交易日自身歷史的後30%分位(自身相對壓縮,非跨股比較——呼應本案已確立的
-    「固定%門檻跨時段不可比較,正規化須用個股自身近期慣性」原則)。
-
-    本函式只算到「昨收為止」已知的 ATR14/ATR%/壓縮旗標;「異常」(今日真實區間>1.5×此ATR14)
-    需要今天的高低,由 _score_rows 用即時 ST.day 現算,避免用到未來資訊。
-
-    ⚠ 2026-09-25 嚴謹回測(scripts/research/atr_key_line_research.py,scratch/atr_key_line_research_2026-09-25.txt,
-    21年史·IS/OOS拆2023·日聚類SE·扣42檔等權籃子同期報酬·扣50bps成本·安慰劑·集中度·逐年,僅限這42檔):
-      · 「壓縮→突破」事件本身(不論方向、不論是否貼近關鍵一條線):DROP。10/40/60日持有期 IS/OOS
-        異號、安慰劑5組範圍完全蓋過真實事件均值(統計上與隨機日不可區分)、前5檔貢獻佔比達354%
-        (比關鍵一條線已否決的96%集中度更極端,逐年正負交替無穩定方向)。不進分數,純描述性狀態顯示。
-      · 突破事件『恰好貼近關鍵一條線(±1倍ATR內)』是本次唯一 IS/OOS 同號的子集(IS t+1.66、
-        OOS t+1.80),方向一致但仍未過本案嚴格門檻(|t_OOS|≥2),UI 標記★近線僅供觀察、不進分數。
-      · 用『距離÷ATR』取代關鍵一條線原本的『距離%』重跑橫斷面IC:OOS t 由 +1.26 小幅升至 +1.63,
-        方向一致但同樣未過門檻,只當研究記錄,關鍵一條線欄位主指標仍用距離%不換。
-    """
-    out = {}
-    try:
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        sids = list(NAMES)
-        ph = ",".join("?" * len(sids))
-        today = datetime.now(TZ).strftime("%Y-%m-%d")
-        cal_days = int(n_bars * 1.6) + 30
-        dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
-                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-{cal_days} day')")
-        all_rows = conn.execute(
-            f"SELECT stock_id, trade_date, high, low, close FROM ({dd_sql}) "
-            f"ORDER BY stock_id, trade_date DESC",
-            (*sids, today)).fetchall()
-        conn.close()
-        by_sid = defaultdict(list)
-        for sid, td, h_, lo_, c_ in all_rows:
-            if len(by_sid[sid]) < n_bars:
-                by_sid[sid].append((td, h_, lo_, c_))
-        for sid, rows in by_sid.items():
-            rows = [r for r in rows if all(r[1:])][::-1]
-            if len(rows) < ATR_SQUEEZE_LOOKBACK + ATR_N + 20:
-                continue
-            h = [r[1] for r in rows]; lo = [r[2] for r in rows]; c = [r[3] for r in rows]
-            tr = [None] * len(rows)
-            for i in range(1, len(rows)):
-                tr[i] = max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(lo[i] - c[i - 1]))
-            atr = [None] * len(rows)
-            atr[ATR_N] = sum(tr[1:ATR_N + 1]) / ATR_N
-            for i in range(ATR_N + 1, len(rows)):
-                atr[i] = (atr[i - 1] * (ATR_N - 1) + tr[i]) / ATR_N
-            atr_pct = [(atr[i] / c[i]) if atr[i] else None for i in range(len(rows))]
-            valid_idx = [i for i in range(len(atr_pct)) if atr_pct[i] is not None]
-            if len(valid_idx) < ATR_SQUEEZE_LOOKBACK + 1:
-                continue
-            last_i = valid_idx[-1]
-            hist = [atr_pct[i] for i in valid_idx[-ATR_SQUEEZE_LOOKBACK - 1:-1]]
-            cur = atr_pct[last_i]
-            pctl = sum(1 for x in hist if x < cur) / len(hist)
-            out[sid] = {"atr14": atr[last_i], "atr_pct": cur * 100,
-                        "squeeze": pctl <= ATR_SQUEEZE_PCTL, "asof": rows[last_i][0]}
-    except Exception as e:  # noqa: BLE001
-        print(f"[atr_state] load failed: {e}", file=sys.stderr)
-    return out
-
-
 ATR_STATE = _load_atr_state()
-
-
-def _load_xq_style():
-    """XQ全球贏家風格欄位(2026-09-27 jack 交辦):讀 compute_xq_style_metrics.py 算好寫進
-    stock_xq_style_daily 的最新一列(日頻技術/籌碼欄)。純展示欄，不進分數。逐欄公式/來源見
-    該腳本 docstring。
-
-    2026-09-27 DB清理路線圖 Step 3 拆表後,800大戶/10散戶持股%與Beta不再存在這張日頻表裡
-    (兩者都不是「日頻事實」,存成本表欄位只會製造過期問題),改成這裡直接呼叫
-    compute_xq_style_metrics 的 _load_holder_tiers()/_load_beta() 即時查詢
-    stock_holding_dispersion_weekly/stock_beta,merge 回同一個 dict。"""
-    live_keys = ("holder_asof_week", "big800_holder_pct", "big800_holder_pct_chg_w",
-                 "retail10_holder_pct", "retail10_holder_pct_chg_w", "beta", "beta_asof")
-    out = {}
-    try:
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        for sid in NAMES:
-            row = conn.execute(
-                "SELECT trade_date, turnover_pct, ret_chg5d_pct, sma_20d, ema_20d, ema_sma_20d_diff, "
-                "macd_dif, macd_dea, macd_hist, hist_vol_20d_pct, concentration_pct, "
-                "foreign_net_pct, trust_net_pct, dealer_net_pct, sbl_sell_chg1d, sbl_sell_chg5d, "
-                "daytrade_pct, foreign_holding_pct, block_volume, block_amount, block_count "
-                "FROM stock_xq_style_daily WHERE stock_id=? ORDER BY trade_date DESC LIMIT 1",
-                (sid,)).fetchone()
-            if not row:
-                continue
-            keys = ("asof", "turnover_pct", "ret_chg5d_pct", "sma_20d", "ema_20d", "ema_sma_20d_diff",
-                    "macd_dif", "macd_dea", "macd_hist", "hist_vol_20d_pct", "concentration_pct",
-                    "foreign_net_pct", "trust_net_pct", "dealer_net_pct", "sbl_sell_chg1d", "sbl_sell_chg5d",
-                    "daytrade_pct", "foreign_holding_pct", "block_volume", "block_amount", "block_count")
-            d = dict(zip(keys, row))
-            d.update(dict.fromkeys(live_keys))  # 先全部補 None,下面即時查詢查得到才覆蓋,確保鍵永遠存在
-            # 即時查詢(不落地):800大戶/10散戶持股%(週頻)+ Beta(非時間序列,只有最新值)
-            weeks_sorted, big800_wk, retail10_wk = _load_holder_tiers(conn, sid)
-            if weeks_sorted:
-                wk = weeks_sorted[-1]
-                d["holder_asof_week"] = wk
-                d["big800_holder_pct"] = big800_wk.get(wk)
-                d["retail10_holder_pct"] = retail10_wk.get(wk)
-                if len(weeks_sorted) >= 2:
-                    pwk = weeks_sorted[-2]
-                    if d["big800_holder_pct"] is not None and big800_wk.get(pwk) is not None:
-                        d["big800_holder_pct_chg_w"] = d["big800_holder_pct"] - big800_wk[pwk]
-                    if d["retail10_holder_pct"] is not None and retail10_wk.get(pwk) is not None:
-                        d["retail10_holder_pct_chg_w"] = d["retail10_holder_pct"] - retail10_wk[pwk]
-            beta_val, beta_asof = _load_beta(conn, sid)
-            if beta_val is not None:
-                d["beta"] = beta_val
-                d["beta_asof"] = beta_asof
-            out[sid] = d
-        conn.close()
-    except Exception as e:  # noqa: BLE001
-        print(f"[xq_style] load failed: {e}", file=sys.stderr)
-    return out
-
-
-def _load_vixtwn():
-    """台灣VIX(2026-09-27 jack 交辦「稽核」後同意放進個別頁面):market_vix_daily 表,
-    vixtwn-daily-sync launchd job 每日產生,市場層級(非個股),各詳情頁共用同一組數字。"""
-    try:
-        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        rows = conn.execute(
-            "SELECT date, close FROM market_vix_daily WHERE symbol='VIXTWN' "
-            "ORDER BY date DESC LIMIT 2").fetchall()
-        conn.close()
-        if not rows:
-            return {}
-        cur = rows[0]
-        prev = rows[1] if len(rows) > 1 else None
-        chg = ((cur[1] / prev[1] - 1) * 100) if (prev and prev[1]) else None
-        return {"asof": cur[0], "close": cur[1], "chg_pct": chg}
-    except Exception as e:  # noqa: BLE001
-        print(f"[vixtwn] load failed: {e}", file=sys.stderr)
-        return {}
 
 
 XQ_STYLE = _load_xq_style()
@@ -753,72 +337,6 @@ VOLRISK_STALE_DAYS = 7            # 融資/借券最新一筆超過這麼多天�
 VOLRISK_TIERS = ((92, "🌊🌊"), (86, "🌊"), (80, ""))  # 第三級只上色不加圖示,由極端到寬鬆
 
 
-def _load_vol_risk_flags():
-    """算出每檔股票「最新一筆」融資/借券變化幅度(不分方向)的歷史分位平均分數。
-    來源去重統一走 source_dedup.dedup_query(2026-09-27 DB清理路線圖 Step 2 SSOT),
-    不再各自刻 ROW_NUMBER/漏刻去重。"""
-    conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-    sids = list(NAMES)
-    ph = ",".join("?" * len(sids))
-    mg_by_sid = defaultdict(list)
-    mg_sql = dedup_query("stock_margin_daily", ("stock_id", "trade_date"),
-                          inner_where=f"WHERE stock_id IN ({ph})")
-    for sid, td, bal in conn.execute(
-            f"SELECT stock_id, trade_date, margin_balance FROM ({mg_sql}) "
-            f"ORDER BY stock_id, trade_date", sids):
-        mg_by_sid[sid].append((td, bal))
-    ln_by_sid = defaultdict(list)
-    ln_sql = dedup_query("stock_lending_balance_daily", ("stock_id", "trade_date"),
-                          inner_where=f"WHERE stock_id IN ({ph})")
-    for sid, td, prev_bal, bal in conn.execute(
-            f"SELECT stock_id, trade_date, prev_balance, lending_balance FROM ({ln_sql}) "
-            f"ORDER BY stock_id, trade_date", sids):
-        ln_by_sid[sid].append((td, prev_bal, bal))
-    conn.close()
-
-    out = {}
-    for sid in sids:
-        m, l = mg_by_sid.get(sid, []), ln_by_sid.get(sid, [])
-        if len(m) < VOLRISK_MIN_OBS + 1 or len(l) < VOLRISK_MIN_OBS:
-            continue
-        m_dates, m_pct = [], []
-        for i in range(1, len(m)):
-            prev, cur = m[i - 1][1], m[i][1]
-            if prev and prev >= MIN_PREV_MARGIN_LOTS and cur is not None:
-                m_dates.append(m[i][0])
-                m_pct.append((cur - prev) / prev)
-        l_dates, l_pct = [], []
-        for td, prev, bal in l:
-            if prev and prev >= MIN_PREV_LENDING_SHARES and bal is not None:
-                l_dates.append(td)
-                l_pct.append((bal - prev) / prev)
-        if len(m_pct) < VOLRISK_MIN_OBS or len(l_pct) < VOLRISK_MIN_OBS:
-            continue
-        days_stale = max(
-            (datetime.now(TZ).date() - datetime.strptime(d, "%Y-%m-%d").date()).days
-            for d in (m_dates[-1], l_dates[-1])
-        )
-        if days_stale > VOLRISK_STALE_DAYS:
-            out[sid] = {
-                "score": None, "tier": None, "stale": True, "days_stale": days_stale,
-                "margin_asof": m_dates[-1], "lending_asof": l_dates[-1],
-                "margin_pct": m_pct[-1], "lending_pct": l_pct[-1],
-                "margin_abs_pctile": None, "lending_abs_pctile": None,
-            }
-            continue
-        m_last = _pctile_rank([abs(x) for x in m_pct])[-1]
-        l_last = _pctile_rank([abs(x) for x in l_pct])[-1]
-        score = (m_last + l_last) / 2 * 100
-        tier = next((badge for thr, badge in VOLRISK_TIERS if score >= thr), None)
-        out[sid] = {
-            "score": score, "tier": tier, "stale": False, "days_stale": days_stale,
-            "margin_asof": m_dates[-1], "lending_asof": l_dates[-1],
-            "margin_pct": m_pct[-1], "lending_pct": l_pct[-1],
-            "margin_abs_pctile": m_last, "lending_abs_pctile": l_last,
-        }
-    return out
-
-
 VOLRISK, VOLRISK_DATE = {}, None
 
 
@@ -841,12 +359,6 @@ def _refresh_vol_risk_if_needed() -> bool:
 
 OOS_FILE = DATA_DIR.parent / "cache" / "biglot_live_watch" / "oos_scoreboard.json"
 
-def _oos_load():
-    try:
-        return json.load(open(OOS_FILE))
-    except Exception:
-        return {"intraday": [], "overnight": [], "overnight_pending": [],
-            "overnight_short": [], "overnight_short_pending": []}
 
 def _oos_summary():
     o = _oos_load()
@@ -1121,20 +633,6 @@ ICEBERG_REPLENISH_FRAC = 0.5   # 補回到耗盡前≥50%,第一次補回=「偵
 ICEBERG_GRACE_SEC = 20 * 60    # 價位暫時滑出五檔的寬限期(原文:keeps state until expected replenishment has not occurred)
 ICEBERG_TRADE_TOL = 0.003      # 成交價須在守價位±0.3%內才算confirm(交叉比對真實逐筆成交)
 ICEBERG_TRADE_LOOKBACK = 30    # 秒,confirm用的成交回看窗
-
-
-def _iceberg_trade_confirms(sid, ts_lo, ts_hi, price):
-    """交叉比對 ST.recent[sid](逐筆真實成交,_ingest_trade 已在填)是否有成交打在 price 附近、
-    時間落在 [ts_lo, ts_hi]。取代舊版用『當天累計量有沒有動』當代理(落差三,見腳本開頭說明)。"""
-    lo, hi = price * (1 - ICEBERG_TRADE_TOL), price * (1 + ICEBERG_TRADE_TOL)
-    for ts, px, _amt, _sgn, _big, _ret in ST.recent.get(sid, ()):
-        if ts < ts_lo:
-            continue
-        if ts > ts_hi:
-            break
-        if lo <= px <= hi:
-            return True
-    return False
 
 
 def _iceberg_update(r):
@@ -1429,89 +927,6 @@ def _ingest_trade(line):
         ds["mid"] += sgn * amt
 
 
-def _rolling(sid, nts):
-    """每秒滾動窗:5分=(now−300s, now]、30分=(now−1800s, now]、參與Δ=本30分 − 前30分。
-    只供欄位顯示;標籤照舊用完成的 5 分桶。無逐筆時回 None。"""
-    out = {k: None for k in ("big5_r", "big30_r", "retn5_r", "rbuy5_r", "rsell5_r",
-                             "rbuy30_r", "rsell30_r", "dsh30_r", "w_ret_r", "r30_r",
-                             "tot5_r", "tot30_r", "big5p_r", "bigp30_r", "share5_r", "dshare5_r", "sell30s_r", "r30s_r")}
-    q = ST.recent.get(sid)
-    if not q:
-        return out
-    t5, t30, t60 = nts - 300, nts - 1800, nts - 3600
-    t10, t35 = nts - 600, nts - 2100          # 前一個 5 分窗 / 「本 5 分之前的 30 分」(純機構的逆大戶條件)
-    big5 = big30 = tot5 = tot30 = retn5 = ret2_5 = retn30 = ret2_30 = 0.0
-    tot_p = ret2_p = 0.0
-    big5p = tot5p = ret2_5p = bigp30 = 0.0
-    t30s = nts - 30
-    sbuy = ssell = 0.0                        # 近 30 秒主動買/賣金額(竭盡狀態格用)
-    px5 = px30 = px30s = None                 # px30s = 30 秒前成交價(近30秒報酬,V2.5 真空/已止跌判定)
-    for ts, px, amt, sgn, isbig, isret in q:
-        if ts <= t60:
-            continue
-        if t35 < ts <= t5 and isbig:
-            bigp30 += sgn * amt
-        if t10 < ts <= t5:
-            tot5p += amt
-            if isbig:
-                big5p += sgn * amt
-            if isret:
-                ret2_5p += amt
-        if ts <= t30:
-            px30 = px
-            tot_p += amt
-            if isret:
-                ret2_p += amt
-            continue
-        tot30 += amt
-        if isbig:
-            big30 += sgn * amt
-        if isret:
-            ret2_30 += amt
-            retn30 += sgn * amt
-        if ts > t30s:
-            if sgn > 0:
-                sbuy += amt
-            elif sgn < 0:
-                ssell += amt
-        else:
-            px30s = px
-        if ts <= t5:
-            px5 = px
-        else:
-            tot5 += amt
-            if isbig:
-                big5 += sgn * amt
-            if isret:
-                ret2_5 += amt
-                retn5 += sgn * amt
-    pxnow = q[-1][1]
-    if px5 is None:
-        px5 = px30
-    out["big5_r"], out["big30_r"], out["retn5_r"] = big5, big30, retn5
-    out["tot5_r"], out["tot30_r"], out["big5p_r"], out["bigp30_r"] = tot5, tot30, big5p, bigp30
-    if sbuy + ssell > 0:
-        out["sell30s_r"] = ssell / (sbuy + ssell)
-    if px30s and pxnow:
-        out["r30s_r"] = (pxnow / px30s - 1) * 10000
-    if tot5 > 0:
-        out["rbuy5_r"] = (ret2_5 + retn5) / 2 / tot5 * 100
-        out["rsell5_r"] = (ret2_5 - retn5) / 2 / tot5 * 100
-        out["share5_r"] = ret2_5 / tot5 * 100                      # 5 分散戶參與(買+賣)
-        if tot5p > 0:
-            out["dshare5_r"] = out["share5_r"] - ret2_5p / tot5p * 100   # 參與 Δ(本 5 分 − 前 5 分,pp)
-    if tot30 > 0:
-        out["rbuy30_r"] = (ret2_30 + retn30) / 2 / tot30 * 100
-        out["rsell30_r"] = (ret2_30 - retn30) / 2 / tot30 * 100
-        if tot_p > 0:
-            out["dsh30_r"] = ret2_30 / tot30 * 100 - ret2_p / tot_p * 100
-    if px5:
-        out["w_ret_r"] = (pxnow / px5 - 1) * 10000
-    if px30:
-        out["r30_r"] = (pxnow / px30 - 1) * 10000
-    return out
-
-
 def _limits(pc):
     """台股漲跌停價(±10%,對齊 tick):漲停=不超過+10%的最大tick、跌停=不低於−10%的最小tick。"""
     import math
@@ -1520,59 +935,6 @@ def _limits(pc):
 
 
 SHADOW = {"date": None, "events": []}
-
-
-def _shadow_triple(rows, now):
-    """權證三條件影子帳(不顯示、不進訊號、不進OOS記分)。
-    對照組=已驗證的『主力點火5分』兩腳:5分大戶淨買≥3千萬 ∧ 散買%<5%(非高價股不可測)。
-    每檔每個5分窗第一次成立時記一筆,附當下權證欄位(活動量+簽號),之後自動補 5分/30分/收盤價;
-    隔夜由離線分析從 stock_daily_bars 補。這樣任何權證門檻都能離線測,且能算對『兩腳單獨』的增量。
-    檔案:cache/biglot_live_watch/warrant_triple_shadow_{date}.json(整檔覆寫,重啟時讀回)。"""
-    d = now.strftime("%Y-%m-%d")
-    f = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"warrant_triple_shadow_{d}.json"
-    if SHADOW["date"] != d:
-        SHADOW["date"], SHADOW["events"] = d, []
-        try:
-            if f.exists():
-                SHADOW["events"] = json.loads(f.read_text())
-        except Exception:
-            SHADOW["events"] = []
-    hm = now.strftime("%H:%M")
-    bk = bucket_key(now).strftime("%H:%M")
-    seen = {(e["sid"], e["bk"]) for e in SHADOW["events"]}
-    changed = False
-    for r in rows:
-        if (r.get("unm") or r.get("big5") is None or r.get("rbuy5") is None
-                or not r.get("px") or hm >= "13:25" or (r["sid"], bk) in seen):
-            continue
-        if r["big5"] >= 3e7 and r["rbuy5"] < 5:
-            w = WRT.get(r["sid"]) if isinstance(WRT.get(r["sid"]), dict) else {}
-            SHADOW["events"].append({
-                "sid": r["sid"], "bk": bk, "t": now.strftime("%H:%M:%S"), "ts": now.timestamp(),
-                "px0": r["px"], "big5": r["big5"], "rbuy5": r["rbuy5"], "big30": r.get("big30"),
-                "r5": r.get("w_ret"), "r30": r.get("r30"), "rvol5": r.get("rvol5"),
-                "call_5": w.get("call_5"), "put_5": w.get("put_5"),
-                "bull_5": w.get("bull_5"), "bear_5": w.get("bear_5"),
-                "bull_30": w.get("bull_30"), "bear_30": w.get("bear_30"),
-                "n_call": w.get("n_call"), "px5": None, "px30": None, "pxc": None})
-            changed = True
-    pxnow = {r["sid"]: r["px"] for r in rows if r.get("px")}
-    tnow = now.timestamp()
-    for e in SHADOW["events"]:
-        p = pxnow.get(e["sid"])
-        if not p:
-            continue
-        if e["px5"] is None and tnow >= e["ts"] + 300:
-            e["px5"] = p; changed = True
-        if e["px30"] is None and tnow >= e["ts"] + 1800:
-            e["px30"] = p; changed = True
-        if e["pxc"] is None and hm >= "13:30":
-            e["pxc"] = p; changed = True
-    if changed:
-        try:
-            f.write_text(json.dumps(SHADOW["events"], ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
 
 
 def _px_class(px, pc, chg):
@@ -1636,71 +998,6 @@ TAG_DEFS = [
 ]
 
 
-def _tag_engine(rows, nts, now):
-    """回傳 sid -> {"bull":[txt...], "bear":[...], "ex":[...]};同時維護 TAG_STATE 並落地觸發事件。"""
-    day = now.strftime("%Y-%m-%d")
-    statep = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"tag_state_{day}.json"
-    if TAG_LOG_DAY["d"] != day:
-        TAG_STATE.clear()
-        TAG_LOG_DAY["d"] = day
-        try:                                   # 同日重啟:接續既有觸發時刻(不然全部歸零變 0′)
-            for k, v in json.loads(statep.read_text()).items():
-                sid, tag = k.split("|", 1)
-                TAG_STATE[(sid, tag)] = {"pend": None, "t0": v["t0"], "hz": v["hz"], "dead": v["dead"], "tail": v["tail"], "txt": v["txt"]}
-        except Exception:  # noqa: BLE001
-            pass
-    logp = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"tag_events_{day}.jsonl"
-    fired = False
-    hm = now.strftime("%H:%M")
-    out = {}
-    for r in rows:
-        sid = r["sid"]
-        res = {"bull": [], "bear": [], "ex": []}
-        for tag, kind, hz, cond, dead, name in TAG_DEFS:
-            st = TAG_STATE.setdefault((sid, tag), {"pend": None, "t0": None, "hz": hz, "dead": False, "tail": False, "txt": ""})
-            try:
-                ok = bool(cond(r))
-            except Exception:  # noqa: BLE001
-                ok = False
-            active = st["t0"] is not None and nts - st["t0"] < hz
-            if ok:
-                if st["pend"] is None:
-                    st["pend"] = nts
-                if not active and nts - st["pend"] >= TAG_HOLD_SEC:
-                    st.update({"t0": nts, "dead": False, "tail": hm >= "13:00" and hz >= 1800, "txt": name(r)})
-                    active = True
-                    fired = True
-                    try:
-                        with logp.open("a", encoding="utf-8") as f:
-                            f.write(json.dumps({"t": now.strftime("%H:%M:%S"), "sid": sid, "name": r["name"], "tag": tag, "txt": st["txt"],
-                                                "px": r.get("px"), "big30_r": r.get("big30_r"), "big5_r": r.get("big5_r"),
-                                                "par30": _par30(r), "r30_r": r.get("r30_r"), "w_ret_r": r.get("w_ret_r"),
-                                                "rvol5_r": r.get("rvol5_r")}, ensure_ascii=False) + "\n")
-                    except Exception:  # noqa: BLE001
-                        pass
-            else:
-                st["pend"] = None
-            if active:
-                try:
-                    if dead(r):
-                        st["dead"] = True
-                except Exception:  # noqa: BLE001
-                    pass
-                age = int((nts - st["t0"]) // 60)
-                txt = f"{st['txt']}{age}′" + ("✗" if st["dead"] else "") + ("尾" if st["tail"] else "")
-                if age < 5 and not st["dead"]:
-                    txt = f"<b>{txt}</b>"                      # ≤5 分 = 最佳狀態(粗體)
-                res[kind].append(txt)
-        out[sid] = res
-    if fired:
-        try:
-            statep.write_text(json.dumps({f"{s}|{t}": {"t0": v["t0"], "hz": v["hz"], "dead": v["dead"], "tail": v["tail"], "txt": v["txt"]}
-                                          for (s, t), v in TAG_STATE.items() if v["t0"] is not None}, ensure_ascii=False))
-        except Exception:  # noqa: BLE001
-            pass
-    return out
-
-
 #: 各訊號的時間價值曲線 (平台秒數, 歸零秒數):經過 < 平台 → 1.0;之後線性降到 歸零秒 = 0。依各格驗證時距設定(2026-09-24):
 #:   主力點火/深接/勿追/噴後過熱:基準率=首次觸發後 30 分 → 0 平台、30 分歸零
 #:   純機構:30 分 +24~29、45 分 +36 仍成長 → 5 分平台、45 分歸零
@@ -1709,20 +1006,6 @@ def _tag_engine(rows, nts, now):
 TAG_DECAY = {"主力點火": (0, 1800), "純機構": (300, 2700), "深接30": (0, 1800), "深接5m": (0, 1800),
              "機構暗退": (3600, 7200), "噴後過熱": (0, 1800), "散戶虛拉": (600, 3600),
              "勿追30": (0, 1800), "勿追5m": (0, 1800), "虛胖接刀": (0, 300)}
-
-
-def _active_tags(sid, nts):
-    """標籤 → 時間價值權重(依 TAG_DECAY 各格不同曲線);未 ✗ 且尚未歸零者才算。"""
-    out = {}
-    for (s_, tag), st in TAG_STATE.items():
-        if s_ != sid or st["t0"] is None or st["dead"]:
-            continue
-        flat, zero = TAG_DECAY.get(tag, (0, st["hz"]))
-        age = nts - st["t0"]
-        if age >= zero:
-            continue
-        out[tag] = 1.0 if age < flat else max(0.0, 1.0 - (age - flat) / max(1, zero - flat))
-    return out
 
 
 def _score_rows(rows, mkt30, nts, mkt30_r=None):
@@ -1841,47 +1124,6 @@ V23_W = {   # 名稱沿用;內容為 V2.5(2026-09-24 晚)
 }
 
 
-def _score_v22_legacy(r, mkt30, hm):
-    """V2.2 加總(bps;僅供並列落地/tooltip 對照,不顯示主值)。與 f63aa01 版同邏輯。"""
-    if hm < "09:30":
-        return 0.0
-    fac = 0.5 if hm < "10:00" else 1.0; sc = 0.0
-    w5 = r.get("w_ret_r"); r30 = r.get("r30_r"); rb5 = r.get("rbuy5_r"); unm = r["unm"]; b5n = _b5n(r)
-    ret = []
-    if w5 is not None and w5 > 20 and rb5 is not None and rb5 >= 5 and not unm: ret.append(-10 if w5 > 50 else -8)
-    if w5 is not None and w5 > 20 and (((r.get("dshare5_r") or 0) > 5 and not unm) or (b5n is not None and b5n < -5)): ret.append(-8)
-    if ret: sc += min(ret)
-    if w5 is not None and w5 < -20 and rb5 is not None and rb5 >= 5 and not unm: sc += 4
-    if r30 is not None:
-        if r30 >= 600: pass
-        elif r30 >= 400: sc += -21 * (600 - r30) / 200
-        elif r30 >= 300: sc += -18
-        elif r30 >= 200: sc += -13
-        elif r30 >= 150: sc += -10
-        if r30 <= -600: sc += 23
-        elif r30 <= -400: sc += 22
-        elif r30 <= -300: sc += 14
-        elif r30 <= -200: sc += 6
-        if mkt30 >= 5 and r30 >= 20 and "10:00" <= hm < "12:00": sc += -3
-        if mkt30 <= -5 and r30 <= -20: sc += 3
-        if mkt30 <= -5 and r30 >= 20: sc += -7
-        if mkt30 >= 5:
-            if r30 <= -100: sc += 11
-            elif r30 <= -50: sc += 8
-            elif r30 <= -20: sc += 6
-    dr = r.get("day_ret")
-    if dr is not None:
-        if dr > 5: sc += -15
-        elif dr > 3: sc += -9
-        elif dr < -5: sc += 12
-        elif dr < -3: sc += 8
-    if (hm >= "10:00" and b5n is not None and b5n > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not unm
-            and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0):
-        sc += 12
-    sc = round(sc * fac, 1)
-    return max(-40.0, min(40.0, sc))
-
-
 def _score_v2(r, mkt30, hm=None):
     """盤中分 V2.3(bps;2026-09-24):權重表 V23_W(IS 聯合 OLS×0.7 收縮,t<2 歸零),各項**可加**、無同源取一次
     (聯合係數已是條件增量)、無時段係數(池化擬合;09:30 前仍不計)、|分| 上限 40。
@@ -1958,58 +1200,8 @@ def _score_v2(r, mkt30, hm=None):
 SC_LOGGED: set = set()   # (日, 5分桶, sid) 已落地
 
 
-def _log_scores(rows, day):
-    """每個 5 分桶第一次 render 時把各檔 V2.3/V2.2/隔夜分 落到 score_v2_{日}.jsonl(供累 20 日算 IC / 對照面板)。"""
-    now = datetime.now(TZ); bk = f"{now.hour:02d}:{now.minute - now.minute % 5:02d}"
-    if not ("09:30" <= bk <= "13:25"):
-        return
-    logp = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"score_v2_{day}.jsonl"
-    out = []
-    for r in rows:
-        key = (day, bk, r["sid"])
-        if key in SC_LOGGED or r.get("sc_v2") is None:
-            continue
-        SC_LOGGED.add(key)
-        out.append(json.dumps({"date": day, "bucket": bk, "ts": now.strftime("%H:%M:%S"), "sid": r["sid"], "px": r.get("px"),
-                               "sc_v23": r["sc_v2"], "sc_v22": r.get("sc_v22"), "sc_ov": r.get("sc_ov"), "sc_v1": r.get("sc_in"),
-                               "items": r.get("sc_v2_items") or [], "cause": [t for t, _ in (r.get("cause") or [])],
-                               "mini": ({k: (v if k != "n30" and k != "n5" else list(v)) for k, v in r["mini"].items()} if r.get("mini") else None),
-                               "hold": r.get("hold")}, ensure_ascii=False))
-    if out:
-        try:
-            logp.parent.mkdir(parents=True, exist_ok=True)
-            with logp.open("a", encoding="utf-8") as f:
-                f.write("\n".join(out) + "\n")
-        except Exception:  # noqa: BLE001
-            pass
-
-
-
 # ---- 成因標籤(jack 2026-09-24:極值分數進場前要知道「為什麼」——處置/跌停/族群/MOPS,每項標來源與時間)----
 _DISP_CACHE: dict = {"date": None, "sids": {}, "mtime": None}
-
-
-def _disposal_today(today: str) -> dict:
-    """處置窗內的 sid → (measure, end)。來源 ${DATA_DIR}/disposal/disposal_windows.csv(fetch_disposal_list.py,
-    limitup-fade-nightly 每晚更新;TWSE 可回溯、TPEx 只有當日快照靠每日累積)。"""
-    f = DATA_DIR / "disposal" / "disposal_windows.csv"
-    try:
-        mt = f.stat().st_mtime
-    except OSError:
-        return {}
-    if _DISP_CACHE["date"] == today and _DISP_CACHE["mtime"] == mt:
-        return _DISP_CACHE["sids"]
-    out = {}
-    try:
-        import csv
-        with f.open(encoding="utf-8") as fh:
-            for row in csv.DictReader(fh):
-                if row.get("start", "") <= today <= row.get("end", ""):
-                    out[str(row.get("stock_id", ""))] = (row.get("measure", "")[:6], row.get("end", ""))
-    except Exception:  # noqa: BLE001
-        pass
-    _DISP_CACHE.update(date=today, sids=out, mtime=mt)
-    return out
 
 
 def _limit_down(y: float) -> float:
@@ -2093,78 +1285,11 @@ def _cause_tags(rows, today: str):
         r["cause"] = tags
 
 
-
 # ---- 期散(小型契約 1 口成交 = 期貨市場散戶代理;jack 2026-09-25):只對 FUT_MINI 檔顯示,描述性、不進分數 ----
 from collections import deque as _deque_mini
 MINI_ROOT = {r["sid"]: (r["fut_code"][:-1] if len(r.get("fut_code", "")) == 3 and r["fut_code"].endswith("F") else r.get("fut_code", "")).lower()
              for r in _cal["universe"] if r.get("is_mini")}
 MINI_ST: dict = {"day": None, "off": {}, "q": {}}       # off: root -> 檔案讀取位移;q: sid -> deque[(ts, px, size, sgn, amt)]
-
-
-def _ingest_mini_fut(today: str) -> None:
-    """增量讀 {root}_trades_{today}.jsonl(期貨簿收集器落地,交易所 µs 時戳),只留 FUT_MINI 檔;主動方向以該筆 bid/ask 判。"""
-    if MINI_ST["day"] != today:
-        MINI_ST.update({"day": today, "off": {}, "q": {}})
-    for sid, root in MINI_ROOT.items():
-        f = DATA_DIR.parent / "cache" / f"{root}_trades" / f"{root}_trades_{today}.jsonl"
-        if not f.exists():
-            continue
-        try:
-            with open(f, "rb") as fh:
-                fh.seek(MINI_ST["off"].get(root, 0)); chunk = fh.read()
-            nl = chunk.rfind(b"\n")
-            if nl == -1:
-                continue
-            MINI_ST["off"][root] = MINI_ST["off"].get(root, 0) + nl + 1
-            q = MINI_ST["q"].setdefault(sid, _deque_mini())
-            for line in chunk[:nl].split(b"\n"):
-                try:
-                    o = json.loads(line)
-                    if o.get("stale") or o.get("quote_type") not in (None, "FUTURE"):
-                        continue
-                    px, sz, b, a = float(o["price"]), float(o["size"]), o.get("bid"), o.get("ask")
-                    sgn = 1 if (a is not None and px >= float(a)) else (-1 if (b is not None and px <= float(b)) else 0)
-                    ts = float(o["trade_time"]) / 1e6
-                    q.append((ts, px, sz, sgn, px * sz * 100))          # 小型契約 1 口 = 100 股
-                except Exception:  # noqa: BLE001
-                    continue
-            cut = time.time() - 7200
-            while q and q[0][0] < cut:
-                q.popleft()
-        except Exception:  # noqa: BLE001
-            continue
-
-
-def _mini_stats(sid: str, nts: float) -> dict | None:
-    q = MINI_ST["q"].get(sid)
-    if not q:
-        return None
-    out = {}
-    for lab, win in (("5", 300), ("30", 1800)):
-        t0 = nts - win; n1 = a1 = tot = 0.0; nb = ns = 0
-        for ts, px, sz, sgn, amt in q:
-            if ts <= t0: continue
-            tot += amt
-            if sz == 1 and sgn:
-                n1 += sgn * amt; a1 += amt; nb += (sgn > 0); ns += (sgn < 0)
-        out[f"net{lab}"] = n1; out[f"share{lab}"] = (a1 / tot * 100) if tot > 0 else None; out[f"n{lab}"] = (nb, ns); out[f"tot{lab}"] = tot
-    return out
-
-
-def _mini_td(r) -> str:
-    if r["sid"] not in FUT_MINI:
-        return "<td class='dim'>—</td>"
-    m = r.get("mini")
-    if not m or m.get("tot30", 0) <= 0:
-        return "<td class='dim' title='期散:小型契約 1 口成交(期貨散戶代理);今日尚無小型成交'>無</td>"
-    net, sh, (nb, ns) = m["net30"], m["share30"], m["n30"]
-    cls = "up" if net > 0 else ("dn" if net < 0 else "dim")
-    tip = (f"期散(描述性,不進分數):小型契約單筆 1 口(1 口=100 股≈{r.get('px') or 0:.0f}×100 元)的主動買−主動賣淨額,期貨散戶代理。"
-           f"近30分 淨 {net/1e4:+,.0f} 萬(主動買 {nb} 筆/主動賣 {ns} 筆)·1 口成交占全部小型成交 {sh:.0f}%;近5分 淨 {m['net5']/1e4:+,.0f} 萬。"
-           "⚠ 與現股散戶(1 張<500 萬)是不同母體;小型契約有造市商對敲,主動簽號只能濾掉一部分;累 20 日後與可測檔對照再決定用途")
-    return (f"<td class='{cls}' title='{html_mod.escape(tip, quote=True)}'>{net/1e4:+,.0f}"
-            f"<span class='dim' style='font-size:9px'> {sh:.0f}%·{nb}/{ns}</span></td>")
-
 
 
 # ---- 紙上交易(paper trading;jack 2026-09-25 交辦,2026-09-29 起累 20 日)--------------------------------------------
@@ -2180,46 +1305,10 @@ PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
 PAPER_BOOKS = ("bucket", "sec")
 
 
-def _paper_blank(day):
-    return {"day": day, "seen": {b: [] for b in PAPER_BOOKS}, "orders": {b: {} for b in PAPER_BOOKS}, "pos": {b: {} for b in PAPER_BOOKS},
-            "closed": {b: [] for b in PAPER_BOOKS}, "last_bkey": {}, "n_sig": {b: 0 for b in PAPER_BOOKS}}
-
-
 try:
     PAPER: dict = json.loads(PAPER_PATH.read_text(encoding="utf-8"))
 except Exception:  # noqa: BLE001
     PAPER = _paper_blank(None)
-
-
-def _paper_save():
-    try:
-        PAPER_PATH.parent.mkdir(parents=True, exist_ok=True); PAPER_PATH.write_text(json.dumps(PAPER, ensure_ascii=False), encoding="utf-8")
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def _paper_log(rec):
-    try:
-        f = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"paper_trades_{PAPER['day']}.jsonl"
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"ts": datetime.now(TZ).strftime("%H:%M:%S"), **rec}, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def _paper_fills(sid, t_post, limit, side):
-    """掃 t_post 之後的逐筆:買單=賣方主動成交 <limit(strict)/≤limit(opt);賣單對稱。回傳 (t_strict, t_opt)。"""
-    ts_s = ts_o = None
-    for ts, px, amt, sgn, _b, _r in ST.recent.get(sid, ()):
-        if ts <= t_post: continue
-        if side == "buy" and sgn < 0:
-            if px <= limit and ts_o is None: ts_o = ts
-            if px < limit and ts_s is None: ts_s = ts
-        elif side == "sell" and sgn > 0:
-            if px >= limit and ts_o is None: ts_o = ts
-            if px > limit and ts_s is None: ts_s = ts
-        if ts_s is not None and ts_o is not None: break
-    return ts_s, ts_o
 
 
 def _paper_close(book, sid, pos, exit_px, how, now):
@@ -2329,73 +1418,6 @@ def _paper_settle(day):
                      "reasons": {str(k): sum(1 for c in cl if c.get("reason") == k) for k in set(c.get("reason") for c in cl)}}
     daily[day] = out; PAPER_DAILY.parent.mkdir(parents=True, exist_ok=True); PAPER_DAILY.write_text(json.dumps(daily, ensure_ascii=False, indent=1), encoding="utf-8")
     _paper_log({"ev": "settle", **{b: {k: v for k, v in out[b].items() if k != "reasons"} for b in PAPER_BOOKS}}); _paper_save()
-
-
-def _paper_summary():
-    """頁首一行:今日兩本帳 + 累計(paper_daily)。"""
-    parts = []
-    for book in PAPER_BOOKS:
-        cl = [c for c in PAPER.get("closed", {}).get(book, []) if c.get("ev") == "close"]; un = [c for c in PAPER.get("closed", {}).get(book, []) if c.get("ev") == "unfilled"]
-        st = [c for c in cl if c["strict_entry"]]
-        net = (sum(c["net_bps"] for c in cl) / len(cl)) if cl else None
-        parts.append(f"{book}: 訊號 {PAPER.get('n_sig', {}).get(book, 0)} 掛 {len(cl)+len(un)} 成交 {len(st)}嚴/{len(cl)}樂 持 {len(PAPER.get('pos', {}).get(book, {}))}"
-                     + (f" 淨均 {net:+.0f}bps" if net is not None else ""))
-    try:
-        daily = json.loads(PAPER_DAILY.read_text(encoding="utf-8")) if PAPER_DAILY.exists() else {}
-        if daily:
-            ds = sorted(daily); b = "bucket"; nets = [daily[d][b]["net_opt"] for d in ds if daily[d][b].get("net_opt") is not None]
-            nf = sum(daily[d][b]["n_fill_opt"] for d in ds); ns = sum(daily[d][b]["n_fill_strict"] for d in ds)
-            parts.append(f"累計 {len(ds)} 日 bucket 成交 {ns}嚴/{nf}樂" + (f" 日均淨 {sum(nets)/len(nets):+.0f}bps" if nets else ""))
-    except Exception:  # noqa: BLE001
-        pass
-    return " · ".join(parts)
-
-
-def _score_td(r):
-    ov, sc = r.get("sc_ov"), r.get("sc_in")
-    if ov is None or sc is None:
-        return "<td class='dim'>—</td>"
-
-    def _c(v):
-        return "up" if v > 0 else ("dn" if v < 0 else "dim")
-    v2 = r.get("sc_v2"); v2i = r.get("sc_v2_items") or []
-    tip = ("隔夜分:" + (" · ".join(f"{k} {v:+d}" for k, v in r["sc_ov_items"]) or "無") +
-           " ‖ 盤中分V2.5(bps,60分,IS聯合OLS×0.7,上限±40):" + (" · ".join(f"{k} {v:+.1f}" for k, v in v2i) or "無") +
-           " ‖ 盤中分V1(0/±1/±2,標籤×衰減,並列20日):" + (" · ".join(f"{k} {v:+.1f}" for k, v in r["sc_in_items"]) or "無") +
-           f" = {sc:+.1f}" +
-           (f" ‖ V2.2 加總並列 {r['sc_v22']:+.1f}" if r.get("sc_v22") is not None else "") +
-           (f" ‖ 高波動日 ×(今日振幅 {r['amp_ratio']:.1f}x 20日均:同分對應更大 bps,分數不變)" if (r.get("amp_ratio") or 0) >= 1.5 else "") +
-           " ‖ V2.3 IS/OOS 見 scratch/v23_fit_2026-09-24.txt;每桶落地 score_v2_{日}.jsonl 供累 20 日算 IC")
-    z = TX_LAST.get("z")
-    bg = " background:#21262d;" if (z is not None and abs(z) >= 1) else ""
-    big_ov = " style='font-size:13px'" if abs(ov) >= 3 else ""
-    v2s = v2 if v2 is not None else 0.0
-    big_sc = " style='font-size:13px'" if abs(v2s) >= 15 else ""
-    pk = r.get("sc_v2_peak")
-    pk_html = (f" <span class='dim' style='font-size:9px'>峰<span class='{_c(pk[0])}'>{pk[0]:+.0f}</span>@{pk[1]}</span>"
-               if (pk and abs(pk[0]) >= 15 and abs(pk[0]) > abs(v2s)) else "")
-    cause = r.get("cause") or []
-    if cause:
-        tip += " ‖ 成因:" + " · ".join(f"[{t}] {d}" for t, d in cause)
-    pp = r.get("paper") or {}; paper_html = ""
-    for bk_, q in pp.items():
-        if q:
-            paper_html += (f" <span style='font-size:9px;color:#d2a8ff'>紙{bk_[:1]} {q['pnl']:+.0f} · {q['min']:.0f}分{'·嚴' if q['strict'] else '·樂'}{' 賣中' if q['sell'] else ''}</span>")
-    h = r.get("hold"); hold_html = paper_html
-    if h:
-        pn = f"{h['pnl']:+.0f}" if h["pnl"] is not None else "—"
-        fl = " ".join(f"<b style='color:#f85149'>{html_mod.escape(f)}</b>" for f in h["flags"])
-        hint = f" <span style='color:#3fb950'>{h['hint']}</span>" if h.get("hint") else ""
-        hold_html += (f" <span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
-                     f"{(' 低'+str(int(h['low_s']))+'s') if h['low_s'] else ''}</span> {fl}{hint}")
-        tip += f" ‖ 持倉:進 {h['hm']} @ {h['px0']} · 出場規則=分數≤0 連續 30 秒 / 壞標籤(虛拉·過熱·竭盡∧散戶接) / 60 分到期;獲利≥50 可停利;不設移動停利/硬停損/破昨低(面板對照較差)"
-    _col = {"處置": "#f0883e", "跌停鎖": "#f85149", "觸跌停": "#f85149", "族群": "#d29922", "MOPS?": "#8b949e", "MOPS": "#a371f7", "昨MOPS": "#7d5bbe", "跟盤殺": "#f85149", "自己殺": "#3fb950", "大盤仍跌": "#d29922"}
-    def _cc(t):
-        return next((v for k, v in _col.items() if t.startswith(k)), "#8b949e")
-    cause_html = (" <span style='font-size:9px'>" + " ".join(f"<span style='color:{_cc(t)}'>{html_mod.escape(t)}</span>" for t, _ in cause) + "</span>") if cause else ""
-    return (f"<td style='text-align:left;white-space:nowrap;{bg}' title='{html_mod.escape(tip, quote=True)}'>"
-            f"<span class='dim'>隔</span><b class='{_c(ov)}'{big_ov}>{ov:+d}</b> "
-            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}{cause_html}{hold_html}</td>")
 
 
 def render():
@@ -3300,30 +2322,6 @@ SORT_JS = """<script>
 </script>"""
 
 
-def _day_sig_counts():
-    """以儀表板旗標同款條件回放今日:每檔 💎 / 💎💎 觸發數。"""
-    out = {}
-    for sid, m in ST.buckets.items():
-        if sid in RET_UNM:
-            continue
-        bks = sorted(m)
-        c1 = c2 = 0
-        for i in range(7, len(bks)):
-            cur, prev, prior6 = bks[i], bks[i - 1], bks[i - 6:i]
-            a, p = m[cur], m[prev]
-            if not a["tot"] or a["big"] <= 0.10 * a["tot"]:
-                continue
-            if a["ret2"] / a["tot"] * 100 >= 5:
-                continue
-            if sum(m[b]["big"] for b in prior6) >= 0 or p["big"] >= 0:
-                continue
-            c1 += 1
-            if a["big"] >= 3e7:
-                c2 += 1
-        out[sid] = (c1, c2)
-    return out
-
-
 def snapshot_day():
     """收盤後存當日 EOD 快照(冪等)。"""
     today = ST.date
@@ -3352,17 +2350,6 @@ def snapshot_day():
                      "ret_smfi": ((ret_close_sh - ret_open_sh) if (ret_open_sh is not None and ret_close_sh is not None) else None)})
     if len(rows) >= 20:                      # 資料太少不存(避免半天斷線垃圾)
         json.dump({"date": today, "rows": rows}, open(f, "w"))
-
-
-def _snap_dates():
-    return sorted(p.name[4:14] for p in SNAP_DIR.glob("eod_*.json"))
-
-
-def _load_snap(d):
-    try:
-        return json.load(open(SNAP_DIR / f"eod_{d}.json"))
-    except Exception:
-        return None
 
 
 def render_history():
@@ -3505,41 +2492,6 @@ _HELP_GROUPS = [
 ]
 
 
-def render_help():
-    css = ("body{background:#0d1117;color:#c9d1d9;font:13px/1.7 -apple-system,'PingFang TC',"
-           "sans-serif;margin:0;padding:14px 16px 40px}"
-           "h2{font-size:17px;margin:2px 0 4px}h3{font-size:14px;color:#79c0ff;margin:18px 0 4px;"
-           "border-bottom:1px solid #30363d;padding-bottom:3px}"
-           "a{color:#79c0ff}.meta{color:#8b949e;font-size:12px;margin-bottom:10px}"
-           "table{border-collapse:collapse;width:100%;max-width:1000px;margin:2px 0}"
-           "td{border-bottom:1px solid #21262d;padding:5px 8px;vertical-align:top}"
-           "td.c{color:#e6edf3;font-weight:600;white-space:nowrap;width:96px}"
-           "td.d{color:#adbac7;width:44%}td.u{color:#8b949e}"
-           ".up{color:#ff7b72}.dn{color:#3fb950}.leg{background:#161b22;border:1px solid #30363d;"
-           "border-radius:6px;padding:8px 12px;margin:10px 0;font-size:12px;max-width:1000px}")
-    parts = [f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
-             f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-             f"<title>欄位說明</title><style>{css}</style></head><body>"
-             f"<h2>📖 大戶儀表板 · 欄位說明</h2>"
-             f"<div class='meta'><a href='/'>← 回儀表板</a>　每欄:定義(怎麼算) / 怎麼讀(用途)。"
-             f"顏色慣例:<span class='up'>紅=漲/正值</span>、<span class='dn'>綠=跌/負值</span>(台股慣例)、灰=無資料或不可測。</div>"
-             f"<div class='leg'><b>表頭顏色</b>=尺度分層:<span style='color:#e3b341'>黃=5分窗</span>·"
-             f"<span style='color:#79c0ff'>藍=30分窗(主尺度)</span>·<span style='color:#d2a8ff'>紫=全日/隔夜</span>。"
-             f"<b>列的每5列一條粗分隔線</b>,方便橫向對到同一檔;滑鼠移到列上會整列highlight。</div>"]
-    for title, rows in _HELP_GROUPS:
-        parts.append(f"<h3>{html_mod.escape(title)}</h3><table>")
-        for col, dfn, howto in rows:
-            parts.append(f"<tr><td class='c'>{html_mod.escape(col)}</td>"
-                         f"<td class='d'>{html_mod.escape(dfn)}</td>"
-                         f"<td class='u'>{html_mod.escape(howto)}</td></tr>")
-        parts.append("</table>")
-    parts.append("<div class='leg' style='margin-top:18px'><b>一句紀律</b>:盤中只在已驗證格觸發時喊方向、"
-                 "且附數字＋基準率＋t;無觸發＝棄權。方向重倉判斷留到收盤(隔夜候選才進OOS記分)。"
-                 "詳見 docs/biglot-broadcast-protocol.md。</div>")
-    parts.append("</body></html>")
-    return "".join(parts)
-
-
 # ============================ 個股詳情頁（點名稱進入） ============================
 # 逐筆分時圖 + 累計大戶/散戶淨流 + 五檔委託簿。沿用主表同一套判定
 # (BIG_AMT=1000萬 / 散戶=1張<500萬 / side=主動買賣 / 空窗跳量剔除),
@@ -3634,28 +2586,6 @@ def _stk_trade(sid, line, st):
         m["big"] += sgn * amt
     elif dv == 1 and amt < RETAIL_CAP:
         m["ret"] += sgn * amt
-
-
-def _book_of(sid, day):
-    """該日 sid 最後一筆五檔快照(今天用記憶體 ST.book,過去日讀檔尾)。"""
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-    if day == today and sid in ST.book:
-        return ST.book[sid]
-    bf = DATA_DIR / "cache" / "watchlist_books" / f"watchlist_books_{day}.jsonl"
-    if not bf.exists():
-        return None
-    last = None
-    with open(bf) as f:
-        for line in f:
-            if sid not in line:
-                continue
-            try:
-                r = json.loads(line)
-            except Exception:
-                continue
-            if str(r.get("sym")) == sid:
-                last = r
-    return last
 
 
 def _svg_detail(sid, day, st, pc):
@@ -3986,54 +2916,6 @@ def render_stock(sid, day):
             f"{'' if live else ' · <span class=warnv>歷史回放 '+day+'</span>'}</div>"
             f"{_stock_info_block(sid)}{_pe_peer_block(sid)}{_xq_style_block(sid)}"
             f"<div id='sd'>{frag}</div>{js}</body></html>")
-
-
-def _pe_peer_block(sid):
-    """本益比同族群成員清單(2026-09-25 jack 交辦:『同族群的名單請你放進HTML的個別頁面上面,
-    讓我們知道你研究認為跟誰比較』)。見 _load_pe_peer / _score_rows 的 pe_live 計算說明。"""
-    grp = SUBCAT.get(sid)
-    rows = PE_TABLE.get(grp, [])
-    if not rows:
-        return ""
-    trs = []
-    for r in rows:
-        is_self = r["sid"] == sid
-        pe_disp = f"{r['pe']:.1f}" if r.get("pe") is not None else "虧損/無EPS"
-        rank_disp = f"第{r['rank']}/{r['n_valid']}低" if r.get("rank") is not None else "—"
-        row_cls = " class='self'" if is_self else ""
-        trs.append(f"<tr{row_cls}><td>{r['sid']}</td><td>{html_mod.escape(r.get('name') or r['sid'])}</td>"
-                    f"<td>{pe_disp}</td><td>{rank_disp}</td></tr>")
-    return (f"<div class='pepeer'><div class='pehead'>本益比同族群「{html_mod.escape(grp or '')}」"
-            f"(快照{html_mod.escape(PE_GEN or '—')},本股本益比於主表即時重算·此表為快照收盤價)</div>"
-            "<table class='petbl'><thead><tr><th>代號</th><th>名稱</th><th>本益比</th><th>族群排名</th></tr></thead>"
-            f"<tbody>{''.join(trs)}</tbody></table>"
-            "<div class='penote'>依楊育華分析師《御錢術》節目邏輯人工擴充同業清單(不跨族群比較,如IC設計不跟記憶體比)。"
-            "⚠ EPS 為 TTM(近四季已公布),非分析師預估EPS(她的原方法),為與原方法唯一的實質差異,已誠實揭露。"
-            "多數細分族群天生只有 3~8 檔真實同業,未硬湊到她說的 20~30 檔。</div></div>"
-            "<style>.pepeer{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;"
-            "margin-bottom:8px;font-size:12px}.pepeer .pehead{color:#d2a8ff;font-weight:700;margin-bottom:4px}"
-            ".petbl{border-collapse:collapse;width:100%}.petbl td,.petbl th{padding:2px 8px;text-align:right;"
-            "border-bottom:1px solid #21262d}.petbl th:nth-child(2),.petbl td:nth-child(2){text-align:left}"
-            ".petbl tr.self{background:rgba(31,111,235,0.25);font-weight:700}"
-            ".pepeer .penote{color:#8b949e;font-size:11px;margin-top:4px}</style>")
-
-
-def _stock_info_block(sid):
-    """詳情頁:公司描述 + 看盤標籤 + 族群看盤核心(靜態,不含訊號)。"""
-    rec = STOCK_INFO.get(sid)
-    if not rec:
-        return ""
-    block, desc, tags = rec
-    tag_html = "".join(f"<span class='tag'>{html_mod.escape(t)}</span>" for t in tags)
-    return ("<div class='sinfo'>"
-            f"<span class='blk'>{html_mod.escape(block)}</span>{tag_html}"
-            f"<div class='desc'>{html_mod.escape(desc)}</div>"
-            f"<div class='core'>族群看盤核心:{html_mod.escape(STOCK_BLOCKS.get(block, ''))}</div></div>"
-            "<style>.sinfo{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;"
-            "margin-bottom:8px;font-size:12px;line-height:1.6}"
-            ".sinfo .blk{color:#d2a8ff;font-weight:700;margin-right:8px}"
-            ".sinfo .tag{display:inline-block;background:#21262d;color:#79c0ff;border-radius:4px;padding:0 6px;margin-right:4px;font-size:11px}"
-            ".sinfo .desc{color:#e6edf3;margin-top:2px}.sinfo .core{color:#8b949e;font-size:11px}</style>")
 
 
 class H(BaseHTTPRequestHandler):
