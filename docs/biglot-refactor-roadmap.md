@@ -83,10 +83,28 @@
   4 檔詳情頁）與 smoke test（14 條路由），前後 byte 數完全一致，零 diff。
   `biglot_dashboard.py` 4326→4250 行。
 
-- Phase 1 剩餘：上面「有全域依賴但零呼叫其他頂層函式」清單（42 個函式，讀 `NAMES`/`TZ`/`SNAP_DIR`
-  等模組常數但不呼叫別的頂層函式）是下一批候選——這批要先決定：常數本身（`NAMES`/`TZ`/`SUBCAT`等）
-  跟著函式一起搬到哪個模組、`biglot_dashboard.py` 這邊是保留原件還是也改成 import，再繼續用
-  `run_golden_diff.py --baseline ...` 逐批驗證。
+- **Phase 1 到此為止（2026-09-27 拍板，暫停於此，等下次對話再評估要不要繼續）**：對整份檔案掃過
+  「哪些全域是被 `global X; X = ...` 整包重新賦值，不只是原地修改」，抓到 18 個：`ATR_STATE`/
+  `DAILY_TREND`/`KEY_LINE`/`PE_TABLE`/`PE_PEERS`/`PE_GEN`/`PE_EPS`/`XQ_STYLE`/`VIXTWN`/`HIST_BIG`/
+  `Y_PMLOW`/`UNI5`/`ETF981_HOLD`/`ETF981_ASOF`/`ETF981_PREV_ASOF`/`FUT_PX`/`PREOPEN`/`WRT`/`VOLRISK`/
+  `VOLRISK_DATE`（跟本文件開頭那個過日重載 bug 是同一組變數）。剩下 50 個「次順位候選」裡，
+  任何讀到這 18 個全域之一的函式（例如 `_pe_peer_block`/`_xq_style_block`），如果現在用
+  `from biglot_dashboard import X` 這種 Phase 1 用過的手法搬到新模組，**會在下一次過日時產生
+  stale reference**（新模組 import 進來的名字還指著昨天的舊物件，`biglot_dashboard.py` 自己那份
+  已經換成今天的）——這正是本文件開頭那個 bug 的同一個機制，換了個地方重演。
+
+  更關鍵的是：`run_golden_diff.py`/`smoke_test.py` 目前的驗證方式（凍結時鐘後在單一 process 裡只
+  呼叫一次 `ingest()`）**抓不到這類 bug**，因為只會經歷一次過日重載，不會經歷「連續兩個交易日」
+  去暴露 stale reference——搬錯了也會顯示零 diff，等於騙過驗證工具自己。
+
+  **決定（jack 拍板）**：不現在硬推。今天的 Phase 1（8 個純函式）視為完成並收尾，正式站台已重啟
+  生效（PID 見部署紀錄）。真正要繼續往下搬碰到這 18 個全域的函式之前，必須先做兩件事，留給下次
+  對話評估要不要啟動：
+  1. 幫這 18 個全域建共用的 `state.py` 基礎模組（`ingest()` 的過日重載要從 `global X; X = ...`
+     改成 `state.X = ...` 屬性賦值，`biglot_dashboard.py` 跟未來搬出去的模組都指向同一個容器）。
+  2. 補強 `run_golden_diff.py`，讓它能模擬「連續兩個交易日」而不是只驗證一天，否則沒有工具能
+     擋住這類 stale-reference bug。
+  這兩件事本質上是原始草案 Phase 3 的範圍，跟今天的「純函式剪貼」是不同量級的改動。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用
