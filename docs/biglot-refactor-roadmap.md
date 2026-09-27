@@ -97,14 +97,34 @@
   呼叫一次 `ingest()`）**抓不到這類 bug**，因為只會經歷一次過日重載，不會經歷「連續兩個交易日」
   去暴露 stale reference——搬錯了也會顯示零 diff，等於騙過驗證工具自己。
 
-  **決定（jack 拍板）**：不現在硬推。今天的 Phase 1（8 個純函式）視為完成並收尾，正式站台已重啟
-  生效（PID 見部署紀錄）。真正要繼續往下搬碰到這 18 個全域的函式之前，必須先做兩件事，留給下次
-  對話評估要不要啟動：
-  1. 幫這 18 個全域建共用的 `state.py` 基礎模組（`ingest()` 的過日重載要從 `global X; X = ...`
-     改成 `state.X = ...` 屬性賦值，`biglot_dashboard.py` 跟未來搬出去的模組都指向同一個容器）。
-  2. 補強 `run_golden_diff.py`，讓它能模擬「連續兩個交易日」而不是只驗證一天，否則沒有工具能
-     擋住這類 stale-reference bug。
-  這兩件事本質上是原始草案 Phase 3 的範圍，跟今天的「純函式剪貼」是不同量級的改動。
+  **決定（jack 拍板）**：不現在硬推 46 個候選全部搬完。已補強 `check_daily_rebind.py`
+  （模擬連續兩個交易日，動態證明 19/19 個可判斷的全域確實會整包換物件）。
+
+  **更新（2026-09-27 稍晚）：不需要 state.py，找到更簡單的正確做法**——一開始設想的
+  「建 state.py 容器 + 把 `ingest()` 的 `global X; X = ...` 改成 `state.X = ...`」
+  是過度工程；真正的修法只需要一條規則：**任何新模組要讀 `biglot_dashboard.py` 自己定義的
+  全域（不管是不是這 18 個危險全域），一律 `import biglot_dashboard`（整個模組），在函式本體
+  「呼叫當下」用 `biglot_dashboard.X` 屬性存取，不要在檔案頂層 `from biglot_dashboard import X`**。
+  原因：
+  - 屬性存取是每次呼叫都重新查一次 `biglot_dashboard` 模組目前的狀態，不管 `ingest()`
+    换過幾次日都不會過期——不需要改 `ingest()` 一行程式碼。
+  - 同時解決了「新模組 import biglot_dashboard、biglot_dashboard 又 import 新模組」的循環
+    import 問題：`import biglot_dashboard`（模組本身）只需要 `sys.modules` 裡有這個模組物件
+    就會成功，不需要它已經執行到某個特定屬性；`from biglot_dashboard import X` 才會在
+    biglot_dashboard 還沒執行到 `X = ...` 那行時直接炸掉。
+
+  已用 `_xq_style_block`（讀 `XQ_STYLE`/`VIXTWN`，兩個都在 18 個危險全域裡）做端到端證明：
+  搬進 `biglot/xq_style.py`，模組頂層只有 `import biglot_dashboard`，函式內用
+  `biglot_dashboard.XQ_STYLE`/`biglot_dashboard.VIXTWN`。驗證：golden-diff 零 diff；
+  額外手動測試模擬連續兩天 `ingest()`，確認① `XQ_STYLE` 物件真的換了、② `biglot.xq_style`
+  模組本身零頂層快取狀態、③ 搬移後的函式 `__globals__['biglot_dashboard']` 就是同一個
+  正在跑的模組實例——三者合起來構成不可能 stale 的結構性證明,不只是「這次剛好沒事」。
+
+  **後續要做的（下次對話）**：用同一個「import 模組 + 屬性存取」規則，把 dep_graph 抓到的
+  另外 49 個次順位候選（46 個不碰危險全域、3 個還碰危險全域：`_pe_peer_block`/`_score_v2`/
+  `_shadow_triple`）依子系統分組搬完（notes/holds/paper_trading/oos/mini_futures/tag_engine
+  等），`_ingest_trade`/`_stk_trade` 兩支維持原計畫排在更後面、需要人工 side-by-side 比對
+  重倉股詳情頁才能搬（本來就有 drift，風險較高）。
 
 **Phase 9 的兩個小 patch 已提前做掉並驗證過（2026-09-27）**：刪除死碼 `_fmt`（零呼叫點）、
 合併 `_stock_tick`/`_tick_sz` 重複公式（`_limit_down` 改呼叫 `_tick_sz`）。用
