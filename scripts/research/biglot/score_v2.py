@@ -32,7 +32,10 @@ from biglot.utils import _b30n, _b5n
 def _score_v2(r, mkt30, hm=None):
     """盤中分 V2.3(bps;2026-09-24):權重表 V23_W(IS 聯合 OLS×0.7 收縮,t<2 歸零),各項**可加**、無同源取一次
     (聯合係數已是條件增量)、無時段係數(池化擬合;09:30 前仍不計)、|分| 上限 40。
-    mkt30 應傳滾動版(與個股 r30_r 同鐘)。IS/OOS 對照見 scratch/v23_fit_2026-09-24.txt。"""
+    mkt30 應傳滾動版(與個股 r30_r 同鐘)。IS/OOS 對照見 scratch/v23_fit_2026-09-24.txt。
+    ⚠ 2026-09-28 共線性診斷發現「各項可加、無同源取一次」對散戶虛拉/勿追5m 這對不成立(互控
+    共用連續底層後雙雙塌陷),已改成取最大值一次,見下方註解;其餘項尚未逐一驗證,不保證全部
+    可加假設都站得住。"""
     hm = hm or biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%H:%M")
     if hm < "09:30":
         return 0.0, [("09:30 前不計分", 0)]
@@ -42,10 +45,16 @@ def _score_v2(r, mkt30, hm=None):
         v = round(sign * biglot_dashboard.V23_W[k], 1); sc += v; it.append((name or k, v))
     w5 = r.get("w_ret_r"); r30 = r.get("r30_r"); rb5 = r.get("rbuy5_r"); unm = r["unm"]
     b5n = _b5n(r)
+    # 散戶虛拉/勿追5m 同源去重(2026-09-28 共線性診斷:互控共用的連續底層 w5/b5n/dshare5/rbuy5 後
+    # 兩項雙雙塌陷至 t=-1.94/-1.20,本函式 docstring 原本「各項可加、無同源取一次」的假設在這一對
+    # 上不成立)——比照 score_rows.py 的 ret_src 取最大值一次,不兩個都加。
+    ret_v2 = []
     if w5 is not None and w5 > 20 and rb5 is not None and rb5 >= 5 and not unm:
-        add("散戶虛拉")
+        ret_v2.append("散戶虛拉")
     if w5 is not None and w5 > 20 and (((r.get("dshare5_r") or 0) > 5 and not unm) or (b5n is not None and b5n < -5)):
-        add("勿追5m")
+        ret_v2.append("勿追5m")
+    if ret_v2:
+        add(max(ret_v2, key=lambda k: abs(biglot_dashboard.V23_W[k])))
     if r30 is not None:
         if r30 >= 600:
             it.append(("噴後過熱≥600 近漲停,不計", 0))
