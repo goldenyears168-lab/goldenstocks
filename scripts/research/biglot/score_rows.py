@@ -49,8 +49,11 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
         if "同賣" in (r.get("stamp") or ""):
             ov -= 1; ovi.append(("同賣", -1))
         dt = r.get("dtrend") or {}
+        # 2026-09-28 移除「日線↑多」計分:正式對隔夜報酬擬合 IS t=-0.38、OOS t=-0.60,純雜訊;
+        # 跟既有 biglot-ta-daily-filter-no-value 發現一致,且合乎 Sullivan-Timmermann-White (1999)
+        # 對簡單均線規則資料窺探校正後失效的文獻方向。tag 本身仍可能用於顯示,只是不計分。
         if dt.get("above_ma5"):
-            ov += 1; ovi.append(("日線↑多", +1))
+            ovi.append(("日線↑多(正式擬合無顯著性,不計)", 0))
         elif r.get("rs_live") is not None and r["rs_live"] > 1 and dt:
             ov -= 1; ovi.append(("相對強弱>+1∧日線↓空", -1))
         # 散戶版SMFI背離(2026-09-25 採納;scratch/smfi_score_design_2026-09-25.txt):尾盤(12:55-13:20)散戶淨額佔比 −
@@ -65,7 +68,8 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
         act = _active_tags(sid, nts)
         sc, sci = 0, []
         # 同源不累加(2026-09-24 jack 定案):同一筆大戶買會同時點亮 主力點火/純機構/深接30/深接5m → 取最大值一次;
-        # 散戶側 散戶虛拉/勿追 同源 → 取一次 −1;機構暗退、噴後過熱、破昨防線 各自獨立來源。
+        # 散戶側 散戶虛拉/勿追 同源 → 取一次 −1;機構暗退、噴後過熱 各自獨立來源
+        # (破昨防線已於 2026-09-28 移除計分,見下方註記,不再是計分來源之一)。
         # 時間衰減(2026-09-24 jack 要求):標籤價值 = 權重 × (1 − 經過/時距),基準率是「首次觸發起未來30分」,越晚看剩越少;小數一位
         # 2026-09-28 移除「純機構」:跟 score_v2.py 的同名項幾乎重複定義(共線性診斷 phi 高度重疊),
         # V2.5 版多了 hm>=10:00 閘門更精確,不在這裡重複計分(tag 本身仍會觸發、仍會在其他地方顯示徽章)。
@@ -83,8 +87,12 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
             else:
                 w_ = max(act[t] for t in ret_src)
                 sc -= w_; sci.append(("散戶側[" + "·".join(ret_src) + f"]×{w_:.2f}", round(-w_, 1)))
+        # 2026-09-28 移除「破昨防線」計分:正式擬合(控制急跌類格子後)IS t=+1.9996(差0.0004沒過
+        # 門檻)、方向翻正而非現行的利空-1,OOS t=+0.77不顯著。文獻(短期反轉/52週低點)+內部已驗證
+        # 的zscore-normalized-spike-reversion都支持「跌深後短期反彈」,現行-1的方向本身可能是
+        # 跟已上線的「急跌≤−600 +40」邏輯互相矛盾;但翻正證據不夠穩健(OOS不顯著),故歸零而非翻轉。
         if r.get("pmlow_warn"):
-            sc -= 1; sci.append(("破昨防線", -1))
+            sci.append(("破昨防線(正式擬合方向相反且OOS不顯著,不計)", 0))
         sc_nowrt = sc
         # 2026-09-28 移除權證三分支(原本 sh>=0.6∧r30>0 / sh>=0.6∧b30<=-3e7 / sh<=0.4∧b30>=3e7,
         # 各±1未驗證):判斷式跟 score_v2.py 的「權證」項逐字相同,那邊已有 IS 擬合權重(±3.0),
