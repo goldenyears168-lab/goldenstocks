@@ -10,9 +10,10 @@ docs/biglot-refactor-roadmap.md「後續要做的（下次對話）」段落）�
 危險全域之列，一律比照辦理，理由見 xq_style.py 開頭注解與路線圖）——這樣
 不會有 stale reference，也不會有循環 import 在載入期就炸掉。
 
-其他模組的名字（`stock_db.DATA_DIR`、`biglot.utils._par30`/`_b5n`）直接
+其他模組的名字（`stock_db.DATA_DIR`、`biglot.utils._par30`）直接
 import，不透過 biglot_dashboard 轉手。函式本體與 docstring 逐字複製，不改
-一行邏輯。
+一行邏輯（2026-09-28 例外：`_score_v22_legacy` 已退役移除，見下方註記，
+其專用的 `_b5n` import 隨之移除）。
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import json
 from stock_db import DATA_DIR
 
 import biglot_dashboard
-from biglot.utils import _b5n, _par30
+from biglot.utils import _par30
 
 
 def _wrt_cum(sid, order):
@@ -237,45 +238,9 @@ def _active_tags(sid, nts):
     return out
 
 
-def _score_v22_legacy(r, mkt30, hm):
-    """V2.2 加總(bps;僅供並列落地/tooltip 對照,不顯示主值)。與 f63aa01 版同邏輯。"""
-    if hm < "09:30":
-        return 0.0
-    fac = 0.5 if hm < "10:00" else 1.0; sc = 0.0
-    w5 = r.get("w_ret_r"); r30 = r.get("r30_r"); rb5 = r.get("rbuy5_r"); unm = r["unm"]; b5n = _b5n(r)
-    ret = []
-    if w5 is not None and w5 > 20 and rb5 is not None and rb5 >= 5 and not unm: ret.append(-10 if w5 > 50 else -8)
-    if w5 is not None and w5 > 20 and (((r.get("dshare5_r") or 0) > 5 and not unm) or (b5n is not None and b5n < -5)): ret.append(-8)
-    if ret: sc += min(ret)
-    if w5 is not None and w5 < -20 and rb5 is not None and rb5 >= 5 and not unm: sc += 4
-    if r30 is not None:
-        if r30 >= 600: pass
-        elif r30 >= 400: sc += -21 * (600 - r30) / 200
-        elif r30 >= 300: sc += -18
-        elif r30 >= 200: sc += -13
-        elif r30 >= 150: sc += -10
-        if r30 <= -600: sc += 23
-        elif r30 <= -400: sc += 22
-        elif r30 <= -300: sc += 14
-        elif r30 <= -200: sc += 6
-        if mkt30 >= 5 and r30 >= 20 and "10:00" <= hm < "12:00": sc += -3
-        if mkt30 <= -5 and r30 <= -20: sc += 3
-        if mkt30 <= -5 and r30 >= 20: sc += -7
-        if mkt30 >= 5:
-            if r30 <= -100: sc += 11
-            elif r30 <= -50: sc += 8
-            elif r30 <= -20: sc += 6
-    dr = r.get("day_ret")
-    if dr is not None:
-        if dr > 5: sc += -15
-        elif dr > 3: sc += -9
-        elif dr < -5: sc += 12
-        elif dr < -3: sc += 8
-    if (hm >= "10:00" and b5n is not None and b5n > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not unm
-            and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0):
-        sc += 12
-    sc = round(sc * fac, 1)
-    return max(-40.0, min(40.0, sc))
+# 2026-09-28 退役 _score_v22_legacy():已證實聯合迴歸(V2.3+)後全部項目歸零(貢獻不到 V2.5
+# 沒有的增量),繼續跑只是重複計算、佔用 CPU 並讓 20 日 IC 比較資料多一份沒人會再看的欄位。
+# 見 biglot-factor-combination-search-round1 記憶檔;程式碼歷史可查 git blame,需要時可復原。
 
 
 def _log_scores(rows, day):
@@ -291,7 +256,7 @@ def _log_scores(rows, day):
             continue
         biglot_dashboard.SC_LOGGED.add(key)
         out.append(json.dumps({"date": day, "bucket": bk, "ts": now.strftime("%H:%M:%S"), "sid": r["sid"], "px": r.get("px"),
-                               "sc_v23": r["sc_v2"], "sc_v22": r.get("sc_v22"), "sc_ov": r.get("sc_ov"), "sc_v1": r.get("sc_in"),
+                               "sc_v23": r["sc_v2"], "sc_ov": r.get("sc_ov"), "sc_v1": r.get("sc_in"),
                                "items": r.get("sc_v2_items") or [], "cause": [t for t, _ in (r.get("cause") or [])],
                                "mini": ({k: (v if k != "n30" and k != "n5" else list(v)) for k, v in r["mini"].items()} if r.get("mini") else None),
                                "hold": r.get("hold")}, ensure_ascii=False))
@@ -339,7 +304,6 @@ def _score_td(r):
            " ‖ 盤中分V2.5(bps,60分,IS聯合OLS×0.7,上限±40):" + (" · ".join(f"{k} {v:+.1f}" for k, v in v2i) or "無") +
            " ‖ 盤中分V1(0/±1/±2,標籤×衰減,並列20日):" + (" · ".join(f"{k} {v:+.1f}" for k, v in r["sc_in_items"]) or "無") +
            f" = {sc:+.1f}" +
-           (f" ‖ V2.2 加總並列 {r['sc_v22']:+.1f}" if r.get("sc_v22") is not None else "") +
            (f" ‖ 高波動日 ×(今日振幅 {r['amp_ratio']:.1f}x 20日均:同分對應更大 bps,分數不變)" if (r.get("amp_ratio") or 0) >= 1.5 else "") +
            " ‖ V2.3 IS/OOS 見 scratch/v23_fit_2026-09-24.txt;每桶落地 score_v2_{日}.jsonl 供累 20 日算 IC")
     z = biglot_dashboard.TX_LAST.get("z")

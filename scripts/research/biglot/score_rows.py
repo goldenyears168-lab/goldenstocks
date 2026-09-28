@@ -15,13 +15,12 @@
   `biglot_dashboard.datetime.now(biglot_dashboard.TZ)`。
 - `_active_tags`：已搬到 biglot/scoring_support.py，直接 import。
 - `_score_v2`：已搬到 biglot/score_v2.py，直接 import。
-- `_score_v22_legacy`：已搬到 biglot/scoring_support.py，直接 import。
 """
 from __future__ import annotations
 
 import biglot_dashboard
 from biglot.score_v2 import _score_v2
-from biglot.scoring_support import _active_tags, _score_v22_legacy
+from biglot.scoring_support import _active_tags
 
 
 def _score_rows(rows, mkt30, nts, mkt30_r=None):
@@ -68,7 +67,9 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
         # 同源不累加(2026-09-24 jack 定案):同一筆大戶買會同時點亮 主力點火/純機構/深接30/深接5m → 取最大值一次;
         # 散戶側 散戶虛拉/勿追 同源 → 取一次 −1;機構暗退、噴後過熱、破昨防線 各自獨立來源。
         # 時間衰減(2026-09-24 jack 要求):標籤價值 = 權重 × (1 − 經過/時距),基準率是「首次觸發起未來30分」,越晚看剩越少;小數一位
-        bull_src = [(t, p * act[t]) for t, p in (("主力點火", 2), ("純機構", 2), ("深接30", 1), ("深接5m", 1)) if t in act]
+        # 2026-09-28 移除「純機構」:跟 score_v2.py 的同名項幾乎重複定義(共線性診斷 phi 高度重疊),
+        # V2.5 版多了 hm>=10:00 閘門更精確,不在這裡重複計分(tag 本身仍會觸發、仍會在其他地方顯示徽章)。
+        bull_src = [(t, p * act[t]) for t, p in (("主力點火", 2), ("深接30", 1), ("深接5m", 1)) if t in act]
         if bull_src:
             best = max(bull_src, key=lambda x: x[1])
             sc += best[1]; sci.append(("大戶買[" + "·".join(f"{t}×{act[t]:.2f}" for t, _ in bull_src) + "]取最大", round(best[1], 1)))
@@ -85,20 +86,9 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
         if r.get("pmlow_warn"):
             sc -= 1; sci.append(("破昨防線", -1))
         sc_nowrt = sc
-        # 權證(jack 要求納入;未驗證,±1):30 分認購+認售 ≥100 萬才判
-        w = biglot_dashboard.WRT.get(sid) if isinstance(biglot_dashboard.WRT.get(sid), dict) else None
-        if w:
-            wt = (w.get("call_30") or 0) + (w.get("put_30") or 0)
-            b_, s_ = (w.get("bull_30") or 0), (w.get("bear_30") or 0)
-            sh = b_ / (b_ + s_) if (b_ + s_) > 0 else None
-            b30 = r.get("big30_r") or 0
-            if wt >= 1e6 and sh is not None:
-                if sh >= 0.6 and (r.get("r30_r") or 0) > 0:
-                    sc -= 1; sci.append(("權證偏多∧價漲(槓桿散戶追價)", -1))
-                elif sh >= 0.6 and b30 <= -3e7:
-                    sc -= 1; sci.append(("權證偏多∧大戶賣(散戶接貨)", -1))
-                elif sh <= 0.4 and b30 >= 3e7:
-                    sc += 1; sci.append(("權證偏空∧大戶買(散戶倒·大戶接)", +1))
+        # 2026-09-28 移除權證三分支(原本 sh>=0.6∧r30>0 / sh>=0.6∧b30<=-3e7 / sh<=0.4∧b30>=3e7,
+        # 各±1未驗證):判斷式跟 score_v2.py 的「權證」項逐字相同,那邊已有 IS 擬合權重(±3.0),
+        # 留在這裡只是重複計分同一件事,不是獨立驗證(2026-09-28 共線性診斷發現)。
         # 委託簿竭盡候選(尚非策略,jack 要求先計分;定義來自 09-23/24 tick 案例,未驗證):
         #   急殺中(近5分 ≤−0.20%)∧ 近30秒主動賣 ≤40% ∧ 買深 ≥3 分 → +1;急拉中 ∧ 主動買 ≤40%(sell≥60%)∧ 賣深 ≥3 分 → −1
         sp = r.get("sell30s_r"); w5 = r.get("w_ret_r") or 0
@@ -112,7 +102,6 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
         try:
             _hm = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%H:%M")
             r["sc_v2"], r["sc_v2_items"] = _score_v2(r, mkt30 if mkt30_r is None else mkt30_r, _hm)
-            r["sc_v22"] = _score_v22_legacy(r, mkt30, _hm)
         except Exception as _e:  # noqa: BLE001
-            r["sc_v2"], r["sc_v2_items"], r["sc_v22"] = None, [(f"計分失敗:{type(_e).__name__}", 0)], None
+            r["sc_v2"], r["sc_v2_items"] = None, [(f"計分失敗:{type(_e).__name__}", 0)]
         r["sc_ov_items"], r["sc_in_items"] = ovi, sci
