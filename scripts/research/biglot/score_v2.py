@@ -58,14 +58,14 @@ def _score_v2(r, mkt30, hm=None):
     if r30 is not None:
         if r30 >= 600:
             it.append(("噴後過熱≥600 近漲停,不計", 0))
-        elif r30 >= 400: add("過熱400-600", f"噴後過熱≥400({r30:.0f})")
-        elif r30 >= 300: add("過熱300-400", "噴後過熱≥300")
+        elif r30 >= 400: it.append((f"過熱400-600(v26完整聯合重擬未過門檻,不計,{r30:.0f})", 0))
+        elif r30 >= 300: it.append(("過熱300-400(v26完整聯合重擬未過門檻,不計)", 0))
         elif r30 >= 200: it.append((f"過熱200-300(獨立事件重驗未過門檻,不計,{r30:.0f})", 0))
         if r30 <= -600: add("急跌≤−600", f"急跌≤−600({r30:.0f})")
         if mkt30 >= 5:
             if r30 <= -100: add("逆弱≤−100")
-            elif r30 <= -50: add("逆弱50-100")
-            elif r30 <= -20: add("逆弱20-50")
+            elif r30 <= -50: it.append(("逆弱50-100(v26完整聯合重擬未過門檻,不計)", 0))
+            elif r30 <= -20: it.append(("逆弱20-50(v26完整聯合重擬未過門檻,不計)", 0))
     if (hm >= "10:00" and b5n is not None and b5n > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not unm
             and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0):
         add("純機構", "巨資機構" if (r.get("big5_r") or 0) >= 3e7 else "純機構")
@@ -73,7 +73,7 @@ def _score_v2(r, mkt30, hm=None):
     # 單獨的大戶30分佔比(主力點火)在60分尺度為 0,增量只在與壓縮的交互。
     cmp_ = r.get("cmp1h"); b30n = _b30n(r)
     if cmp_ is not None and b30n is not None:
-        if 5 <= b30n < 40 and cmp_ < -0.5: add("蓄勢深", f"蓄勢深(壓縮{cmp_:+.1f}%∧大戶30分{b30n:+.0f}%)")
+        if 5 <= b30n < 40 and cmp_ < -0.5: it.append((f"蓄勢深(v26完整聯合重擬未過門檻,不計,壓縮{cmp_:+.1f}%∧大戶30分{b30n:+.0f}%)", 0))
         elif 5 <= b30n < 40 and cmp_ < 0: add("蓄勢", f"蓄勢(壓縮{cmp_:+.1f}%∧大戶30分{b30n:+.0f}%)")
         elif b30n >= 40 and cmp_ < 0: it.append((f"鉅額吸(大戶30分{b30n:+.0f}%,≥40% 不計)", 0))
         elif 0 < cmp_ <= 0.5 and b30n <= -10: add("倒貨", f"倒貨(壓縮{cmp_:+.1f}%∧大戶30分{b30n:+.0f}%)")
