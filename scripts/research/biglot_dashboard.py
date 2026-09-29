@@ -235,12 +235,15 @@ h3{{margin:4px 0;font-size:14px}}
 .meta{{color:#8b949e;font-size:11px;margin-bottom:6px}}
 table{{border-collapse:collapse;width:100%;white-space:nowrap}}
 th,td{{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}}
-th{{position:sticky;top:0;z-index:2;background:#161b22;color:#8b949e;font-weight:600;cursor:default}}
+th{{position:sticky;top:0;z-index:2;background:#161b22;color:#8b949e;font-weight:600;cursor:pointer}}
+th[data-nosort]{{cursor:default}}
 th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
 td.nm{{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}}
 th.stk{{position:sticky;left:0;z-index:3}}
 tbody tr td{{border-bottom:1px solid #1c2128}}
 tbody tr.band td{{border-bottom:2px solid #454d57}}
+table.sorted tbody tr.band td{{border-bottom:1px solid #1c2128}}  /* 手動排序時產業交界粗線失去意義,隱藏 */
+.sortind{{color:#58a6ff}}
 tbody tr:hover{{background:#1c2635 !important}}
 tbody tr:hover td.nm{{background:#1c2635 !important}}
 .cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
@@ -294,6 +297,7 @@ async function tick(){{
     const ae=document.activeElement;
     if(window.__noteEditing || (ae && ae.classList && ae.classList.contains('ne'))){{setTimeout(tick,R);return;}}   // 正在編輯個股筆記:暫停換表,離開格子後恢復
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
+    if(window.__applySort){{window.__applySort();}}   // 表格每秒被整包換掉,排序狀態要在換完後重套用(見下方排序 IIFE)
     const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1'){{setTimeout(tick,30000);return;}}   // 非交易時段改 30s 慢輪詢,08:30 自動恢復(不必重載頁面)
@@ -333,6 +337,45 @@ tick();
 (function(){{const app=document.getElementById('app');
   app.addEventListener('click',async e=>{{const b=e.target.closest&&e.target.closest('.hbtn'); if(!b) return; e.preventDefault(); e.stopPropagation();
     try{{await fetch('/hold',{{method:'POST',body:JSON.stringify({{sid:b.dataset.sid,action:b.dataset.action}})}});}}catch(_){{}}}});
+}})();
+// 表格點標題排序(仿 XQ 全球贏家;2026-09-29 jack 交辦)。#app 每秒被整包 innerHTML 換掉,
+// 不能像靜態頁那樣原地重排 <tr> 就結束——排序「狀態」記在這個閉包的變數裡(不受換頁影響),
+// 事件也代理到 #app(不會被砍掉)而不是綁在每次都重生的 <th> 上。每次 tick() 換完內容後
+// 呼叫 window.__applySort() 用同一份狀態重新排一次,體感上是「持續排序」。
+// 排序鍵一律讀 <td data-sort> 屬性(渲染時後端已經把原始數值塞進去,不猜畫面文字格式)。
+// 第一欄「股票」不是排序鍵——現行順序本來就是固定產業鏈排序,點它=清空排序狀態、回到這個預設順序。
+(function(){{
+  const app=document.getElementById('app');
+  let sortIdx=null, sortDir=1;   // sortIdx=null → 預設順序(產業鏈);sortDir 1=大到小 −1=小到大
+  function applySort(){{
+    const table=app.querySelector('table'); if(!table) return;
+    const theadRow=table.querySelector('thead tr'); const tbody=table.querySelector('tbody');
+    if(!theadRow||!tbody) return;
+    table.classList.toggle('sorted', sortIdx!==null);
+    const ths=[...theadRow.children];
+    if(sortIdx!==null && ths[sortIdx]){{
+      ths[sortIdx].insertAdjacentHTML('beforeend', ' <span class="sortind">'+(sortDir>0?'▼':'▲')+'</span>');
+    }}
+    if(sortIdx===null) return;   // 預設順序:吃伺服器算好的原始列順序,不重排
+    const rows=[...tbody.children];
+    rows.sort((a,b)=>{{
+      const av=a.children[sortIdx]&&a.children[sortIdx].dataset.sort, bv=b.children[sortIdx]&&b.children[sortIdx].dataset.sort;
+      const an=(av===undefined||av==='')?null:parseFloat(av), bn=(bv===undefined||bv==='')?null:parseFloat(bv);
+      if(an===null&&bn===null) return 0;
+      if(an===null) return 1; if(bn===null) return -1;   // 缺值一律排最後,不受方向影響
+      return sortDir*(bn-an);
+    }});
+    rows.forEach(r=>tbody.appendChild(r));
+  }}
+  app.addEventListener('click', e=>{{
+    const th=e.target.closest&&e.target.closest('thead th'); if(!th) return;
+    const theadRow=th.closest('tr'); const ths=[...theadRow.children]; const i=ths.indexOf(th);
+    if(i===0){{sortIdx=null; sortDir=1; applySort(); return;}}   // 股票欄=回到預設順序
+    if(th.dataset.nosort!==undefined) return;   // 不可排序欄(期貨買/賣·順逆大盤·訊號·隱形大戶·筆記)
+    if(sortIdx===i){{sortDir=-sortDir;}} else {{sortIdx=i; sortDir=1;}}   // 同欄再點=反向,首次點=大到小
+    applySort();
+  }});
+  window.__applySort=applySort;
 }})();
 // 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
 (function(){{

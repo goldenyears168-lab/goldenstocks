@@ -323,7 +323,7 @@ def _load_atr_state(n_bars=260):
             hist = [atr_pct[i] for i in valid_idx[-biglot_dashboard.ATR_SQUEEZE_LOOKBACK - 1:-1]]
             cur = atr_pct[last_i]
             pctl = sum(1 for x in hist if x < cur) / len(hist)
-            out[sid] = {"atr14": atr[last_i], "atr_pct": cur * 100,
+            out[sid] = {"atr14": atr[last_i], "atr_pct": cur * 100, "pctl": pctl,
                         "squeeze": pctl <= biglot_dashboard.ATR_SQUEEZE_PCTL, "asof": rows[last_i][0]}
     except Exception as e:  # noqa: BLE001
         print(f"[atr_state] load failed: {e}", file=sys.stderr)

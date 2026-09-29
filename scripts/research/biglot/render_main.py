@@ -432,7 +432,7 @@ def render():
             txt = f"{v:+d}"
         else:
             txt = str(v)
-        return f"<td class='{cls}'>{txt}</td>"
+        return f"<td class='{cls}' data-sort='{v}'>{txt}</td>"
 
     def rk_td(n, d=None):
         if n is None:
@@ -454,7 +454,7 @@ def render():
         tier = r.get("volrisk_tier")
         cls = VR_CLS.get(tier, "") if tier is not None else ""
         icon = tier if tier else ""
-        return f"<td class='{cls}' title=\"{title}\">{icon}{score:.0f}</td>"
+        return f"<td class='{cls}' data-sort='{score}' title=\"{title}\">{icon}{score:.0f}</td>"
 
     _mktday = sum(_dayrets) / len(_dayrets) if _dayrets else None
     for r in rows:
@@ -533,7 +533,7 @@ def render():
         _ccls = "up" if (_cc is not None and _cc > 0) else ("dn" if (_cc is not None and _cc < 0) else "")
         if _cc is not None:
             _arrow = "▲" if _cc > 0 else ("▼" if _cc < 0 else "")
-            _chgtd = f"<td class='{_ccls}'>{_arrow}{abs(_cc):g} {r['chg_pct']:+.2f}%</td>"
+            _chgtd = f"<td class='{_ccls}' data-sort='{r['chg_pct']}'>{_arrow}{abs(_cc):g} {r['chg_pct']:+.2f}%</td>"
         else:
             _chgtd = "<td class='dim'>—</td>"
         # 個股期貨買一/賣一 拆兩欄:委託價+委託量(小字)。title 附成交價與基差%(期貨/現股−1)
@@ -569,14 +569,14 @@ def render():
         # 盤前試撮:08:30~09:00 無成交價時,試撮直接塞進現有欄位共用(價/對昨收/買簿/賣簿),不另立欄
         _tr = biglot_dashboard.PREOPEN.get(r["sid"]); _tpc = biglot_dashboard.PREV_CLOSE.get(r["sid"])
         if r["px"]:                                     # 已有成交價:正常顯示
-            _pxtd = f"<td class='{_qcls}'>{r['px']}</td>"
+            _pxtd = f"<td class='{_qcls}' data-sort='{r['px']}'>{r['px']}</td>"
             _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         elif _tr and _tr.get("px") is not None:         # 盤前:借 價/對昨收/買賣簿 顯示試撮(標「試」上標)
             _tpx = _tr["px"]; _tg = ((_tpx / _tpc - 1) * 100) if _tpc else None
             _sup = "<sup style='font-size:8px;color:#8b949e'>試</sup>"
-            _pxtd = f"<td class='{_px_class(_tpx, _tpc, _tg)}' title='盤前試撮價'>{_tpx:g}{_sup}</td>"
+            _pxtd = f"<td class='{_px_class(_tpx, _tpc, _tg)}' data-sort='{_tpx}' title='盤前試撮價'>{_tpx:g}{_sup}</td>"
             if _tg is not None:
-                _chgtd = (f"<td class='{'up' if _tg > 0 else ('dn' if _tg < 0 else '')}' title='盤前試撮跳空%'>"
+                _chgtd = (f"<td class='{'up' if _tg > 0 else ('dn' if _tg < 0 else '')}' data-sort='{_tg}' title='盤前試撮跳空%'>"
                           f"{_tg:+.2f}%{_sup}</td>")
             _bidtd = f"<td title='試撮買一'>{_tr.get('bid')}{_sup}</td>"
             _asktd = f"<td title='試撮賣一(撮合{_tr.get('size') or 0}張)'>{_tr.get('ask')}{_sup}</td>"
@@ -626,23 +626,23 @@ def render():
                    else f" <span class='hbtn' data-sid='{r['sid']}' data-action='open' title='點一下=標記持倉(以現價為進場價,啟動持倉分監控;純提示不送單)' style='cursor:pointer;color:#58a6ff;font-size:9px;border:1px solid #30363d;padding:0 3px'>持</span>")
                 + "</td>")
         c_vr = vr_td(r)
-        c_amp = (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}'>"
+        c_amp = (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}' data-sort='{r['amp20']}'>"
                  f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
         c_open = td(r["day_ret"], "pct2")
         c_r30 = td(r["r30_r"] / 100 if r["r30_r"] is not None else None, "pct2")   # 統一用 %(2026-09-24)
         c_ctx = (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                  f"style='font-size:11px'>{r['mkt_ctx']}</td>" if r.get("mkt_ctx") else "<td class='dim'>—</td>")
         c_big5, c_big30, c_bigday = td(r["big5_r"], "wan"), td(r["big30_r"], "wan"), td(r["bigday"], "wan")
-        c_rb30 = (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}'>{r['rbuy30_r']:.1f}%</td>"
+        c_rb30 = (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}' data-sort='{r['rbuy30_r']}'>{r['rbuy30_r']:.1f}%</td>"
                   if (r.get("rbuy30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-        c_rs30 = (f"<td>{r['rsell30_r']:.1f}%</td>"
+        c_rs30 = (f"<td data-sort='{r['rsell30_r']}'>{r['rsell30_r']:.1f}%</td>"
                   if (r.get("rsell30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
         c_dsh = td(r["dsh30_r"], "bps", True, r["unm"]).replace("bps", "")
         c_w5 = td(r["w_ret_r"] / 100 if r["w_ret_r"] is not None else None, "pct2")
         c_ret5 = td(r["retn5_r"], "wan", unm=r["unm"])
-        c_rb5 = (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}'>"
+        c_rb5 = (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}' data-sort='{r['rbuy5_r']}'>"
                  f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-        c_rs5 = (f"<td>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
+        c_rs5 = (f"<td data-sort='{r['rsell5_r']}'>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
         c_retday = td(r["retday"], "wan", unm=r["unm"])
         # 新欄:全日大戶 − 全日散戶(萬);|差| ≥ 全日成交 5% 粗體
         # 大戶−散戶 改為 ÷ 全日成交 的 %(= 大戶佔比 − 散戶佔比);tooltip 給 A/B/C/D 判讀(2026-09-24)
@@ -660,13 +660,13 @@ def render():
             else:
                 _lab, _cls = "佔比未過 ±10% 門檻,不判", ""
             _bold = "font-weight:700" if abs(_dp) >= 15 else ""   # ±15% ≈ 127日 p10/p90
-            c_diff = (f"<td class='{_cls or ('up' if _dp > 0 else ('dn' if _dp < 0 else ''))}' style='{_bold}' "
+            c_diff = (f"<td class='{_cls or ('up' if _dp > 0 else ('dn' if _dp < 0 else ''))}' data-sort='{_dp}' style='{_bold}' "
                       f"title='大戶佔比 {_bp:+.1f}% − 散戶佔比 {_rp:+.1f}% = {_dp:+.1f}% → {_lab}'>{_dp:+.1f}%</td>")
         else:
             c_diff = "<td class='dim'>—</td>"
-        c_bigsh = (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}'>{r['bigsh_d']:+.1f}%</td>"
+        c_bigsh = (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}' data-sort='{r['bigsh_d']}'>{r['bigsh_d']:+.1f}%</td>"
                    if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
-        c_smfi = (f"<td class='{'up' if r['ret_smfi'] > 0 else ('dn' if r['ret_smfi'] < 0 else '')}' "
+        c_smfi = (f"<td class='{'up' if r['ret_smfi'] > 0 else ('dn' if r['ret_smfi'] < 0 else '')}' data-sort='{r['ret_smfi']}' "
                  f"title='散戶版SMFI(2026-09-25已採納進隔夜分:≥+10pp 記+1):尾盤(12:55-13:20)散戶淨額佔比 {r['ret_close_sh']:+.1f}% − "
                  f"開盤(09:00-09:25) {r['ret_open_sh']:+.1f}% = 背離 {r['ret_smfi']:+.1f}pp。127日面板:對次日跳空 OOS t+2.50(單變量t+3.07)、"
                  f"控大戶背離與既有隔夜四項後不衰減;IS 控制後邊緣未過(t+1.73)——方向反直覺:散戶尾盤更偏買方反而預測次日偏多(像散戶跟隨法人已建方向)。"
@@ -680,23 +680,27 @@ def render():
         else:
             _cv = r["cmp1h"]; _bs = r.get("bigsh_d")
             if _bs is not None and _bs >= 10 and _cv < 0:
-                c_cmp = (f"<td class='warnv' style='font-weight:700' title='多:全日大戶佔比 {_bs:+.1f}% ≥+10 ∧ 壓縮 <0(價壓在近1h均價下)。"
+                c_cmp = (f"<td class='warnv' data-sort='{_cv}' style='font-weight:700' title='多:全日大戶佔比 {_bs:+.1f}% ≥+10 ∧ 壓縮 <0(價壓在近1h均價下)。"
                          f"127日隔夜 +139/t2.9(基準 +73)'>{_cv:+.2f}%</td>")
             elif _bs is not None and _bs <= -10 and _cv > 0:
-                c_cmp = (f"<td class='warnv' style='font-weight:700' title='空:全日大戶佔比 {_bs:+.1f}% ≤−10 ∧ 壓縮 >0(大戶倒完價仍在均價上)。"
+                c_cmp = (f"<td class='warnv' data-sort='{_cv}' style='font-weight:700' title='空:全日大戶佔比 {_bs:+.1f}% ≤−10 ∧ 壓縮 >0(大戶倒完價仍在均價上)。"
                          f"127日隔夜 −28~−80(基準 +73);勿抱,非放空訊號'>{_cv:+.2f}%</td>")
             else:
-                c_cmp = f"<td class='dim' title='無方向:|大戶佔比|<10%,或方向與壓縮不對稱'>{_cv:+.2f}%</td>"
-        c_dtr = (("<td class='up' style='font-size:11px'>↑多"
-                  + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
-                  + "</td>" if r['dtrend']['above_ma5']
-                  else "<td class='dn' style='font-size:11px'>↓空"
-                  + (f" {r['dtrend']['ret5d']:+.1f}%" if r['dtrend'].get('ret5d') is not None else "")
-                  + "</td>")
-                 if r.get("dtrend") else "<td class='dim'>—</td>")
+                c_cmp = f"<td class='dim' data-sort='{_cv}' title='無方向:|大戶佔比|<10%,或方向與壓縮不對稱'>{_cv:+.2f}%</td>"
+        if r.get("dtrend"):
+            _dtr_ret5d = r["dtrend"].get("ret5d")
+            # 排序鍵:5日動能%(較連續);缺值時退回 above_ma5 的 +1/−1,至少保留多空方向的排序意義
+            _dtr_sort = _dtr_ret5d if _dtr_ret5d is not None else (1 if r["dtrend"]["above_ma5"] else -1)
+            c_dtr = (f"<td class='up' data-sort='{_dtr_sort}' style='font-size:11px'>↑多"
+                     + (f" {_dtr_ret5d:+.1f}%" if _dtr_ret5d is not None else "") + "</td>"
+                     if r["dtrend"]["above_ma5"]
+                     else f"<td class='dn' data-sort='{_dtr_sort}' style='font-size:11px'>↓空"
+                     + (f" {_dtr_ret5d:+.1f}%" if _dtr_ret5d is not None else "") + "</td>")
+        else:
+            c_dtr = "<td class='dim'>—</td>"
         if r.get("bias20") is not None:
             _b20_bold = "font-weight:700" if r["bias20"] >= 30 else ""
-            c_bias20 = (f"<td class='{'warnv' if r['bias20'] >= 30 else ('up' if r['bias20'] > 0 else 'dn')}' style='{_b20_bold}' "
+            c_bias20 = (f"<td class='{'warnv' if r['bias20'] >= 30 else ('up' if r['bias20'] > 0 else 'dn')}' data-sort='{r['bias20']}' style='{_b20_bold}' "
                        f"title='20MA(月線)正乖離率=現價÷20日均價(PIT,不含今日)−1。≥30%=短線超買過熱、回檔壓力極高的經驗法則,純描述性警示,不進分數'>"
                        f"{r['bias20']:+.0f}%</td>")
         else:
@@ -713,7 +717,7 @@ def render():
                 _kcls, _klab = ("up" if _kd > 0 else "dn"), ""
             _kl_px, _kl_dt = r["key_line"], r["key_line_date"]
             _kl_txt = _klab if _klab else f"{_kd:+.0f}%"
-            c_keyline = (f"<td class='{_kcls}' title='關鍵一條線={_kl_px:g}@{_kl_dt}(觸發棒最低點)。"
+            c_keyline = (f"<td class='{_kcls}' data-sort='{_kd}' title='關鍵一條線={_kl_px:g}@{_kl_dt}(觸發棒最低點)。"
                         f"距離=現價÷線−1={_kd:+.1f}%。規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最高收盤,取最近一次觸發棒最低點。"
                         f"⚠2026-09-25 嚴謹回測拆兩個主張分開判:①『貼近線買』DROP——21年史勝率僅42~43%(比丟銅板差)、"
                         f"IS期96%超額集中在前5檔(剔除後歸零)、10~20日扣50bps成本轉負、逐年正負不一致,只是少數噴出股撐起的假象。"
@@ -727,7 +731,8 @@ def render():
             _pasof, _pgrp = (r.get("pe_eps_asof") or "—"), (r.get("pe_group") or "—")
             _psub = f"{_pct:.0f}%" if _pct is not None else "單檔"
             _prk_txt = _prk if _prk is not None else "—"
-            c_pe = (f"<td class='{_pcls}' title='本益比=現價(即時)÷TTM近四季EPS(至{_pasof};⚠非分析師預估EPS,落後指標,見表頭說明)。"
+            _pe_sort = _pct if _pct is not None else _pev   # 單檔族群無百分位,退回本益比絕對值排序
+            c_pe = (f"<td class='{_pcls}' data-sort='{_pe_sort}' title='本益比=現價(即時)÷TTM近四季EPS(至{_pasof};⚠非分析師預估EPS,落後指標,見表頭說明)。"
                     f"同族群『{_pgrp}』{_pn or 0}檔中排第{_prk_txt}低(百分位{_psub},≤20%=族群內相對便宜·≥80%=族群內相對昂貴)。"
                     f"族群完整成員清單+各自本益比見個股詳情頁。僅供參考位置,未經嚴謹回測,不進分數'>{_pev:.1f}<span class=\"sub\">{_psub}</span></td>")
         _e981 = biglot_dashboard.ETF981_HOLD.get(r["sid"])
@@ -740,7 +745,7 @@ def render():
             _eamt, _edelta = _e981["amount"], _e981["delta"]
             _ecls = "up" if _edelta > 0 else ("dn" if _edelta < 0 else "")
             _eamt_e, _edelta_e = _eamt / 1e8, _edelta / 1e8
-            c_etf981 = (f"<td class='{_ecls}' title='00981A(中信ARK創新)持股市值(ezmoney快照{_e981_asof_txt},"
+            c_etf981 = (f"<td class='{_ecls}' data-sort='{_eamt}' title='00981A(中信ARK創新)持股市值(ezmoney快照{_e981_asof_txt},"
                         f"股數×當時收盤價,非即時)vs前次快照({_e981_prev_txt})的變動金額;"
                         f"正=加碼/新進、負=減碼/出清。純展示欄,不進分數;跟單訊號另見 00981a-l1h9 daily brief'>"
                         f"{_eamt_e:.2f}億<span class=\"sub\">{_edelta_e:+.2f}億</span></td>")
@@ -768,9 +773,9 @@ def render():
             c_iceberg = f"<td class='dim' title='{_ib_tip}'>靠{_side}(NULL,僅顯示)</td>"
         else:
             c_iceberg = f"<td class='dim' title='{_ib_tip}'>—</td>"
-        c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}'>"
+        c_rs = (f"<td class='{'dn' if r['rs_live'] < 0 else ('warnv' if r['rs_live'] > 1 else '')}' data-sort='{r['rs_live']}'>"
                 f"{r['rs_live']:+.1f}</td>" if r.get("rs_live") is not None else "<td class='dim'>—</td>")
-        c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}'>"
+        c_rvol = (f"<td class='{'wall' if (r['rvol5'] or 0) >= 2 else ('dim' if (r['rvol5'] or 0) < 0.5 else '')}' data-sort='{r['rvol5']}'>"
                   f"{r['rvol5']:.1f}x</td>" if r["rvol5"] is not None else "<td class='dim'>—</td>")
         c_rvd = (f"<td class='{'wall' if r['rvol_day'] >= 1.5 else ('dim' if r['rvol_day'] < 0.7 else '')}'>{r['rvol_day']:.2f}x</td>"
                  if r.get("rvol_day") is not None else "<td class='dim'>—</td>")
@@ -785,7 +790,7 @@ def render():
             else:
                 _acls = 'warnv' if _ar >= 1.5 else ('dim' if _ar < 0.7 else '')
                 _abold = 'font-weight:700' if _ar >= 1.5 else ''
-                c_ampr = (f"<td class='{_acls}' style='{_abold}' title='今日振幅 {_ampt:.2f}% ÷ 20日均振幅 {_a20:.2f}% = {_ar:.2f}x。"
+                c_ampr = (f"<td class='{_acls}' data-sort='{_ar}' style='{_abold}' title='今日振幅 {_ampt:.2f}% ÷ 20日均振幅 {_a20:.2f}% = {_ar:.2f}x。"
                           f"波動聚集:只預測明日振幅(真),方向 IC≈0 → 不進淨分;≥1.5x = 高波動日,淨分同分對應更大 bps、砍尾閾值可放寬'>{_ar:.2f}x</td>")
         else:
             r["amp_ratio"] = None
@@ -796,12 +801,13 @@ def render():
         if _atrs and _pc and _ds.get("hi") and _ds.get("lo"):
             _tr_today = max(_ds["hi"] - _ds["lo"], abs(_ds["hi"] - _pc), abs(_ds["lo"] - _pc))
             r["atr_pct"] = _atrs["atr_pct"]
+            r["atr_pctile"] = _atrs.get("pctl")   # 排序鍵:壓縮%在自身120日歷史中的分位(0=最壓縮,1=最擴張,2026-09-29)
             r["atr_squeeze"] = _atrs["squeeze"]
             r["atr_ratio"] = (_tr_today / _atrs["atr14"]) if _atrs["atr14"] else None
             r["atr_abnormal"] = bool(r["atr_squeeze"] and r["atr_ratio"] is not None and r["atr_ratio"] > biglot_dashboard.ATR_BREAKOUT_K)
             r["atr_dir_up"] = (r.get("px") is not None and r["px"] > _pc)
         else:
-            r["atr_pct"] = r["atr_ratio"] = None
+            r["atr_pct"] = r["atr_ratio"] = r["atr_pctile"] = None
             r["atr_squeeze"] = r["atr_abnormal"] = False
             r["atr_dir_up"] = None
         r["atr_near_line"] = bool(_atrs and _atrs.get("atr14") and r.get("key_line") and r.get("px")
@@ -819,15 +825,16 @@ def render():
             c_atr = f"<td class='dim' title='{_atr_tip_base}(此股資料不足140個交易日,無法計算)'>—</td>"
         else:
             _near = " ★近線" if r["atr_near_line"] else ""
+            _atr_sort = r.get("atr_pctile")
             if r["atr_abnormal"]:
                 _dcls = "up" if r["atr_dir_up"] else "dn"
                 _dlbl = "突破↑" if r["atr_dir_up"] else "突破↓"
-                c_atr = (f"<td class='{_dcls}' style='font-weight:700' title='{_atr_tip_base}'>"
+                c_atr = (f"<td class='{_dcls}' data-sort='{_atr_sort}' style='font-weight:700' title='{_atr_tip_base}'>"
                          f"{_dlbl}{_near} {r['atr_ratio']:.1f}x</td>")
             elif r["atr_squeeze"]:
-                c_atr = f"<td class='warnv' title='{_atr_tip_base}'>壓縮 {r['atr_pct']:.1f}%</td>"
+                c_atr = f"<td class='warnv' data-sort='{_atr_sort}' title='{_atr_tip_base}'>壓縮 {r['atr_pct']:.1f}%</td>"
             else:
-                c_atr = f"<td class='dim' title='{_atr_tip_base}'>{r['atr_pct']:.1f}%</td>"
+                c_atr = f"<td class='dim' data-sort='{_atr_sort}' title='{_atr_tip_base}'>{r['atr_pct']:.1f}%</td>"
         trs.append(
             f"<tr{_band}>" + c_nm
             + _pxtd + _fbtd + _fatd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價)
@@ -862,13 +869,13 @@ def render():
 <table><thead><tr>
 <th class="stk">股票<span class="sub">點名稱看詳情</span></th>
 <th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:30~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價">現價</th>
-<th title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買<span class="sub">買一價×量</span></th>
-<th title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th>
+<th data-nosort title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買<span class="sub">買一價×量</span></th>
+<th data-nosort title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th>
 <th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:30~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th>
 <th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
 <th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">%</span></th>
 <th class="g30" title="近30分鐘價格報酬,單位bps(1bps=0.01%)。主尺度。每秒滾動(現價 vs 1800秒前成交價);訊號標籤用完成5分桶版">近30分漲跌<span class="sub">%·滾動</span></th>
-<th class="g30" title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格。門檻:個股|30分|≥20bps∧市場≥5bps才標。">順逆大盤</th>
+<th class="g30" data-nosort title="個股30分方向vs市場30分方向(描述性脈絡,非訊號):順漲/順跌=同向,逆強=市場跌它漲,逆弱=市場漲它跌。市場是個股報酬最強控制變數,讀任何訊號前先看這格。門檻:個股|30分|≥20bps∧市場≥5bps才標。">順逆大盤</th>
 <th class="gd" title="近5分大戶淨額(萬),每秒滾動(往回300秒)。大戶=單筆成交≥1000萬,按主動方向計正負。訊號標籤用完成5分桶版。">5分大戶<span class="sub">淨額·萬·滾動</span></th>
 <th class="g5" title="5分窗散戶淨額(萬)。散戶=1張且<500萬。">5分散戶<span class="sub">淨額·萬</span></th>
 <th class="g5" title="散戶買方參與(毒藥側:只買不賣格-11bps/t-4.9,>=5%標黃)">5分散買<span class="sub">參與%</span></th>
@@ -892,14 +899,14 @@ def render():
 <th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
 <th title="00981A(中信ARK創新)持股市值(2026-09-27 jack 交辦)。金額=ezmoney快照當日市值(股數×當時收盤價,非即時);Δ=對前一個快照日的變動金額,正(紅)=加碼/新進、負(綠)=減碼/出清,無資料(—)=近兩次快照皆未持有。純展示欄,與 00981a-l1h9 跟單研究線共用同一張 etf_holdings 表,不進分數、不影響任何評分或訊號,快照通常落後即時盤況一個交易日">00981A持股<span class="sub">市值億·Δ前次</span></th>
-<th title="隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06《The Impact of Iceberg Orders in Limit Order Books》原始演算法重建)。原文:『an iceberg to be detected after the first replenishment...keeps the detection state until...an expected replenishment has not occurred』『remembers the indicator values for multiple prices...undercut but later becomes the best quote again...still there』——本版修正三個與原文的落差:①觸發條件改成量耗盡到接近零(≤15%)才算,不是任意減少;②追蹤五檔全部價位(用價位當鍵),不是只追最優價,排名滑動仍持續追蹤;③交叉比對逐筆真實成交確認耗盡打在該價位,不只看當天總量。⚠14個交易日重跑結果:靠山(backing)兩側仍是雜訊(未復現原文Table V的顯著效果);跌破支撐(breakout_bear)延遲30秒後消失,確認雜訊;**突破壓力(breakout_bull)通過完整檢定**(即時/延遲30秒/Table V原文30筆成交口徑三種算法t值都達-2.2~-2.9,集中度55%不極端,安慰劑對照真實值在隨機範圍外)——方向是突破後回落(fade)非延續,已用0.5倍縮水、30分鐘線性淡出納入淨分,唯一進分數的部分。">隱形大戶<span class="sub">守價位</span></th>
+<th data-nosort title="隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06《The Impact of Iceberg Orders in Limit Order Books》原始演算法重建)。原文:『an iceberg to be detected after the first replenishment...keeps the detection state until...an expected replenishment has not occurred』『remembers the indicator values for multiple prices...undercut but later becomes the best quote again...still there』——本版修正三個與原文的落差:①觸發條件改成量耗盡到接近零(≤15%)才算,不是任意減少;②追蹤五檔全部價位(用價位當鍵),不是只追最優價,排名滑動仍持續追蹤;③交叉比對逐筆真實成交確認耗盡打在該價位,不只看當天總量。⚠14個交易日重跑結果:靠山(backing)兩側仍是雜訊(未復現原文Table V的顯著效果);跌破支撐(breakout_bear)延遲30秒後消失,確認雜訊;**突破壓力(breakout_bull)通過完整檢定**(即時/延遲30秒/Table V原文30筆成交口徑三種算法t值都達-2.2~-2.9,集中度55%不極端,安慰劑對照真實值在隨機範圍外)——方向是突破後回落(fade)非延續,已用0.5倍縮水、30分鐘線性淡出納入淨分,唯一進分數的部分。">隱形大戶<span class="sub">守價位</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。">全日量能<span class="sub">x</span></th>
 <th title="波動風險分數(0-100)＝融資日變動幅度歷史分位 與 借券日變動幅度歷史分位 的平均(不分方向,大增大減都算)。宇宙回測:分數與隔日盤中振幅單調正相關,控制當日振幅(排除純波動群聚)後仍顯著(t3.40 p0.0007)。只預測盤中來回幅度——對隔日淨報酬/跳空/量能皆無解釋力,非方向訊號,量能反而偏低(流動性變薄)。🌊🌊=≥92分 🌊=≥86分 藍字=≥80分">波動分<span class="sub">隔日振幅預測</span></th>
 <th title="高波動分數=20日日均振幅%((高−低)/收盤)。這是選股進本系統的門檻指標:宇宙中位約6.5%,越高日內波段越大、越適合大戶/散戶流策略。金字=≥7%(高波動)、灰=＜5%(偏低)。與左側『波動分數』不同:那是融資/借券變動的T-1振幅預測,這是實際已實現振幅。">振幅%<span class="sub">20日已實現</span></th>
 <th title="今日振幅倍數 = (今高−今低)/昨收% ÷ 20日均振幅%。波動聚集:預測明日振幅為真、方向 IC≈0(tick排列/籌碼分數兩線驗過)→ 不投票、不進淨分;≥1.5x 黃粗=高波動日:同樣淨分對應更大 bps、急殺z 砍尾閾值可放寬、部位縮小。">今日振幅<span class="sub">÷20日均 x</span></th>
-<th title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
+<th data-nosort title="訊號合併欄(原章/跌訊/漲訊/旗標四欄整合,去重):【紅=看多】主力點火=30分大戶買≥3千萬∧散戶<45%(唯一正格) · 純機構/巨資機構=逆勢純機構買(+24~29/t5.2) · 深接=跌深大戶接RVOL≥0.5(+11~14/t3.4) · 蓄勢隔夜=全日佔比≥10%∧壓縮<0(隔夜IC t7.1) · 連3買=持續。【綠=看空】噴後過熱=30分漲≥150bps · 勿追=漲×參與跳升或大戶賣(−5~−9.6,趨勢日−32) · 機構暗退=30分大戶賣≥3千萬∧散戶<15% · 散戶虛拉=5分漲>20∧散買≥5% · 同賣=大戶賣∧散戶賣(隔夜−28/t−6) · 破昨防線@價=觸昨日午後低(−125bps/73%貫穿)。【黃=注記】↓弱開=明日弱開候選 · 虛胖接刀=枯量RVOL<0.5超額≈0(無效帶,別和深接混淆)。命中≥3整格粗體。【2026-09-24 即時制】盤中格改吃每秒滾動窗,條件連續 10 秒成立才觸發;名稱後數字=觸發後經過分鐘(粗體=≤5分最佳狀態);30分格 30 分後自動熄、5分格 5 分;✗=滾動數已反向(格失效);尾=13:00 後觸發無時距可兌現。127日基準率為完成桶版,滾動版待 15 日回放驗證">訊號<br><span style='font-size:9px;font-weight:400'>紅多綠空黃注記 · 名稱+經過分′</span></th>
 <th title="淨分 = 隔夜分(收盤→明開,0/±1/±2)與 盤中分V2.5(未來60分,bps 制,|分|≤40)分開計、不相加。隔夜:大戶佔比≥+10% +2/≤−10% −2 · 大戶買∧散戶佔比≥5% −1 · 大戶買∧壓縮>+1% −1 · 大戶賣∧壓縮>+0.3% −1 · 同賣 −1 · 日線↑多 +1 · 相對強弱>+1∧日線↓空 −1 · 全日量能≥1.5x(大戶買)+1 · 散戶背離(SMFI,尾盤−開盤散戶淨額佔比)≥+10pp +1(2026-09-25 採納,單邊、無對稱負向項)。盤中V2.3(2026-09-24,pit100×127日 IS 聯合OLS×0.7、按日聚類 t<2 歸零、OOS 未參與擬合;各項可加):散戶虛拉 −4.5 · 勿追5m −3 · 噴後過熱 ≥200/≥300/≥400 −5/−8.5/−8.5、≥600 不計 · 急跌≤−600 +40(多方唯一存活項) · 逆弱(市場30分≥+5) ≤−20/−50/−100 +1.5/+1.5/+5.5 · 純機構 +9(10:00後) · 蓄勢 −0.5~0% +4.5 / 蓄勢深 <−0.5% +5(大戶30分 5~40%;≥40% 鉅額不計) / 倒貨(0<壓縮≤0.5%∧≤−10%) −2.5 · 竭盡狀態格(近5分≤−0.2%=急跌;30秒主動賣≤40%=竭盡/≥60%=未竭):真空(竭盡∧末30秒仍跌≥10bps) +12.5 · 大戶接∧未竭 +6 · 賣壓未竭 +3 · 末30秒續跌 +2 · 竭盡∧散戶接 −5.5 · 急拉:買壓竭盡 +4.5 / 末30秒續漲 −3.5 · 權證 ±3(暫) · 突破壓力防回落(2026-09-25,依 Frey&Sandås 2009 iceberg 偵測演算法重建,14日樣本 t-2.2~-2.9、延遲30秒+安慰劑對照皆過關,0.5倍縮水,30分鐘線性淡出)−4.3起。⚠ 單獨的「賣盤竭盡」是負的:賣壓退=反彈已發生。歸零:過熱150–200、急跌200–600、順漲/順跌/逆強、對開盤±3/±5%、散戶接跌(被狀態格吸收)、主力點火/深接/暗退/破昨。09:30 前不計、無時段係數。「峰」= 近60分最極端分與時刻(每5秒取樣的極值,偏大,只當提示)。第二行=成因標籤(下單前必看):處置(disposal_windows.csv)/跌停鎖·觸跌停(MIS 五檔 y·l·z 算跌停價)/族群k/m(同細分產業近30分同向≥2%)/MOPS hh:mm(今日,尚無即時源→顯示 MOPS?)/昨MOPS hh:mm(T-1 重大訊息,TWSE/TPEx OpenAPI 快照,每晚 fetch_mops_today.py);跟盤殺(紅=不做)/自己殺(綠=大盤止跌它還在殺,要的格)/大盤仍跌(黃=等):大盤條件是進場過濾器不計分,因為分數預測超額、你吃原始。hover 看各標籤來源與時間。OOS(07-01~08,V2.5):IC +0.072(V2.4 +0.058);|分|≥15 多 n=427 超額+38/t4.8(延遲1桶 +20/t2.7 首次顯著)、≥20 多 n=108 +78/t5.0;空 ≥15 n=792 +25/t2.5;校準斜率 1.19。覆蓋比 V2.2 少約 40 倍,多數時間為 0 = 無證據不是中性。">淨分<span class="sub">隔夜 · 盤中V2.5 bps · 峰 · 成因</span></th>
-<th title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
+<th data-nosort title="每檔自由筆記:點格子輸入,停止輸入 1.5 秒自動儲存(Ctrl/Cmd+S 立即);小字=最後編輯時間。存在資料目錄 stock_notes.json,不進 git。編輯中表格暫停更新,離開格子後恢復。">筆記<br><span style='font-size:9px;font-weight:400'>自動儲存 · 最後編輯</span></th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>"""

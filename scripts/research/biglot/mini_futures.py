@@ -91,5 +91,5 @@ def _mini_td(r) -> str:
     tip = (f"期散(描述性,不進分數):小型契約單筆 1 口(1 口=100 股≈{r.get('px') or 0:.0f}×100 元)的主動買−主動賣淨額,期貨散戶代理。"
            f"近30分 淨 {net/1e4:+,.0f} 萬(主動買 {nb} 筆/主動賣 {ns} 筆)·1 口成交占全部小型成交 {sh:.0f}%;近5分 淨 {m['net5']/1e4:+,.0f} 萬。"
            "⚠ 與現股散戶(1 張<500 萬)是不同母體;小型契約有造市商對敲,主動簽號只能濾掉一部分;累 20 日後與可測檔對照再決定用途")
-    return (f"<td class='{cls}' title='{html_mod.escape(tip, quote=True)}'>{net/1e4:+,.0f}"
+    return (f"<td class='{cls}' data-sort='{net}' title='{html_mod.escape(tip, quote=True)}'>{net/1e4:+,.0f}"
             f"<span class='dim' style='font-size:9px'> {sh:.0f}%·{nb}/{ns}</span></td>")

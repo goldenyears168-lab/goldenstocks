@@ -37,16 +37,18 @@ def _wrt_td(c, p, bull, bear, tip):
     def _w(v):
         return f"{v/1e4:,.1f}" if v < 1e5 else f"{v/1e4:,.0f}"
     MIN_JUDGE = 1e5                                  # 主動額 <10 萬不下判斷(幾百元的成交不算方向)
+    pct_sort = (bull / tot * 100) if tot > 0 else None   # 排序鍵:簽號後多方占比%(比購/售活動量更貼近多空判斷,2026-09-29)
     if tot >= MIN_JUDGE:
-        pct = bull / tot * 100
+        pct = pct_sort
         shr = f"{pct:.0f}%"
         # 判斷帶:≥60% 偏多(紅)、≤40% 偏空(綠)、其間中性(灰)——顏色與文字同一規則
         cls, lab = ("up", "偏多") if pct >= 60 else (("dn", "偏空") if pct <= 40 else ("dim", "中性"))
     elif tot > 0:
-        shr, cls, lab = f"{bull / tot * 100:.0f}%", "dim", "量小"
+        shr, cls, lab = f"{pct_sort:.0f}%", "dim", "量小"
     else:
         shr, cls, lab = "—", "dim", ""
-    return (f"<td class='{cls}' style='font-size:11px' title='{tip} · 活動量 購{_w(c)}萬/售{_w(p)}萬 · "
+    _dsort = f" data-sort='{pct_sort}'" if pct_sort is not None else ""
+    return (f"<td class='{cls}'{_dsort} style='font-size:11px' title='{tip} · 活動量 購{_w(c)}萬/售{_w(p)}萬 · "
             f"簽號 多方{_w(bull)}萬/空方{_w(bear)}萬 · 多方占比{shr} {lab}(主動額<10萬不判斷)'>"
             f"{_w(c)}/{_w(p)}<span class='dim' style='font-size:9px'> {shr}</span>"
             f"{(' <b>' + lab + '</b>') if lab else ''}</td>")
