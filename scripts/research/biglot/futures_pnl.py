@@ -212,6 +212,28 @@ def _pnl_series(group, grid_ts):
     return out
 
 
+def _current_pnl(group, asof_ts):
+    """該檔「現在」損益(NTD),用**最新一筆實際成交**算,不是從圖表的取樣網格反推。
+
+    2026-09-29 jack 抓到環球晶算錯:圖表線是每 ~15~60 秒取一個網格點畫線(360點,
+    效能考量),但「現在損益」這個headline數字如果直接拿網格最後一點的價格,會撿到
+    兩筆真實成交中間的舊值——當天環球晶收盤前最後成交在 13:44:37(934),但網格最後
+    一點卡在 13:44:24(兩筆成交中間),用的是 13:44:15 那筆的 936,少算了 2 點×2000=4000。
+    這裡繞過網格、直接對逐筆封存做 bisect,拿到 asof_ts 之前最新一筆真實成交價。"""
+    ticks = _load_trade_series(group["fut_code"], biglot_dashboard.ST.date)
+    if not ticks:
+        return None
+    times = [t for t, _ in ticks]
+    i = _bs.bisect_right(times, asof_ts) - 1
+    if i < 0:
+        return None
+    px = ticks[i][1]
+    active = [(sign, lots, entry) for sign, lots, entry, ets in group["legs"] if ets is None or ets <= asof_ts]
+    if not active:
+        return None
+    return sum(sign * lots * group["contract_size"] * (px - entry) for sign, lots, entry in active)
+
+
 def _pnl_panel(now):
     """頂部左側:目前富邦期貨留倉當日損益消長圖,5 檔各一條線 + 合計一條粗白線。
     無持倉或查無資料回空字串。"""
@@ -236,9 +258,16 @@ def _pnl_panel(now):
     while gt <= t1:
         grid_ts.append(gt)
         gt += step_sec
+    if grid_ts[-1] != t1:
+        grid_ts.append(t1)  # 確保最後一個網格點就是 t1 本身,線的終點才能對上下面的精確損益
     series = {g["fut_code"]: _pnl_series(g, grid_ts) for g in groups}
+    # 最後一點(=t1)改用最新一筆真實成交重算,不吃網格 bisect 的結果(見 _current_pnl docstring:
+    # 網格點之間可能卡在兩筆真實成交中間,取到舊價)——這樣線的視覺終點才會跟下面的headline數字一致。
+    cur_by_fc = {g["fut_code"]: _current_pnl(g, t1) for g in groups}
+    for g in groups:
+        series[g["fut_code"]][-1] = cur_by_fc.get(g["fut_code"])
     total = [sum(v for v in (series[g["fut_code"]][i] for g in groups) if v is not None) for i in range(len(grid_ts))]
-    cur_total = next((v for v in reversed(total) if v is not None), 0.0) or 0.0
+    cur_total = sum(v for v in cur_by_fc.values() if v is not None)
 
     W, H, L, R = 470, 250, 4, 4
     all_vals = [v for vals in series.values() for v in vals if v is not None] + [v for v in total if v is not None]
@@ -265,7 +294,7 @@ def _pnl_panel(now):
     for i, g in enumerate(groups):
         col = PNL_COLORS[i % len(PNL_COLORS)]
         _line(series[g["fut_code"]], col, 1.2, 0.85)
-        cur = next((v for v in reversed(series[g["fut_code"]]) if v is not None), 0.0) or 0.0
+        cur = cur_by_fc.get(g["fut_code"]) or 0.0
         legend.append(f"<span style='color:{col}'>{g['name']} {cur:+,.0f}</span>")
     _line(total, "#e6edf3", 2.0, 0.95)
 

@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import biglot_dashboard
 from biglot.day_views import render_history, render_day, snapshot_day
+from biglot.timeline_snap import render_timeline_index, render_timeline_view, save_timeline_slot_if_due
 from biglot.stock_meta import render_help
 from biglot.render_views import GRID_SHELL, render_grid_frag, render_stock_frag, render_stock
 from biglot.user_state import _load_notes, _save_stock_note, _hold_toggle, _oos_update_at_close
@@ -54,6 +55,10 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path == "/timeline":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            date, hhmm = str(q.get("date", ""))[:10], str(q.get("hhmm", ""))[:5]
+            body = (render_timeline_view(date, hhmm) if (date and hhmm) else render_timeline_index(date or None)).encode("utf-8")
         elif path in ("/stock", "/stockfrag"):
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             sid = str(q.get("sid", ""))[:8]
@@ -131,6 +136,7 @@ def loop():
             if _in_market():
                 ingest()
                 render()
+                save_timeline_slot_if_due(biglot_dashboard.datetime.now(biglot_dashboard.TZ))
                 done_close = False
                 if time.time() - biglot_dashboard.PAGE.get("grid_t", 0) >= 5:
                     try:
@@ -141,6 +147,7 @@ def loop():
             elif not done_close:
                 ingest()          # 收盤後補跑一次定格,之後停工
                 render()
+                save_timeline_slot_if_due(biglot_dashboard.datetime.now(biglot_dashboard.TZ))  # 補一次,避免13:30這格被錯過
                 try:              # 盤後定格也要有 36 檔加總(台指面板紅/藍/紫線)與總覽快取:先建 AGG 再重繪一次
                     biglot_dashboard.PAGE["grid"] = render_grid_frag("ind")
                     biglot_dashboard.PAGE["grid_t"] = time.time()

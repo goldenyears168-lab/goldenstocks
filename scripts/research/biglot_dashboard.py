@@ -288,7 +288,8 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
-<a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ 36檔圖形總覽</a></h3>
+<a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ 36檔圖形總覽</a>
+<a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 每30分快照</a></h3>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
 <div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
