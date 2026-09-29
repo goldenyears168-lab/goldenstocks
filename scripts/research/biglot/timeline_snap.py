@@ -37,10 +37,21 @@ def _timeline_path(day: str):
     return _TIMELINE_DIR / f"timeline_{day}.json"
 
 
+_SLOT_STALE_SEC = 600  # 現在時間比時段標籤晚超過這麼多秒,視為過期不存(見下方2026-09-29註記)
+
+
 def save_timeline_slot_if_due(now):
     """每次 render() 算完後呼叫一次:現在時間若已經跨過 TIMELINE_SLOTS 裡最新的那個
     時間點、今天這個時間點還沒存過,就把剛算好的 PAGE["frag"] 存進當天的 timeline 檔。
-    冪等(同一個時間點只存一次)、失敗不拋例外(純附加功能,不能影響既有渲染迴圈)。"""
+    冪等(同一個時間點只存一次)、失敗不拋例外(純附加功能,不能影響既有渲染迴圈)。
+
+    ⚠ 2026-09-29 jack 抓到的真bug:原本沒有「太晚就不存」的防呆,導致收盤後很久才發生的
+    重啟(當天為了部署新功能重啟好幾輪)會把「現在時間之前最新的時段」(過了13:30後永遠
+    是13:30)當成標籤,把好幾小時後的畫面誤存成「13:30快照」——標籤錯,而且內容本身也
+    因為5分/30分滾動窗距離真正收盤太久沒有新tick而全部退化成空值(這正是選項A被否決的
+    同一個「拆時鐘」問題,只是意外從時段標籤這裡冒出來)。現在加上:現在時間距離這個時段
+    標籤超過 _SLOT_STALE_SEC 就不存,寧可那格缺著,也不要存一個標籤跟內容對不上、內容
+    本身還退化的假快照。"""
     try:
         day = biglot_dashboard.ST.date
         if not day:
@@ -50,6 +61,10 @@ def save_timeline_slot_if_due(now):
         if not due:
             return
         latest_due = due[-1]
+        h, m = latest_due.split(":")
+        slot_dt = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+        if (now - slot_dt).total_seconds() > _SLOT_STALE_SEC:
+            return
         p = _timeline_path(day)
         data = {}
         if p.exists():
