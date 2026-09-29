@@ -481,6 +481,49 @@ def _load_snap(d):
         return None
 
 
+def _load_holder_big800():
+    """集保戶股權分散表(2026-09-29 jack 交辦):大戶(持股≥800張)比例%,週頻(TDCC 每週五公告,
+    優先 tdcc 來源,缺值退回 finmind;邏輯與 compute_xq_style_metrics._load_holder_tiers 的
+    big800 定義相同,這裡是「一次撈全宇宙、啟動時載入一次」的批次版——該函式是逐檔即時查詢,
+    不適合被 render() 每秒對 42 檔各呼叫一次)。
+
+    ⚠ 已知不可交易,僅供參考顯示:
+    - 文獻查證(chip-signal-literature-verdicts 記憶)對「集保戶股權分散表」這個資料源本身
+      Google Scholar 零同儕審查支持,唯一像樣的實證是廠商回測 IC≈0.01(等同雜訊)。
+    - 本系統自己用同一份資料做的 HS 因子(散戶持股比,hs-factor-real-but-not-tradeable 記憶)
+      通過五項對抗檢定(自相關/產業中性化/PIT緩衝/開收穩健/月份集中度)、原始 t=+4.23~4.45,
+      但加控週轉率後年化淨值從 +5.44% 轉為 −0.14%,再控股價水準/產業後惡化到 −3.33%/年——
+      結論是「低週轉率(流動性)溢酬」的代理,不是真正的籌碼 alpha。
+    純參考展示欄,不進分數、不影響任何排序邏輯。週頻資料,跟儀表板其他盤中即時欄位不同尺度。
+    """
+    out = {}
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        sids = list(biglot_dashboard.NAMES)
+        ph = ",".join("?" * len(sids))
+        rows = conn.execute(
+            f"SELECT stock_id, as_of_date, level_lo, percent, source FROM stock_holding_dispersion_weekly "
+            f"WHERE stock_id IN ({ph}) AND level_lo IS NOT NULL ORDER BY stock_id, as_of_date", sids).fetchall()
+        conn.close()
+        by_sid_week: dict = defaultdict(lambda: defaultdict(dict))
+        src_used: dict = defaultdict(lambda: defaultdict(dict))
+        for sid, asof, lo, pct, src in rows:
+            if pct is None:
+                continue
+            cur_src = src_used[sid][asof].get(lo)
+            if cur_src is None or (cur_src != "tdcc" and src == "tdcc"):
+                by_sid_week[sid][asof][lo] = pct
+                src_used[sid][asof][lo] = src
+        for sid, weeks in by_sid_week.items():
+            latest = max(weeks)
+            tiers = weeks[latest]
+            big800 = sum(v for lo, v in tiers.items() if lo >= 800001)
+            out[sid] = (big800, latest)
+    except Exception as e:  # noqa: BLE001
+        print(f"[holder_big800] load failed: {e}", file=sys.stderr)
+    return out
+
+
 def _refresh_vol_risk_if_needed() -> bool:
     """依實際日曆日期(非 ST.date)刷新——T-1 籌碼資料跟有沒有開盤無關，不该被
     ingest()/render() 只在盤中才跑的邏輯卡住,否則開盤前使用者看到的都是前一個

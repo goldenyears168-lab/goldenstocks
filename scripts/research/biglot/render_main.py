@@ -495,6 +495,11 @@ def render():
                 r["pe_rank"], r["pe_n"] = _i + 1, len(_pe_list)
                 r["pe_pctile"] = round(_i / max(1, len(_pe_list) - 1) * 100) if len(_pe_list) > 1 else 50
                 break
+        # 集保戶股權分散表(2026-09-29 jack 交辦,見 _load_holder_big800 docstring):大戶(≥800張)比例%,
+        # 週頻、純參考展示,不進分數(已知不可交易,詳見該函式 docstring 的文獻/對抗檢定依據)。
+        _hb800 = biglot_dashboard.HOLDER_BIG800.get(r["sid"])
+        r["holder_big800"] = _hb800[0] if _hb800 else None
+        r["holder_big800_asof"] = _hb800[1] if _hb800 else None
         # 隱形大戶守價位(2026-09-25 jack 交辦,見 _iceberg_update docstring):
         # 靠山(backing)兩側皆已驗證為雜訊,只當描述性顯示;突破壓力(breakout_bull)是唯一
         # 通過延遲檢定+安慰劑對照的真訊號(t-2.2~-2.9,回落/fade,非延續),近30分內顯示、並進分數。
@@ -556,32 +561,32 @@ def render():
         _hita = _futpx is not None and _fask is not None and abs(_futpx - _fask) < 1e-6
         if _fbid is not None:
             _bp = f"<span class='hit'>{_fbid:g}</span>" if _hitb else f"{_fbid:g}"
-            _fbtd = (f"<td class='{_fbcls}' title='期貨買一{_bastxt}'>{_bp}"
+            _fbtd = (f"<td class='frz {_fbcls}' title='期貨買一{_bastxt}'>{_bp}"
                      f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}{'小' if r['sid'] in biglot_dashboard.FUT_MINI else ''}</span></td>")
         else:
-            _fbtd = "<td class='dim'>—</td>"
+            _fbtd = "<td class='frz dim'>—</td>"
         if _fask is not None:
             _ap = f"<span class='hit'>{_fask:g}</span>" if _hita else f"{_fask:g}"
-            _fatd = (f"<td class='{_facls}' title='期貨賣一{_bastxt}'>{_ap}"
+            _fatd = (f"<td class='frz {_facls}' title='期貨賣一{_bastxt}'>{_ap}"
                      f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}{'小' if r['sid'] in biglot_dashboard.FUT_MINI else ''}</span></td>")
         else:
-            _fatd = "<td class='dim'>—</td>"
+            _fatd = "<td class='frz dim'>—</td>"
         # 盤前試撮:08:30~09:00 無成交價時,試撮直接塞進現有欄位共用(價/對昨收/買簿/賣簿),不另立欄
         _tr = biglot_dashboard.PREOPEN.get(r["sid"]); _tpc = biglot_dashboard.PREV_CLOSE.get(r["sid"])
         if r["px"]:                                     # 已有成交價:正常顯示
-            _pxtd = f"<td class='{_qcls}' data-sort='{r['px']}'>{r['px']}</td>"
+            _pxtd = f"<td class='frz {_qcls}' data-sort='{r['px']}'>{r['px']}</td>"
             _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         elif _tr and _tr.get("px") is not None:         # 盤前:借 價/對昨收/買賣簿 顯示試撮(標「試」上標)
             _tpx = _tr["px"]; _tg = ((_tpx / _tpc - 1) * 100) if _tpc else None
             _sup = "<sup style='font-size:8px;color:#8b949e'>試</sup>"
-            _pxtd = f"<td class='{_px_class(_tpx, _tpc, _tg)}' data-sort='{_tpx}' title='盤前試撮價'>{_tpx:g}{_sup}</td>"
+            _pxtd = f"<td class='frz {_px_class(_tpx, _tpc, _tg)}' data-sort='{_tpx}' title='盤前試撮價'>{_tpx:g}{_sup}</td>"
             if _tg is not None:
                 _chgtd = (f"<td class='{'up' if _tg > 0 else ('dn' if _tg < 0 else '')}' data-sort='{_tg}' title='盤前試撮跳空%'>"
                           f"{_tg:+.2f}%{_sup}</td>")
             _bidtd = f"<td title='試撮買一'>{_tr.get('bid')}{_sup}</td>"
             _asktd = f"<td title='試撮賣一(撮合{_tr.get('size') or 0}張)'>{_tr.get('ask')}{_sup}</td>"
         else:                                           # 開盤前空窗/無試撮
-            _pxtd = "<td class='dim'>—</td>"
+            _pxtd = "<td class='frz dim'>—</td>"
             _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         # 訊號合併欄:漲訊(紅)+跌訊(綠)+注記(黃)整成一格,不同顏色分辨方向。
         # 原本『章/跌訊/漲訊/旗標』四欄內容高度重複(連3買/同賣/破昨防線/勿追/深接/純機構
@@ -749,6 +754,20 @@ def render():
                         f"股數×當時收盤價,非即時)vs前次快照({_e981_prev_txt})的變動金額;"
                         f"正=加碼/新進、負=減碼/出清。純展示欄,不進分數;跟單訊號另見 00981a-l1h9 daily brief'>"
                         f"{_eamt_e:.2f}億<span class=\"sub\">{_edelta_e:+.2f}億</span></td>")
+        # 集保戶股權分散表·大戶≥800張比例(2026-09-29 jack 交辦):週頻(TDCC每週五公告),純參考展示。
+        # ⚠已知不可交易——文獻查證此資料源零同儕審查支持;本系統自己用同一份資料做的HS因子
+        # (散戶持股比)通過五項對抗檢定但控週轉率後淨值由+5.44%/年轉−0.14%~−3.33%/年,結論是低週轉
+        # 流動性溢酬代理非真籌碼alpha(詳見 biglot/reference_loaders.py::_load_holder_big800 docstring)。
+        _hb800v, _hb800d = r.get("holder_big800"), r.get("holder_big800_asof")
+        if _hb800v is None:
+            c_holder800 = "<td class='dim' title='集保戶股權分散表無此股資料(或level_lo缺值)'>—</td>"
+        else:
+            c_holder800 = (f"<td data-sort='{_hb800v}' title='集保戶股權分散表(as_of {_hb800d}):"
+                            f"大戶(持股≥800張)合計占比{_hb800v:.1f}%。週頻,非即時,跟本表其他盤中欄位不同尺度。"
+                            f"⚠已知不可交易:文獻對此資料源零同儕審查支持,本系統自己用同一份資料做的HS因子(散戶持股比)"
+                            f"通過五項對抗檢定但控週轉率後淨值轉負(+5.44%→−0.14%~−3.33%/年)——結論是低週轉流動性溢酬代理,"
+                            f"非真籌碼alpha。純參考顯示,不進分數、不影響排序'>{_hb800v:.1f}%"
+                            f"<span class='dim' style='font-size:9px'> {_hb800d}</span></td>")
         _ib_tip = ("隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06 演算法重建,"
                    "取代第一版寬鬆定義)。方法:追蹤五檔全部價位(非僅最優價),量耗盡到接近零(≤原量15%)"
                    "且交叉比對逐筆真實成交確認打在該價位,第一次補回=偵測到(原文:detected after the first "
@@ -841,7 +860,7 @@ def render():
             + c_big5 + c_ret5 + c_rb5 + c_rs5 + _wrt5td                # ② 5分:大戶→散戶→權證
             + c_big30 + c_rb30 + c_rs30 + c_dsh + _wrt30td + _mini_td(r)   # ③ 30分(+期散)
             + c_bigday + c_retday + c_diff + c_bigsh + c_smfi           # ④ 全日(+散戶版SMFI觀察欄)
-            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_etf981 + c_iceberg + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群、00981A持股、隱形大戶守價位)
+            + c_cmp + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_etf981 + c_holder800 + c_iceberg + c_rs + c_rvol + c_rvd + c_vr + c_amp + c_ampr   # ⑤ 結構/隔夜(+全日量能、今日振幅倍數、20MA乖離、關鍵一條線、ATR盤整、本益比同族群、00981A持股、集保大戶800張、隱形大戶守價位)
             + _sigtd + _score_td(r) + _stock_note_td(r["sid"])         # ⑥ 訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -868,9 +887,9 @@ def render():
 <div class="flagbar" hidden>{gate_txt}<span style='color:#a5d6ff'>OOS: {_oos_summary()}</span> · {cand_txt}{flag_bar}</div>
 <table><thead><tr>
 <th class="stk">股票<span class="sub">點名稱看詳情</span></th>
-<th title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:30~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價">現價</th>
-<th data-nosort title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)">期貨買<span class="sub">買一價×量</span></th>
-<th data-nosort title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel">期貨賣<span class="sub">賣一價×量</span></th>
+<th class="frz" title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:30~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價。已凍結(隨股票欄一起固定,橫向捲動時不動)">現價</th>
+<th class="frz" data-nosort title="個股期貨買一:委託價×委託量(小字)。紅=買方掛價側。滑鼠移上看期貨成交價與基差%。資料源:個股期貨ws books channel(斷線逾30s此欄剔除不顯示凍結價)。已凍結">期貨買<span class="sub">買一價×量</span></th>
+<th class="frz" data-nosort title="個股期貨賣一:委託價×委託量(小字)。綠=賣方掛價側。買賣一價差=期貨即時流動性;量=該價位掛單張數。資料源:個股期貨ws books channel。已凍結">期貨賣<span class="sub">賣一價×量</span></th>
 <th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:30~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th>
 <th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
 <th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">%</span></th>
@@ -899,6 +918,7 @@ def render():
 <th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
 <th title="00981A(中信ARK創新)持股市值(2026-09-27 jack 交辦)。金額=ezmoney快照當日市值(股數×當時收盤價,非即時);Δ=對前一個快照日的變動金額,正(紅)=加碼/新進、負(綠)=減碼/出清,無資料(—)=近兩次快照皆未持有。純展示欄,與 00981a-l1h9 跟單研究線共用同一張 etf_holdings 表,不進分數、不影響任何評分或訊號,快照通常落後即時盤況一個交易日">00981A持股<span class="sub">市值億·Δ前次</span></th>
+<th title="集保戶股權分散表(2026-09-29 jack 交辦):大戶(持股≥800張)合計占比%,TDCC 每週五公告(優先 tdcc 來源,缺值退回 finmind),週頻、非即時,跟本表其他盤中欄位不同尺度。⚠已知不可交易,僅供參考:①文獻查證(chip-signal-literature-verdicts 記憶)對「集保戶股權分散表」這個資料源本身 Google Scholar 零同儕審查支持,唯一像樣的實證是廠商回測 IC≈0.01(等同雜訊);國際基準文獻(CHS 2002 JFE)方向甚至相反,還被後續研究證實樣本外反轉。②本系統自己用同一份資料做的 HS 因子(散戶持股比,hs-factor-real-but-not-tradeable 記憶)通過五項對抗檢定(自相關/產業中性化/PIT緩衝/開收穩健/月份集中度)、原始 t=+4.23~4.45,但加控週轉率後年化淨值從 +5.44% 轉為 −0.14%,再控股價水準/產業後惡化到 −3.33%/年——結論是「低週轉率(流動性)溢酬」的代理,不是真正的籌碼 alpha。純參考展示欄,不進分數、不影響任何排序邏輯。">集保大戶800張<span class="sub">占比%·as_of</span></th>
 <th data-nosort title="隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06《The Impact of Iceberg Orders in Limit Order Books》原始演算法重建)。原文:『an iceberg to be detected after the first replenishment...keeps the detection state until...an expected replenishment has not occurred』『remembers the indicator values for multiple prices...undercut but later becomes the best quote again...still there』——本版修正三個與原文的落差:①觸發條件改成量耗盡到接近零(≤15%)才算,不是任意減少;②追蹤五檔全部價位(用價位當鍵),不是只追最優價,排名滑動仍持續追蹤;③交叉比對逐筆真實成交確認耗盡打在該價位,不只看當天總量。⚠14個交易日重跑結果:靠山(backing)兩側仍是雜訊(未復現原文Table V的顯著效果);跌破支撐(breakout_bear)延遲30秒後消失,確認雜訊;**突破壓力(breakout_bull)通過完整檢定**(即時/延遲30秒/Table V原文30筆成交口徑三種算法t值都達-2.2~-2.9,集中度55%不極端,安慰劑對照真實值在隨機範圍外)——方向是突破後回落(fade)非延續,已用0.5倍縮水、30分鐘線性淡出納入淨分,唯一進分數的部分。">隱形大戶<span class="sub">守價位</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。">量能倍數<span class="sub">x</span></th>

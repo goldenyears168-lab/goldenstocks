@@ -46,6 +46,7 @@ from biglot.utils import _par30, _b30n, _b5n  # noqa: E402
 from biglot.reference_loaders import (  # noqa: E402
     _load_daily_trend, _load_key_line, _load_atr_state, _load_prev_close_db,
     _load_hist, _load_etf981_holdings, _load_pe_peer, _load_vixtwn, _load_xq_style,
+    _load_holder_big800,
 )
 from biglot.paper_trading import _paper_blank  # noqa: E402
 
@@ -180,6 +181,9 @@ DAILY_TREND = _load_daily_trend()
 KEY_LINE = _load_key_line()
 
 
+HOLDER_BIG800 = _load_holder_big800()   # sid -> (大戶≥800張比例%, as_of_date);集保週頻,啟動載一次即可
+
+
 PE_TABLE, PE_PEERS, PE_GEN, PE_EPS = _load_pe_peer()
 
 
@@ -240,12 +244,17 @@ th[data-nosort]{{cursor:default}}
 th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
 td.nm{{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}}
 th.stk{{position:sticky;left:0;z-index:3}}
+/* 凍結欄(2026-09-29 jack 交辦):現價/期貨買/期貨賣跟股票欄一起固定,橫向捲動不跟著跑。
+   left 是動態的(每欄實際渲染寬度不同),交給 JS 量測後寫進 style.left,這裡只定 position/z-index/背景。 */
+th.frz{{position:sticky;z-index:3}}
+td.frz{{position:sticky;z-index:1;background:#0d1117}}
 tbody tr td{{border-bottom:1px solid #1c2128}}
 tbody tr.band td{{border-bottom:2px solid #454d57}}
 table.sorted tbody tr.band td{{border-bottom:1px solid #1c2128}}  /* 手動排序時產業交界粗線失去意義,隱藏 */
 .sortind{{color:#58a6ff}}
 tbody tr:hover{{background:#1c2635 !important}}
 tbody tr:hover td.nm{{background:#1c2635 !important}}
+tbody tr:hover td.frz{{background:#1c2635 !important}}
 .cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
 th .sub{{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1px}}
 .up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
@@ -298,6 +307,7 @@ async function tick(){{
     if(window.__noteEditing || (ae && ae.classList && ae.classList.contains('ne'))){{setTimeout(tick,R);return;}}   // 正在編輯個股筆記:暫停換表,離開格子後恢復
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
     if(window.__applySort){{window.__applySort();}}   // 表格每秒被整包換掉,排序狀態要在換完後重套用(見下方排序 IIFE)
+    if(window.__applyFreeze){{window.__applyFreeze();}}   // 同理,凍結欄的 left 偏移也要在換完內容後重新量測套用
     const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1'){{setTimeout(tick,30000);return;}}   // 非交易時段改 30s 慢輪詢,08:30 自動恢復(不必重載頁面)
@@ -376,6 +386,26 @@ tick();
     applySort();
   }});
   window.__applySort=applySort;
+}})();
+// 凍結欄(2026-09-29 jack 交辦):股票/現價/期貨買/期貨賣共四欄橫向捲動時固定不動。股票欄(th.stk/td.nm)
+// 本來就是 left:0 寫死不用量;後三欄(class=frz)的實際寬度會隨內容變動(價格位數/委託量字數),
+// 沒辦法在 CSS 寫死 left,每次 #app 換完內容後量測一次目前的真實寬度、疊加計算 left 寫進 style。
+(function(){{
+  const app=document.getElementById('app');
+  function applyFreeze(){{
+    const table=app.querySelector('table'); if(!table) return;
+    const stkTh=table.querySelector('th.stk'); if(!stkTh) return;
+    let left=stkTh.getBoundingClientRect().width;
+    const offsets=[];
+    table.querySelectorAll('thead th.frz').forEach(th=>{{
+      th.style.left=left+'px'; offsets.push(left); left+=th.getBoundingClientRect().width;
+    }});
+    table.querySelectorAll('tbody tr').forEach(tr=>{{
+      const tds=tr.querySelectorAll('td.frz');
+      tds.forEach((td,i)=>{{ if(offsets[i]!==undefined) td.style.left=offsets[i]+'px'; }});
+    }});
+  }}
+  window.__applyFreeze=applyFreeze;
 }})();
 // 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
 (function(){{
