@@ -145,21 +145,43 @@ def _load_daily_trend():
     return out
 
 
-def _load_key_line(lookback=500):
+KEY_LINE_RECENT_BARS = 20   # 觸發棒時效窗(交易日);2026-09-29 jack 定案,回測 N=10/20 皆過,取 20 覆蓋較高
+KEY_LINE_LOOKBACK = 200     # 日線掃描窗(交易日):前高要 60 根 + 時效窗 + 緩衝
+
+
+def _load_key_line(recent_bars=KEY_LINE_RECENT_BARS, lookback=KEY_LINE_LOOKBACK):
     """「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師節目逐字稿)。
 
     規則(逐字稿精確化):某日 K 棒同時滿足下列三條件即為「觸發棒」,線 = 觸發棒的最低點(含影線):
       (a) 紅K(收盤>開盤) (b) 收盤漲幅>前一日收盤+4% (c) 收盤突破「前 60 個交易日最高收盤」(不含當日)。
-    同一檔股票取**最近一次**觸發棒的最低點當線(新觸發棒出現線才會移動;較舊的觸發棒作廢,線只會愈墊愈高)。
-    掃描不到 500 個交易日內找不到任何觸發棒 → 該股「沒有這條線」。
+    同一檔取**最近一次**觸發棒。
 
-    2026-09-25 研究(scratch/key_line_research_2026-09-25.txt):
-      · 前高判斷用「收盤突破」比「最高價突破」穩健(不受單日長上影線誤觸發);回顧期 20/60/120 日結果穩定,取 60。
-      · 42 檔高波動宇宙(本身已篩掉不會噴的股票)近 2 年內無線比例 0%,跟節目口頭估計「30~50% 無線」對不上——
-        那是對整個 AI 概念股母體講的,不是對這個已篩選過的高波動子集,不是規則錯,已在欄位說明中註記。
-      · 粗略回測(拉回線±2%內買,持有10/20日):+5.1%/t+9.6、+11.4%/t+12.5,勝率61~62%,n=817/801——
-        ⚠️ 這不是嚴謹回測:未拆IS/OOS、未日聚類(同批股票多年趨勢高度重疊,t值灌水)、未扣大盤同期報酬、
-        未計成本、單一(本身可能上升趨勢)高波動宇宙。只當「規則不荒謬」的合理性檢查,不是驗證過的訊號。
+    ⚠ 2026-09-29 jack 定案改二分口徑(「能畫線才有數值」),舊版的「線永不作廢、掃 500 日」已停用。
+    現在回傳四態,只有 alive 算「畫得出線」:
+      base   = 掃描窗內完全沒有觸發棒
+      stale  = 有觸發棒但已是 recent_bars(預設 20 個交易日)以前 → 線太舊,不算數
+      broken = 觸發棒之後任一日「收盤」跌破線 → 破了就畫不出線(不可回復,要等下一根觸發棒)
+      alive  = recent_bars 內有觸發棒且收盤未曾跌破 → 唯一顯示距離%的狀態
+    作廢判定只看日收盤(PIT,最新收盤為止),盤中即時價跌到線下不算作廢,只會讓距離%變負。
+    stale 與 broken 同時成立時歸 stale(與回測 F2 的分類順序一致)。
+
+    2026-09-29 嚴謹回測(scripts/research/key_line_daily_rigorous.py F 段,
+    scratch/key_line_daily_rigorous_2026-09-29.txt;21年史 2005~2026·IS/OOS 拆 2023·日聚類 SE·
+    扣 42 檔等權籃子同期報酬,42 檔高波動宇宙):
+      · 新定義(N=20 日時效 ∧ 跌破作廢)的 alive 狀態對未來相對報酬,IS/OOS 同號且三個持有期全過:
+        10日 IS +29.4(t+3.95)/OOS +146.6(t+7.57);20日 IS +56.2(t+5.07)/OOS +281.0(t+8.79);
+        60日 IS +227.6(t+9.70)/OOS +310.7(t+4.28)。alive 佔全樣本股-日 12.5%。
+      · 舊定義(掃 500 日 ∧ 不作廢)同一支腳本重跑:60日 OOS 只剩 +55.0(t+0.37),等於熄火——
+        線放到 500 日不作廢時「有線」覆蓋 94%,那個旗標幾乎恆為 1,測不出東西。
+      · 合併是否損失資訊(四態同一迴歸,base 當基準,N=20):20日 OOS stale−base −87.6(t−6.55)、
+        broken−base −58.3(t−2.90)、alive−base +199.3(t+8.67) —— stale/broken 跟 base 同一邊(都是負的),
+        只有 alive 站在另一邊,所以把 stale/broken 併進「不能畫線」站得住,不是為了畫面好看硬併。
+      · ⚠ 舊版欄位說明引用的「②無線要避開 OOS t+9.6~+15.6」**不可再引用**:那是拿 has_line(96%)對
+        base(無觸發棒)比,而 base 在 OOS 期只有 n<50 列(這 42 檔近年人人都噴過),對照組形同不存在。
+        新版比的是 alive vs 其餘(兩邊各萬列以上),才是有樣本的比較。
+      · ⚠ 20/60 日持有期的觀測每日重疊,日聚類只處理同日橫斷面相關、沒處理序列重疊,t 值仍偏大;
+        且宇宙是自選的 42 檔高波動股。此欄是**狀態顯示**,不是進場訊號,不進分數。
+      · ① 節目主張「拉回線附近(±3%)買」仍是 DROP(勝率 42~43%、IS 96% 超額集中前 5 檔、扣成本轉負)。
     """
     out = {}
     try:
@@ -167,14 +189,17 @@ def _load_key_line(lookback=500):
         sids = list(biglot_dashboard.NAMES)
         ph = ",".join("?" * len(sids))
         today = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
-        # 一次撈全部42檔(lookback個交易日約需 lookback*1.6 個日曆天緩衝週末/假日)再Python分組。
+        # lookback 個交易日約需 lookback*1.6 個日曆天緩衝週末/假日
         cal_days = int(lookback * 1.6) + 30
+        # trade_date<=today 上界:live 沒差(DB 最新就是昨收),但 fixture/回放是凍結時鐘,
+        # 少了上界會讀到回放日之後的 K 棒——時效窗與「跌破作廢」都會被未來資料污染。
         dd_sql = dedup_query("stock_daily_bars", ("stock_id", "trade_date"),
-                              inner_where=f"WHERE stock_id IN ({ph}) AND trade_date>=date(?,'-{cal_days} day')")
+                              inner_where=(f"WHERE stock_id IN ({ph}) AND trade_date<=? "
+                                           f"AND trade_date>=date(?,'-{cal_days} day')"))
         all_rows = conn.execute(
             f"SELECT stock_id, trade_date, open, high, low, close FROM ({dd_sql}) "
             f"ORDER BY stock_id, trade_date DESC",
-            (*sids, today)).fetchall()
+            (*sids, today, today)).fetchall()
         conn.close()
         by_sid = defaultdict(list)
         for sid, td, o, h, lo, c in all_rows:
@@ -185,15 +210,21 @@ def _load_key_line(lookback=500):
             if len(rows) < 65:
                 continue
             closes = [r[4] for r in rows]
-            line_price = line_date = None
-            for i in range(60, len(rows)):
+            n = len(rows)
+            trig_i = None
+            for i in range(60, n):
                 _, o, h, lo, c = rows[i]
-                prev_c = closes[i - 1]
-                prior_hi = max(closes[i - 60:i])
-                if c > o and c > prev_c * 1.04 and c > prior_hi:
-                    line_price, line_date = lo, rows[i][0]
-            if line_price is not None:
-                out[sid] = {"price": line_price, "date": line_date}
+                if c > o and c > closes[i - 1] * 1.04 and c > max(closes[i - 60:i]):
+                    trig_i = i
+            if trig_i is None:
+                out[sid] = {"state": "base"}
+                continue
+            line_price, line_date = rows[trig_i][3], rows[trig_i][0]
+            age = n - 1 - trig_i                                    # 觸發棒距今幾個交易日
+            broken = any(closes[k] < line_price for k in range(trig_i, n))
+            state = "stale" if age > recent_bars else ("broken" if broken else "alive")
+            out[sid] = {"state": state, "price": line_price, "date": line_date,
+                        "age": age, "broken": broken}
     except Exception as e:
         print(f"[key_line] load failed: {e}", file=sys.stderr)
     return out

@@ -38,6 +38,15 @@ from biglot.mini_futures import _mini_stats, _mini_td
 from biglot.paper_trading import _paper_summary, _paper_update
 from biglot.utils import _px_class
 from biglot.score_rows import _score_rows
+from biglot.reference_loaders import KEY_LINE_LOOKBACK as _KL_LOOKBACK
+from biglot.reference_loaders import KEY_LINE_RECENT_BARS as _KL_RECENT
+
+# 關鍵一條線欄各儲存格共用的 tooltip 尾巴(完整規則與回測數字在表頭 title)
+_KL_TIP_TAIL = ("規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最高收盤=觸發棒,線=該棒最低點;"
+                f"觸發棒須在最近 {_KL_RECENT} 個交易日內,且之後不曾有日收盤跌破線,否則視為畫不出線。"
+                "2026-09-29 回測(21年史·IS/OOS拆2023·日聚類·扣籃子):能畫線狀態 20日 IS+56.2(t+5.07)/"
+                "OOS+281.0(t+8.79),IS/OOS同號;但重疊報酬使t偏大、宇宙是自選42檔高波動股。"
+                "此欄是狀態顯示不是買賣訊號,不進分數")
 from biglot.pe_and_shadow import _shadow_triple
 from biglot.tx_panel import _tx_panel
 from biglot.futures_pnl import _pnl_panel
@@ -476,11 +485,19 @@ def render():
         # ≥30% = 短線超買過熱、回檔壓力極高的民間經驗法則;純描述性警示,不進分數。
         _ma20 = dt.get("ma20") if dt else None
         r["bias20"] = ((r["px"] / _ma20 - 1) * 100) if (_ma20 and r.get("px")) else None
-        # 關鍵一條線(2026-09-25 jack 交辦,見 _load_key_line docstring):距離% = 現價 ÷ 線 − 1。無線則 None。
-        _kl = biglot_dashboard.KEY_LINE.get(r["sid"])
-        r["key_line"] = _kl["price"] if _kl else None
-        r["key_line_date"] = _kl["date"] if _kl else None
-        r["key_line_dist"] = ((r["px"] / _kl["price"] - 1) * 100) if (_kl and r.get("px")) else None
+        # 關鍵一條線(2026-09-29 jack 定案改二分口徑,見 _load_key_line docstring):
+        # 只有 alive(20 個交易日內有觸發棒 ∧ 收盤未曾跌破)才算「畫得出線」、才有距離%;
+        # base/stale/broken 一律顯示「沒有」不給數值(舊版的「已破線」標籤已移除)。
+        _kl = biglot_dashboard.KEY_LINE.get(r["sid"]) or {}
+        r["key_line_state"] = _kl.get("state", "base")
+        r["key_line_age"] = _kl.get("age")
+        _kl_alive = r["key_line_state"] == "alive"
+        r["key_line"] = _kl.get("price") if _kl_alive else None
+        r["key_line_date"] = _kl.get("date") if _kl_alive else None
+        # 盤前/無即時價時退回昨收算距離,免得「有線」被誤顯示成「沒有」(2026-09-30 盤前實測踩到)
+        _kl_ref = r.get("px") or biglot_dashboard.PREV_CLOSE.get(r["sid"])
+        r["key_line_ref_prev"] = bool(_kl_alive and not r.get("px") and _kl_ref)
+        r["key_line_dist"] = ((_kl_ref / _kl["price"] - 1) * 100) if (_kl_alive and _kl_ref) else None
         # 本益比同族群排名(2026-09-25 jack 交辦,見 _load_pe_peer docstring):分子用即時價現算,分母用快照 TTM EPS。
         _eps = biglot_dashboard.PE_EPS.get(r["sid"])
         r["pe_live"] = (r["px"] / _eps[0]) if (_eps and _eps[0] and _eps[0] > 0 and r.get("px")) else None
@@ -711,24 +728,21 @@ def render():
                        f"{r['bias20']:+.0f}%</td>")
         else:
             c_bias20 = "<td class='dim'>—</td>"
-        if r.get("key_line") is None:
-            c_keyline = "<td class='dim' title='「關鍵一條線」規則(逐字稿見表頭說明):近 500 個交易日內找不到任何觸發棒(紅K∧漲幅>4%∧收盤突破前60日高)。2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史·IS/OOS拆2023·日聚類·扣大盤·扣成本):此狀態(無效線=近期無強勢突破)預測未來20/60日相對轉弱,IS/OOS同號、OOS t+9.6~+15.6,站得住的一半'>沒有</td>"
-        elif r.get("key_line_dist") is None:
-            c_keyline = "<td class='dim'>—</td>"
+        _kl_state = r.get("key_line_state", "base")
+        if _kl_state != "alive" or r.get("key_line_dist") is None:
+            _why = {"base": f"掃描窗({_KL_LOOKBACK}個交易日)內完全沒有觸發棒",
+                    "stale": f"最近一根觸發棒已是 {r.get('key_line_age')} 個交易日前(>{_KL_RECENT}日時效),線太舊不算數",
+                    "broken": "觸發棒之後已有日收盤跌破線 → 線作廢,要等下一根觸發棒才會重新畫得出線",
+                    }.get(_kl_state, "缺即時價,無法算距離")
+            c_keyline = f"<td class='dim' title='畫不出線:{_why}。{_KL_TIP_TAIL}'>沒有</td>"
         else:
             _kd = r["key_line_dist"]
-            if _kd <= -10:
-                _kcls, _klab = "dn", "已破線"
-            else:
-                _kcls, _klab = ("up" if _kd > 0 else "dn"), ""
-            _kl_px, _kl_dt = r["key_line"], r["key_line_date"]
-            _kl_txt = _klab if _klab else f"{_kd:+.0f}%"
-            c_keyline = (f"<td class='{_kcls}' data-sort='{_kd}' title='關鍵一條線={_kl_px:g}@{_kl_dt}(觸發棒最低點)。"
-                        f"距離=現價÷線−1={_kd:+.1f}%。規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最高收盤,取最近一次觸發棒最低點。"
-                        f"⚠2026-09-25 嚴謹回測拆兩個主張分開判:①『貼近線買』DROP——21年史勝率僅42~43%(比丟銅板差)、"
-                        f"IS期96%超額集中在前5檔(剔除後歸零)、10~20日扣50bps成本轉負、逐年正負不一致,只是少數噴出股撐起的假象。"
-                        f"②『無線要避開』KEEP——見上方『沒有』狀態說明,IS/OOS同號且OOS t+9.6~+15.6,動能延續效應真實存在。"
-                        f"故此距離%僅供參考位置,≤−10%(已破線)對應②的弱勢訊號,正值/貼近線**不是**驗證過的買點。不進分數'>{_kl_txt}</td>")
+            _kcls = "up" if _kd > 0 else "dn"
+            _kl_px, _kl_dt, _kl_age = r["key_line"], r["key_line_date"], r.get("key_line_age")
+            c_keyline = (f"<td class='{_kcls}' data-sort='{_kd}' title='能畫線(alive):關鍵一條線={_kl_px:g}"
+                        f"@{_kl_dt}(觸發棒最低點,{_kl_age} 個交易日前),收盤未曾跌破。"
+                        f"距離={'昨收' if r.get('key_line_ref_prev') else '現價'}÷線−1={_kd:+.1f}%。"
+                        f"{_KL_TIP_TAIL}'>{_kd:+.0f}%</td>")
         if r.get("pe_live") is None:
             c_pe = "<td class='dim' title='本益比:缺 TTM EPS 或即時價,無法計算(常見於11檔生產基本面表尚未同步的股票)'>—</td>"
         else:
@@ -840,7 +854,8 @@ def render():
                           "扣成本·安慰劑·集中度·逐年,僅限42檔):此突破事件本身DROP——10/40/60日IS/OOS異號、"
                           "安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。"
                           "唯一IS/OOS同號的子集是『恰好貼近關鍵一條線±1倍ATR內』(標★近線,IS t+1.66/OOS t+1.80),"
-                          "但仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。")
+                          "但仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。"
+                          "⚠2026-09-29 起關鍵一條線改二分口徑(20日時效∧跌破作廢),★近線只會出現在『能畫線』的股票上,覆蓋比原★近線回測(舊口徑:線永不作廢)窄很多,原 IS t+1.66/OOS t+1.80 不能直接套到新口徑。")
         if r.get("atr_pct") is None:
             c_atr = f"<td class='dim' title='{_atr_tip_base}(此股資料不足140個交易日,無法計算)'>—</td>"
         else:
@@ -920,8 +935,8 @@ def render():
 <th title="壓縮 =(現價 ÷ 近12個5分桶均價 − 1)%,需≥8桶;與全日大戶佔比聯合、多空對稱:黃粗體(多)= 大戶佔比≥+10% ∧ 壓縮<0(價壓著,127日隔夜 +139/t2.9);黃粗體(空)= 大戶佔比≤−10% ∧ 壓縮>0(大戶倒完價仍在均價上,−28~−80,勿抱非放空);其餘淡化。基準 +73。">壓縮<span class="sub">對1h均% × 大戶佔比</span></th>
 <th class="gd" title="日線趨勢(截至最近日收盤):↑多=最新收盤站上5日均線,↓空=跌破;附5日動能%。回測:壓縮∧站上5日線隔夜+93.8bps/t5.10 vs 跌破+30/t1.65(差+63.5)——壓縮回檔在日線多頭股才是買點、空頭股是接刀。短線(壓縮/即時RS)×日線(此欄)分層,並行OOS影子帳驗證中,暫不改選股規則">日線趨勢</th>
 <th title="20MA(月線)正乖離率 = 現價 ÷ 20日均價(PIT,用昨收含之前20日收盤,不含今日)− 1。2026-09-25 jack 交辦:取代『距離當天漲停%』——乖離率抓的是相對過去一個月成本的超買程度,不受個股漲跌停%上限差異影響。≥+30% 粗體黃字=短線漲幅過熱、超買回檔壓力極高的經驗法則;純描述性警示,不進分數、不做嚴謹回測。">20MA乖離<span class="sub">正乖離%</span></th>
-<th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師)。規則:某日K棒同時滿足 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤,即為觸發棒,線=該棒最低點(含影線);線只在新觸發棒出現時往上移動、不會因價跌而自動作廢。距離=現價÷線−1。近500個交易日內找不到觸發棒→顯示『沒有』。⚠2026-09-25 嚴謹回測(scratch/key_line_daily_rigorous_2026-09-25.txt,21年史2005~2026、IS/OOS拆2023、日聚類、扣42檔等權籃子同期報酬、扣50bps成本、安慰劑、集中度、逐年)把節目兩個主張拆開驗證,結論相反:①『拉回線附近(±3%)買』DROP——勝率僅42~43%、IS期96%超額集中在前5檔(剔除後趨近0)、10~20日扣成本轉負、逐年正負不穩定,是少數噴出股撐起的假象,已移除『回測區』標示。②『畫不出線=無線,要避開』KEEP——has_line狀態對未來20/60日相對報酬 IS/OOS同號、OOS t+9.6~+15.6,本質是動能延續效應,證據扎實。小時線+近一週版本另測全空(scratch/key_line_hourly_research_42only_2026-09-25.txt,限定這42檔中有逐筆資料的28檔,t<1.4),已否決不做。距離%欄僅供參考位置,不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
-<th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
+<th title="「關鍵一條線」(2026-09-25 jack 交辦,來源:YouTube《御錢術》楊育華分析師;2026-09-29 jack 定案改二分口徑)。觸發棒=某日K棒同時 紅K(收盤>開盤)∧收盤漲幅>前一日收盤+4%∧收盤突破前60個交易日最高收盤;線=該棒最低點(含影線)。**只有「畫得出線」才顯示距離%**,其餘一律「沒有」:①掃描窗內無觸發棒 ②觸發棒已是20個交易日以前(線太舊) ③觸發棒後任一日收盤跌破線(作廢,要等下一根觸發棒)。作廢只看日收盤,盤中價跌到線下只會讓距離%變負、線還在。距離=現價÷線−1。⚠2026-09-29 嚴謹回測(scripts/research/key_line_daily_rigorous.py F段,scratch/key_line_daily_rigorous_2026-09-29.txt,21年史·IS/OOS拆2023·日聚類·扣42檔等權籃子):新定義(20日時效∧跌破作廢)的「能畫線」狀態對未來相對報酬 IS/OOS 同號且三個持有期全過——10日 IS+29.4(t+3.95)/OOS+146.6(t+7.57)、20日 IS+56.2(t+5.07)/OOS+281.0(t+8.79)、60日 IS+227.6(t+9.70)/OOS+310.7(t+4.28),能畫線只佔全樣本股-日 12.5%。舊定義(掃500日∧不作廢)同腳本重跑 60日 OOS 只剩+55.0(t+0.37)=熄火(覆蓋94%,旗標幾乎恆為1)。四態迴歸(base為基準,20日OOS):線太舊−87.6(t−6.55)、已破線−58.3(t−2.90)、能畫線+199.3(t+8.67)——「太舊」「已破」跟「沒有」同一邊,合併成二分不損失資訊。⚠舊欄位說明引用的「無線要避開 OOS t+9.6~+15.6」已作廢:那個對照組(完全無觸發棒)在OOS只有n<50列,形同不存在。⚠20/60日觀測每日重疊,日聚類未處理序列重疊,t偏大;宇宙是自選42檔高波動股。①節目主張「拉回線附近±3%買」仍 DROP(勝率42~43%、IS 96%超額集中前5檔、扣成本轉負)。小時線版另測全空(t<1.4)已否決。此欄是狀態顯示不是買賣訊號,不進分數。">關鍵一條線<span class="sub">距離%</span></th>
+<th title="ATR(平均真實區間,Wilder 1978,14期)盤整壓縮/突破(2026-09-25 jack 交辦,來源:《御錢術》楊育華分析師節目ATR段落)。壓縮=近120交易日ATR%(=ATR14÷收盤)落在自身歷史後30%分位(自身相對低檔,非跨股比較);異常=壓縮狀態下今日真實區間超過昨收已知ATR14的1.5倍(節目原話:「超過1.5倍,方向改變了,要立刻出場」)。⚠2026-09-25嚴謹回測(scripts/research/atr_key_line_research.py,21年史·IS/OOS拆2023·日聚類·扣42檔籃子·扣50bps成本·安慰劑·集中度·逐年,僅限42檔):突破事件本身DROP——10/40/60日IS/OOS異號、安慰劑5組範圍蓋過真實均值(與隨機日不可區分)、前5檔佔比354%(逐年正負交替無穩定方向),不進分數。唯一IS/OOS同號子集=『恰好貼近關鍵一條線±1倍ATR內』(★近線,IS t+1.66/OOS t+1.80),仍未過本案嚴格門檻(|t_OOS|≥2),僅供觀察、同樣不進分數。純描述性狀態顯示,與關鍵一條線搭配看(★近線=兩者同時成立)。⚠2026-09-29 起關鍵一條線改二分口徑(20日時效∧跌破作廢),★近線只會出現在『能畫線』的股票上,覆蓋比原★近線回測(舊口徑:線永不作廢)窄很多,原 IS t+1.66/OOS t+1.80 不能直接套到新口徑。">ATR盤整<span class="sub">壓縮%/突破x</span></th>
 <th title="本益比(同族群排名,2026-09-25 jack 交辦,依楊育華分析師《御錢術》節目邏輯:同族群比、不跨族群比,例如IC設計不跟記憶體比、被動元件不跟PCB比)。公式=現價(即時)÷TTM(近四季已公布)EPS。⚠與原方法差異:她說本益比分母該用『預估EPS』(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估EPS的資料源,只能用已公布TTM——落後指標非預估指標,她自己說EPS『兩三個月才變』故失真程度有限,但誠實揭露此為唯一實質差異。族群清單=既有SUBCAT細分類人工擴充真實上市櫃同業(scripts/research/pe_peer_group_research.py,2026-09-25驗證76檔代號皆存在)。百分位=現價本益比在族群內排名(0%=最便宜、100%=最貴,≤20%/≥80%標色);多數細分族群天生成員僅3~8檔,遠不到她說的20~30檔,如實呈現不硬湊。族群完整成員名單+個別本益比見個股詳情頁。純參考位置,未經嚴謹回測,不進分數">本益比<span class="sub">同族群%</span></th>
 <th title="00981A(中信ARK創新)持股市值(2026-09-27 jack 交辦)。金額=ezmoney快照當日市值(股數×當時收盤價,非即時);Δ=對前一個快照日的變動金額,正(紅)=加碼/新進、負(綠)=減碼/出清,無資料(—)=近兩次快照皆未持有。純展示欄,與 00981a-l1h9 跟單研究線共用同一張 etf_holdings 表,不進分數、不影響任何評分或訊號,快照通常落後即時盤況一個交易日">00981A持股<span class="sub">市值億·Δ前次</span></th>
 <th title="集保戶股權分散表(2026-09-29 jack 交辦):大戶(持股≥800張)合計占比%,TDCC 每週五公告(優先 tdcc 來源,缺值退回 finmind),週頻、非即時,跟本表其他盤中欄位不同尺度。⚠已知不可交易,僅供參考:①文獻查證(chip-signal-literature-verdicts 記憶)對「集保戶股權分散表」這個資料源本身 Google Scholar 零同儕審查支持,唯一像樣的實證是廠商回測 IC≈0.01(等同雜訊);國際基準文獻(CHS 2002 JFE)方向甚至相反,還被後續研究證實樣本外反轉。②本系統自己用同一份資料做的 HS 因子(散戶持股比,hs-factor-real-but-not-tradeable 記憶)通過五項對抗檢定(自相關/產業中性化/PIT緩衝/開收穩健/月份集中度)、原始 t=+4.23~4.45,但加控週轉率後年化淨值從 +5.44% 轉為 −0.14%,再控股價水準/產業後惡化到 −3.33%/年——結論是「低週轉率(流動性)溢酬」的代理,不是真正的籌碼 alpha。純參考展示欄,不進分數、不影響任何排序邏輯。">集保大戶800張<span class="sub">占比%·as_of</span></th>

@@ -19,7 +19,22 @@ import numpy as np, pandas as pd
 sys.path.insert(0, "scripts/research")
 sys.path.insert(0, "src")
 import stock_db  # noqa: E402
-from biglot_score_v23_fit import cl_t, ols_cluster  # noqa: E402
+from biglot_score_v23_fit import cl_t  # noqa: E402
+
+
+def ols_cluster(X, y, cl):
+    """與 biglot_score_v23_fit.ols_cluster 數學等價,但 meat 用 groupby 一次算完。
+
+    原版 `for gid in np.unique(cl): m = cl == gid` 是 O(日數 × 列數);本案樣本 ~20 萬列 × ~5,200
+    個交易日,單次呼叫要數十秒,F 段要跑 70+ 次迴歸會爆掉。改成把 Xc*e 依 cluster 分組加總後
+    meat = S.T @ S(同一式子的向量化寫法),結果相同、快兩個數量級。
+    """
+    Xc = np.column_stack([np.ones(len(y)), X])
+    XtX_inv = np.linalg.pinv(Xc.T @ Xc); b = XtX_inv @ Xc.T @ y; e = y - Xc @ b
+    S = pd.DataFrame(Xc * e[:, None]).groupby(np.asarray(cl)).sum().values
+    meat = S.T @ S
+    se = np.sqrt(np.diag(XtX_inv @ meat @ XtX_inv))
+    return b[1:], se[1:]
 
 N_LOOKBACK = 60          # 前高回顧期(交易日),同生產規則
 PCT_THRESH = 0.04        # 觸發棒漲幅門檻,同生產規則
@@ -150,6 +165,89 @@ def main():
         r = g_.groupby("date").apply(lambda q: q["dist"].corr(q["ex20"], method="spearman") if len(q) > 15 else np.nan).dropna()
         ic, t = r.mean(), r.mean() / (r.std() / np.sqrt(len(r))) if len(r) > 3 else np.nan
         print(f"  {sl}: 距離(dist) vs 未來20日超額 IC {ic:+.4f}(t{t:+.2f}) — 負值代表『越貼近線(或跌破)未來越好』,正值代表『離線越遠(越強勢)未來越好』")
+
+    # ==== F. 新定義(2026-09-29 jack 定案):①跌破即作廢 ②觸發棒要「近」,不是近 500 日內有就算 ====
+    # 四態拆解(給定時效窗 N 個交易日):
+    #   base   = 最近 N 日內沒有觸發棒,更早也沒有  → 本來就畫不出線
+    #   stale  = 有觸發棒但已是 N 日以前            → 線太舊,jack 認為不該再算數
+    #   broken = N 日內有觸發棒但收盤已跌破         → 破了就畫不出線
+    #   alive  = N 日內有觸發棒且未跌破             → 唯一「能畫線」、才顯示距離%
+    # 判準:(1) stale / broken 的未來超額要 ≈ base,合併成「不能畫線」才不損失資訊;
+    #       (2) 新 has_line 的 IS/OOS 係數要同號、t 不明顯縮水,②「無線要避開」才能沿用到新口徑。
+    voided = np.zeros(len(full), dtype=bool)
+    _pos = 0
+    for _sid, g in full.groupby("sid", sort=False):
+        ln, tg, cc = g["line"].values, g["trig"].values, g["close"].values
+        v = False
+        arr = np.zeros(len(g), dtype=bool)
+        for i in range(len(g)):
+            if tg[i]:
+                v = False                      # 新觸發棒 → 重新畫得出線
+            if not np.isnan(ln[i]) and cc[i] < ln[i]:
+                v = True                       # 收盤跌破 → 當日起作廢,直到下一根觸發棒
+            arr[i] = v
+        voided[_pos:_pos + len(g)] = arr
+        _pos += len(g)
+    full["voided"] = voided
+    chk = full.dropna(subset=["ex10", "ex20", "ex60"]).copy()
+
+    print("\n==== F1. 時效窗 N × 作廢規則:has_line 係數(橫斷面 OLS,日聚類;正=能畫線的未來相對更好) ====")
+    for N in (10, 20, 60, 120, 500):
+        for void_on in (False, True):
+            col = (chk["days_since_trig"] <= N) & chk["line"].notna()
+            if void_on:
+                col = col & ~chk["voided"]
+            x = col.astype(float).values.reshape(-1, 1)
+            row = f"  N={N:3d}日 {'跌破作廢' if void_on else '不作廢  '}:"
+            for h in (10, 20, 60):
+                for sl, m in (("IS", chk["is_"].values), ("OOS", ~chk["is_"].values)):
+                    b_, se_ = ols_cluster(x[m], chk[f"ex{h}"].values[m], chk["date"].values[m])
+                    row += f" {h}d{sl} {b_[0]:+6.1f}(t{b_[0]/se_[0]:+5.2f})"
+                row += " |"
+            print(row + f" 能畫線佔{col.mean()*100:4.1f}%")
+
+    print("\n==== F2. 四態拆解(N=10 / N=20;base 為基準組,同一迴歸放三個 dummy) ====")
+    for N in (10, 20):
+        recent = chk["line"].notna() & (chk["days_since_trig"] <= N)
+        st = np.where(~chk["line"].notna(), "base",
+              np.where(~recent, "stale",
+               np.where(chk["voided"], "broken", "alive")))
+        chk[f"st{N}"] = st
+        X = np.column_stack([(st == "stale").astype(float),
+                             (st == "broken").astype(float),
+                             (st == "alive").astype(float)])
+        print(f"  --- N={N} 日 · 佔比 " + " ".join(f"{k}{(st==k).mean()*100:.1f}%" for k in ("base", "stale", "broken", "alive")))
+        for h in (10, 20, 60):
+            for sl, m in (("IS", chk["is_"].values), ("OOS", ~chk["is_"].values)):
+                b_, se_ = ols_cluster(X[m], chk[f"ex{h}"].values[m], chk["date"].values[m])
+                print(f"    持{h:2d}日 {sl:3s}: stale−base {b_[0]:+7.1f}(t{b_[0]/se_[0]:+5.2f})  "
+                      f"broken−base {b_[1]:+7.1f}(t{b_[1]/se_[1]:+5.2f})  alive−base {b_[2]:+7.1f}(t{b_[2]/se_[2]:+5.2f})")
+
+    print("\n==== F3. 各態的絕對超額均值(不是對比基準組,看量級用;N=20) ====")
+    for h in (10, 20, 60):
+        for sl, m in (("IS", chk["is_"]), ("OOS", ~chk["is_"])):
+            g_ = chk[m]
+            row = f"  持{h:2d}日 {sl:3s}:"
+            for k in ("base", "stale", "broken", "alive"):
+                q = g_[g_["st20"] == k]
+                if len(q) < 50:
+                    row += f" {k} n<50 |"; continue
+                mu, t = cl_t(q[f"ex{h}"].values, q["date"].values)
+                row += f" {k} n={len(q):6d} {mu:+7.1f}(t{t:+5.2f}) |"
+            print(row)
+
+    print("\n==== F4. 最新交易日 42 檔狀態分佈(換定義後儀表板會怎麼顯示) ====")
+    for N in (10, 20):
+        recent = full["line"].notna() & (full["days_since_trig"] <= N)
+        full[f"st{N}"] = np.where(~full["line"].notna(), "base",
+                          np.where(~recent, "stale",
+                           np.where(full["voided"], "broken", "alive")))
+        last = full.sort_values("date").groupby("sid").tail(1)
+        print(f"  --- N={N} 日({last['date'].max()})")
+        for k, lab in (("base", "沒有(近期無觸發棒)"), ("stale", "沒有(線太舊已過期)"),
+                       ("broken", "沒有(已跌破作廢)"), ("alive", "有線→顯示距離%")):
+            q = last[last[f"st{N}"] == k]
+            print(f"    {lab}: {len(q):2d} 檔  " + " ".join(f"{s}{names.get(s,'')}" for s in sorted(q["sid"])))
 
 
 if __name__ == "__main__":
