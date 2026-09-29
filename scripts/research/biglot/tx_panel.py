@@ -83,8 +83,31 @@ def _tx_panel(now):
     step = max(1, len(t) // 600)
     samp = list(zip(t, px))[::step]
     pts = " ".join(f"{X(a):.1f},{Y(b):.1f}" for a, b in samp)
-    # hover 用:每個取樣點的 (x 像素, y 像素, 時間, 價),前端找最近 x 顯示
-    hov = json.dumps([[round(X(a), 1), round(Y(b), 1), biglot_dashboard.datetime.fromtimestamp(a, biglot_dashboard.TZ).strftime("%H:%M:%S"), b] for a, b in samp])
+    # hover 用:每個取樣點的 (x 像素, y 像素, 時間, 價, 36檔累計大戶萬, 累計散戶萬, 差額萬),前端找最近 x 顯示。
+    # 2026-09-29 jack 交辦:圖形本身維持現狀(不對大戶/散戶重新正規化),改在 hover 補數值——
+    # AGG(_agg_lines 算的 36 檔累計)是「HH:MM」分鐘鍵,跟這裡的 tick 級時間戳不同粒度,
+    # 用 bisect 找「不晚於這個時間點」的最後一個分鐘桶當該時刻的累計值。
+    _agg_mins = biglot_dashboard.AGG.get("mins") or []
+    _agg_big = biglot_dashboard.AGG.get("big") or []
+    _agg_ret = biglot_dashboard.AGG.get("ret") or []
+
+    def _agg_at(ts):
+        if not _agg_mins:
+            return None, None
+        hm = biglot_dashboard.datetime.fromtimestamp(ts, biglot_dashboard.TZ).strftime("%H:%M")
+        i = _bs.bisect_right(_agg_mins, hm) - 1
+        return (_agg_big[i], _agg_ret[i]) if i >= 0 else (None, None)
+    hov_rows = []
+    for a, b in samp:
+        bg, rt = _agg_at(a)
+        hov_rows.append([
+            round(X(a), 1), round(Y(b), 1),
+            biglot_dashboard.datetime.fromtimestamp(a, biglot_dashboard.TZ).strftime("%H:%M:%S"), b,
+            round(bg / 1e4, 1) if bg is not None else None,
+            round(rt / 1e4, 1) if rt is not None else None,
+            round((bg - rt) / 1e4, 1) if (bg is not None and rt is not None) else None,
+        ])
+    hov = json.dumps(hov_rows)
     col = "#ff7b72" if (chg or 0) > 0 else "#3fb950"
     svg = (f"<svg width='{W}' height='{H}' style='display:block' data-pts='{hov}'>"
            + (f"<line x1='{L}' y1='{Y(fpc):.1f}' x2='{W-R}' y2='{Y(fpc):.1f}' stroke='#8b949e' stroke-dasharray='3,3'/>" if fpc else "")

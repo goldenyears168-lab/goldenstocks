@@ -417,9 +417,13 @@ tick();
     if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
     let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
     if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
-    tip.textContent=best[2]+'  '+best[3].toLocaleString(); tip.style.display='block';
+    let _th='台指 '+best[2]+'  <b>'+best[3].toLocaleString()+'</b>';
+    if(best[4]!=null){{_th+='<br>36檔大戶 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span>'
+      +' · 散戶 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span>'
+      +' · 差 '+best[6].toLocaleString()+'萬';}}
+    tip.innerHTML=_th; tip.style.display='block';
     const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
-    tip.style.left=Math.min(lx+8,b.width-110)+'px'; tip.style.top=(r.top-b.top+best[1]-22)+'px';
+    tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=(r.top-b.top+best[1]-38)+'px';
   }});
   box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
 }})();
