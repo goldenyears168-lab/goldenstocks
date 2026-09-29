@@ -15,6 +15,14 @@
 分毫不差(2026-09-29 手動驗證:FIIXF/FILUF/FIOLF×2/FIOWF 五筆全對上),確認這個
 重建方法可信。
 
+⚠ 2026-09-29 jack 糾正:第一版誤把圖形起點釘死在 08:45(期貨開盤),但 `query_single_position`
+只回傳 `date`(到日期),不含進場的精確時分——實際上使用者是在盤中陸續進場(這批單
+分散在 10:11~12:35,不是開盤那一刻),誤把 08:45~各自進場之間畫成平線很誤導。改用
+`get_futopt_order_results` 的 `date`+`last_time`(逐筆委託結果,精確到秒)回填每一口的
+真實進場時間,圖形起點改成「所有留倉裡最早那一口的進場時間」,且同一檔(如大立光)
+若分兩口不同時間進場,前面那段只算已進場的那一口、後面那口進場後才併入加總——不是
+兩口一開始就一起算。
+
 依賴規則同 biglot/tx_panel.py:`ST`/`datetime`/`TZ` 一律 `import biglot_dashboard`
 屬性存取,不在頂層具名匯入,避免 stale reference 與凍結時鐘 monkey-patch 被繞過。
 """
@@ -49,13 +57,19 @@ def _stock_by_futcode():
 
 def _load_fubon_positions():
     """安全唯讀查詢富邦目前期貨留倉,15分鐘快取。失敗回傳上次快取(不讓圖因暫時性
-    連線問題消失)。只呼叫既有、已核可的唯讀函式(connect_fubon/query_single_position),
-    不新開下單路徑、不呼叫 dir()/vars()。"""
+    連線問題消失)。只呼叫既有、已核可的唯讀函式(connect_fubon/query_single_position/
+    get_futopt_order_results),不新開下單路徑、不呼叫 dir()/vars()。"""
     now = time.time()
     if now - _POSITIONS_CACHE["t"] < _POSITIONS_TTL and _POSITIONS_CACHE["rows"]:
         return _POSITIONS_CACHE["rows"]
     try:
-        from order.fubon_futopt_orders import _bs_to_side, _result_data, pick_futopt_account
+        from order.fubon_futopt_orders import (
+            _bs_to_side,
+            _result_data,
+            base_order_no,
+            get_futopt_order_results,
+            pick_futopt_account,
+        )
         from order.fubon_session import connect_fubon
 
         session = connect_fubon(realtime=False)
@@ -63,7 +77,8 @@ def _load_fubon_positions():
         fa = session.sdk.futopt_accounting
         res = fa.query_single_position(acc)
         raw_rows = list(_result_data(res) or [])
-        out = []
+        legs = []
+        order_nos = set()
         for r in raw_rows:
             sym = str(getattr(r, "symbol", "") or "")
             if not sym.startswith("FI"):
@@ -77,9 +92,36 @@ def _load_fubon_positions():
                 continue
             if side is None or lots <= 0 or entry is None:
                 continue
-            out.append({"fut_code": fut_code, "sign": (1 if side == "L" else -1), "lots": lots, "entry": entry})
-        if out:
-            _POSITIONS_CACHE["rows"] = out
+            on = base_order_no(str(getattr(r, "order_no", "") or ""))
+            legs.append({"fut_code": fut_code, "sign": (1 if side == "L" else -1), "lots": lots,
+                         "entry": entry, "order_no": on})
+            if on:
+                order_nos.add(on)
+        # 精確進場時間:query_single_position 只給 date(到日期),要靠 get_futopt_order_results
+        # 的 date+last_time(逐筆委託結果,精確到秒)才知道「幾點幾分下的單」,同一個 session
+        # 內順便查、不額外多登入一次。
+        entry_ts_map: dict[str, float] = {}
+        if order_nos:
+            try:
+                order_rows = get_futopt_order_results(session, acc=acc)
+                for orow in order_rows:
+                    on = base_order_no(str(getattr(orow, "order_no", "") or ""))
+                    if on not in order_nos or on in entry_ts_map:
+                        continue
+                    d, t = getattr(orow, "date", None), getattr(orow, "last_time", None)
+                    if not d or not t:
+                        continue
+                    try:
+                        iso = f"{d.replace('/', '-')}T{t[:8]}+08:00"
+                        entry_ts_map[on] = biglot_dashboard.datetime.fromisoformat(iso).timestamp()
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception as e:  # noqa: BLE001
+                print(f"[futures_pnl] order_results lookup failed: {e}", file=sys.stderr)
+        for leg in legs:
+            leg["entry_ts"] = entry_ts_map.get(leg["order_no"])
+        if legs:
+            _POSITIONS_CACHE["rows"] = legs
             _POSITIONS_CACHE["t"] = now
     except Exception as e:  # noqa: BLE001
         print(f"[futures_pnl] position query failed, using stale cache: {e}", file=sys.stderr)
@@ -87,11 +129,13 @@ def _load_fubon_positions():
 
 
 def _positions_by_symbol():
-    """同一檔期貨多口合併成一組(供合併成一條線),查無對映股票的略過。"""
+    """同一檔期貨多口合併成一組(供合併成一條線),查無對映股票的略過。
+    legs = [(sign, lots, entry, entry_ts_or_None), ...];entry_ts 缺值(查不到)時
+    在 _pnl_series 裡視為「從圖形起點就已經在場」,不會憑空消失。"""
     groups: dict[str, dict] = {}
     for r in _load_fubon_positions():
         g = groups.setdefault(r["fut_code"], {"fut_code": r["fut_code"], "legs": []})
-        g["legs"].append((r["sign"], r["lots"], r["entry"]))
+        g["legs"].append((r["sign"], r["lots"], r["entry"], r.get("entry_ts")))
     fc_map = _stock_by_futcode()
     out = []
     for fc, g in groups.items():
@@ -99,6 +143,8 @@ def _positions_by_symbol():
         if sid is None:
             continue
         g["sid"], g["name"], g["contract_size"] = sid, name, csize
+        ts_list = [t for *_, t in g["legs"] if t is not None]
+        g["first_entry_ts"] = min(ts_list) if ts_list else None
         out.append(g)
     out.sort(key=lambda g: g["sid"])
     return out
@@ -143,7 +189,9 @@ def _load_trade_series(fut_code: str, day: str):
 
 
 def _pnl_series(group, grid_ts):
-    """回傳跟 grid_ts 等長的損益陣列(NTD);該時刻之前還沒有任何成交回 None。"""
+    """回傳跟 grid_ts 等長的損益陣列(NTD)。該時刻之前還沒有任何成交、或這檔所有口
+    都還沒進場回 None;同一檔分批進場(如大立光兩口不同時間)時,先進場那口先算,
+    後進場那口到了它自己的 entry_ts 才併入加總——不是兩口從一開始就一起算。"""
     ticks = _load_trade_series(group["fut_code"], biglot_dashboard.ST.date)
     if not ticks:
         return [None] * len(grid_ts)
@@ -156,7 +204,11 @@ def _pnl_series(group, grid_ts):
             out.append(None)
             continue
         px = prices[i]
-        out.append(sum(sign * lots * group["contract_size"] * (px - entry) for sign, lots, entry in group["legs"]))
+        active = [(sign, lots, entry) for sign, lots, entry, ets in group["legs"] if ets is None or ets <= gt]
+        if not active:
+            out.append(None)
+            continue
+        out.append(sum(sign * lots * group["contract_size"] * (px - entry) for sign, lots, entry in active))
     return out
 
 
@@ -167,8 +219,14 @@ def _pnl_panel(now):
     if not groups:
         return ""
     day = biglot_dashboard.ST.date
-    t0 = biglot_dashboard.datetime.fromisoformat(f"{day}T08:45:00+08:00").timestamp()
-    t1 = min(now.timestamp(), t0 + 5 * 3600)  # 期貨盤中窗 08:45-13:45,跟 tx_panel 同軸
+    mkt_open = biglot_dashboard.datetime.fromisoformat(f"{day}T08:45:00+08:00").timestamp()
+    mkt_close = mkt_open + 5 * 3600  # 期貨盤中窗 08:45-13:45
+    entry_times = [g["first_entry_ts"] for g in groups if g.get("first_entry_ts") is not None]
+    # 圖形起點=所有留倉裡最早那一口的實際進場時間,不是開盤那一刻(查不到任何進場時間時
+    # 才退回開盤當保底,不讓圖整個消失)。
+    t0 = min(entry_times) if entry_times else mkt_open
+    t0 = max(t0, mkt_open)
+    t1 = min(now.timestamp(), mkt_close)
     if t1 - t0 < 60:
         return ""
     n_grid = 360
