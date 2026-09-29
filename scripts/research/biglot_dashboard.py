@@ -275,6 +275,8 @@ border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .txp{{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6;position:relative}}
 #txtip{{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}}
 #txline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
+#pnltip{{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}}
+#pnlline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
 #notes{{outline:none;min-height:60px;padding:2px 4px;border-radius:4px}} #notes:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}}
 #nstat{{color:#8b949e;font-size:10px;text-align:right}}
 td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
@@ -291,6 +293,7 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
 <div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
 <div id="nstat">未編輯</div></details>
+<div id="pnlp" class="txp"><div id="pnlbody"><span class="dim">期貨留倉損益 載入中…</span></div><div id="pnltip"></div><div id="pnlline"></div></div>
 <div id="txp" class="txp"><div id="txbody"><span class="dim">台指近月 載入中…</span></div><div id="txtip"></div><div id="txline"></div></div>
 </div>
 <div id="app"><div class="meta">載入中…</div></div>
@@ -309,6 +312,7 @@ async function tick(){{
     if(window.__applySort){{window.__applySort();}}   // 表格每秒被整包換掉,排序狀態要在換完後重套用(見下方排序 IIFE)
     if(window.__applyFreeze){{window.__applyFreeze();}}   // 同理,凍結欄的 left 偏移也要在換完內容後重新量測套用
     const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
+    const ps=document.getElementById('pnlsrc'); if(ps){{document.getElementById('pnlbody').innerHTML=ps.innerHTML;}}   // 期貨損益面板同理搬到左上
     const c=document.getElementById('closed');
     if(c && c.dataset.closed==='1'){{setTimeout(tick,30000);return;}}   // 非交易時段改 30s 慢輪詢,08:30 自動恢復(不必重載頁面)
   }}catch(e){{}}
@@ -424,6 +428,29 @@ tick();
     tip.innerHTML=_th; tip.style.display='block';
     const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
     tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=(r.top-b.top+best[1]-38)+'px';
+  }});
+  box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
+}})();
+// 期貨留倉損益圖 hover(2026-09-29 jack 交辦):找最近取樣點,顯示時間+5檔各自損益+合計。
+// data-pts 每點=[x, 時間, 合計, 檔1損益, 檔2損益, ...],data-names=5檔名稱陣列(跟 data-pts 順序對應)。
+(function(){{
+  const box=document.getElementById('pnlp'), tip=document.getElementById('pnltip'), ln=document.getElementById('pnlline');
+  box.addEventListener('mousemove',e=>{{
+    const svg=box.querySelector('svg'); if(!svg){{tip.style.display='none';ln.style.display='none';return;}}
+    if(!svg._pts){{try{{svg._pts=JSON.parse(svg.dataset.pts); svg._names=JSON.parse(svg.dataset.names);}}catch(_){{return;}}}}
+    const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect(), x=e.clientX-r.left;
+    if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
+    let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
+    if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
+    let _th=best[1]+' 合計 <b>'+(best[2]!=null?best[2].toLocaleString():'—')+'</b>';
+    const names=svg._names||[];
+    for(let k=0;k<names.length;k++){{
+      const v=best[3+k];
+      _th+='<br>'+names[k]+' '+(v!=null?v.toLocaleString():'—');
+    }}
+    tip.innerHTML=_th; tip.style.display='block';
+    const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
+    tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=Math.max(0,e.clientY-b.top-70)+'px';
   }});
   box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
 }})();

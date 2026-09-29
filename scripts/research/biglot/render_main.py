@@ -40,6 +40,7 @@ from biglot.utils import _px_class
 from biglot.score_rows import _score_rows
 from biglot.pe_and_shadow import _shadow_triple
 from biglot.tx_panel import _tx_panel
+from biglot.futures_pnl import _pnl_panel
 from biglot.html_fragments import _wrt_td
 from stock_db import DATA_DIR
 
@@ -875,10 +876,15 @@ def render():
     except Exception as _e:  # noqa: BLE001
         _txp = ""
         print(f"[tx_panel] {_e!r}", file=sys.stderr)
+    try:
+        _pnlp = _pnl_panel(now)
+    except Exception as _e:  # noqa: BLE001
+        _pnlp = ""
+        print(f"[pnl_panel] {_e!r}", file=sys.stderr)
     biglot_dashboard.PAGE["rows"] = rows
     biglot_dashboard.PAGE["in_mkt"] = in_mkt
     biglot_dashboard.PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
-{_txp}{stale_bar}
+{_pnlp}{_txp}{stale_bar}
 <div class="meta" hidden>更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> · <span style='color:#d2a8ff' title='紙上交易(不送單):bucket=5分桶邊界取樣(回測口徑)、sec=每秒首次穿越;進 V2.5≥15 掛買一30秒,出 分數≤0·30秒/壞標籤/60分 掛賣一60秒否則買一;嚴=價穿越才算成交、樂=觸價即成交;成本22bps;帳本 paper_trades_{{日}}.jsonl / paper_daily.json'>紙上 {_paper_summary()}</span> ·
 紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
