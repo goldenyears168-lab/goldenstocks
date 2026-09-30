@@ -576,6 +576,10 @@ MINI_ST: dict = {"day": None, "off": {}, "q": {}}       # off: root -> 檔案讀
 PAPER_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "paper_state.json"
 PAPER_DAILY = DATA_DIR.parent / "cache" / "biglot_live_watch" / "paper_daily.json"
 PAPER_COST, PAPER_K, PAPER_TH = 22.0, 3, 15.0
+# 出場分數門檻(2026-09-30 改 0 → −5):127 日面板含壞標籤的 ≤−5 連1桶,均持 10.6→23.8 分,
+# OOS 毛−22 從 -16.66 改善到 -13.78、超額從 -7.82 到 -3.51;IS 幾乎不變(-8.67→-8.44)。
+# 改善幅度在 MDE(~10bps)內、t 值因持有拉長而變小,屬「方向有理由但測不出」的調整。
+PAPER_EXIT_TH = -5.0
 PAPER_BUY_WAIT, PAPER_SELL_WAIT, PAPER_MAX_HOLD = 30, 60, 3600
 PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
 PAPER_BOOKS = ("bucket", "sec")

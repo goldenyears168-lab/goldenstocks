@@ -87,7 +87,11 @@ def _hold_toggle(sid: str, action: str, px):
 
 
 def _hold_update(rows):
-    """每輪:持倉分=當下 V2.5;分數≤0 連續 30 秒 / 壞標籤 / 60 分到期 → 出場旗標;獲利≥50 提示。首次觸發落地。"""
+    """每輪:持倉分=當下 V2.5;分數≤PAPER_EXIT_TH 連續 30 秒 / 壞標籤 / 60 分到期 → 出場旗標;獲利≥50 提示。首次觸發落地。
+
+    門檻與紙上交易共用 `biglot_dashboard.PAPER_EXIT_TH`(2026-09-30 起為 −5),避免顯示給人看的
+    提示與紙上帳跑兩套規則。
+    """
     now = time.time()
     for r in rows:
         h = biglot_dashboard.HOLDS.get(r["sid"])
@@ -96,12 +100,13 @@ def _hold_update(rows):
         px = r.get("px"); sc = r.get("sc_v2"); items = [k for k, _ in (r.get("sc_v2_items") or [])]
         pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
         hold_min = (now - h["t0"]) / 60
-        if sc is not None and sc <= 0:
+        if sc is not None and sc <= biglot_dashboard.PAPER_EXIT_TH:
             if h.get("low_since") is None: h["low_since"] = now
         else:
             h["low_since"] = None
         flags = []
-        if h.get("low_since") is not None and now - h["low_since"] >= 30: flags.append("分數≤0·30秒")
+        if h.get("low_since") is not None and now - h["low_since"] >= 30:
+            flags.append(f"分數≤{biglot_dashboard.PAPER_EXIT_TH:g}·30秒")
         bad = [k for k in items if any(k.startswith(b) for b in biglot_dashboard.HOLD_BAD)]
         if bad: flags.append("壞標籤:" + "/".join(x.split("(")[0] for x in bad))
         if hold_min >= 60: flags.append("到期60分")

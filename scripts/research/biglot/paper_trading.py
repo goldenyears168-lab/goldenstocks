@@ -175,12 +175,13 @@ def _paper_update(rows, now):
             pos = biglot_dashboard.PAPER["pos"][book].get(sid)
             if not pos: continue
             if pos.get("sell") is None:
-                if sc is not None and sc <= 0:
+                if sc is not None and sc <= biglot_dashboard.PAPER_EXIT_TH:
                     if pos.get("low_since") is None: pos["low_since"] = now
                 else:
                     pos["low_since"] = None
                 reason = None
-                if pos.get("low_since") is not None and now - pos["low_since"] >= 30: reason = "分數≤0·30秒"
+                if pos.get("low_since") is not None and now - pos["low_since"] >= 30:
+                    reason = f"分數≤{biglot_dashboard.PAPER_EXIT_TH:g}·30秒"
                 elif any(k.startswith(biglot_dashboard.HOLD_BAD) for k in items): reason = "壞標籤"
                 elif now - pos["t_fill"] >= biglot_dashboard.PAPER_MAX_HOLD: reason = "到期60分"
                 elif hm >= "13:20:00": reason = "收盤前"

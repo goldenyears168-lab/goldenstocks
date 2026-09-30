@@ -901,7 +901,7 @@ def render():
     biglot_dashboard.PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
 {_pnlp}{_txp}{stale_bar}
 <div class="meta" hidden>更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
-市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> · <span style='color:#d2a8ff' title='紙上交易(不送單):bucket=5分桶邊界取樣(回測口徑)、sec=每秒首次穿越;進 V2.5≥15 掛買一30秒,出 分數≤0·30秒/壞標籤/60分 掛賣一60秒否則買一;嚴=價穿越才算成交、樂=觸價即成交;成本22bps;帳本 paper_trades_{{日}}.jsonl / paper_daily.json'>紙上 {_paper_summary()}</span> ·
+市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> · <span style='color:#d2a8ff' title='紙上交易(不送單):bucket=5分桶邊界取樣(回測口徑)、sec=每秒首次穿越;進 V2.5≥15 掛買一30秒,出 分數≤-5·30秒/壞標籤/60分 掛賣一60秒否則買一;嚴=價穿越才算成交、樂=觸價即成交;成本22bps;帳本 paper_trades_{{日}}.jsonl / paper_daily.json'>紙上 {_paper_summary()}</span> ·
 紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
 散戶參與≥35%標黃 · <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · <b>主尺度=30分</b>(旗標依127日驗證:
 勿追30超額−5bps/跌深大戶接+9bps/💎純機構=千萬淨買&gt;10%窗量∧前5分+前30分大戶皆淨賣∧散戶&lt;5%→+24bps cl-t5.2(兩兩交互測試定案:市場方向係死重已移除);💎💎=淨買≥3千萬→30分+29/45分+36bps;效應前5分吃69%、45分後歸零) · 5分組=執行細節 · {upd_note}</div>

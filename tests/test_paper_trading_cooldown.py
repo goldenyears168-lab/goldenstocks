@@ -28,6 +28,7 @@ def _stub_dashboard():
     m.PAPER_BUY_WAIT, m.PAPER_SELL_WAIT, m.PAPER_MAX_HOLD = 30, 60, 3600
     m.PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
     m.PAPER_MAX_ENTRY = 1          # 生產預設:每檔每日最多成交一次
+    m.PAPER_EXIT_TH = -5.0         # 出場分數門檻(2026-09-30 由 0 改 -5)
     m.PAPER_COOL = dict(COOL)
     m.HOLD_BAD = ("散戶虛拉", "過熱")
     m.PAPER = {}
@@ -180,6 +181,27 @@ class PaperCooldownTest(unittest.TestCase):
         self.assertIn("cool", self.dash.PAPER)
         self.assertIn("nent", self.dash.PAPER)
         self.assertIn("2330", self.dash.PAPER["orders"]["sec"], "舊 seen 殘留不應再封鎖該檔")
+
+
+    # --- 7. 出場門檻:分數落到 0 不出,落到 <= PAPER_EXIT_TH 連 30 秒才出 ---
+    def test_exit_threshold_uses_configured_value(self):
+        sid = "2609"
+        self.pt._paper_update([self._row(sid=sid, px=60.0)], self.t0)
+        self._tick_sell(sid, self.t0 + 2, 60.0)
+        self.pt._paper_update([self._row(sid=sid, px=60.0)], self.t0 + 3)
+        self.assertIn(sid, self.dash.PAPER["pos"]["sec"])
+        # 分數 0(高於 -5):不該開始計時
+        for dt in (10, 45):
+            self.pt._paper_update([self._row(sid=sid, sc=0.0, px=60.0)], self.t0 + dt)
+        self.assertIsNone(self.dash.PAPER["pos"]["sec"][sid]["sell"])
+        self.assertIsNone(self.dash.PAPER["pos"]["sec"][sid]["low_since"])
+        # 分數 -6:開始計時,滿 30 秒才掛賣單
+        self.pt._paper_update([self._row(sid=sid, sc=-6.0, px=60.0)], self.t0 + 60)
+        self.assertIsNone(self.dash.PAPER["pos"]["sec"][sid]["sell"])
+        self.pt._paper_update([self._row(sid=sid, sc=-6.0, px=60.0)], self.t0 + 95)
+        sell = self.dash.PAPER["pos"]["sec"][sid]["sell"]
+        self.assertIsNotNone(sell)
+        self.assertEqual(sell["reason"], "分數≤-5·30秒")
 
 
 if __name__ == "__main__":
