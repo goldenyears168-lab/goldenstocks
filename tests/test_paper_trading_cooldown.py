@@ -27,7 +27,7 @@ def _stub_dashboard():
     m.PAPER_COST, m.PAPER_K, m.PAPER_TH = 22.0, 3, 15.0
     m.PAPER_BUY_WAIT, m.PAPER_SELL_WAIT, m.PAPER_MAX_HOLD = 30, 60, 3600
     m.PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
-    m.PAPER_MAX_ENTRY = 0          # 0 = 不限次數(生產預設)
+    m.PAPER_MAX_ENTRY = 1          # 生產預設:每檔每日最多成交一次
     m.PAPER_COOL = dict(COOL)
     m.HOLD_BAD = ("散戶虛拉", "過熱")
     m.PAPER = {}
@@ -129,25 +129,8 @@ class PaperCooldownTest(unittest.TestCase):
         self.pt._paper_update([self._row(sid="6173", px=296.5)], self.t0 + 12)
         self.assertEqual([k for k in self._kinds() if k[0] == "signal"], [], "持倉期間不應再 fire")
 
-    # --- 4. 預設不限當日次數:平倉後可以再次交易 ---
-    def test_no_daily_entry_cap_by_default(self):
-        sid = "2481"
-        self.dash.PAPER["nent"]["sec"][sid] = 5        # 已成交 5 次
-        self.pt._paper_update([self._row(sid=sid)], self.t0)
-        self.assertEqual(self._kinds(), [("signal", None)])
-        self.assertIn(sid, self.dash.PAPER["orders"]["sec"])
-
-    # --- 4b. 若把 PAPER_MAX_ENTRY 設成正整數,閘門仍然有效 ---
-    def test_daily_entry_cap_when_configured(self):
-        sid = "2481"
-        self.dash.PAPER_MAX_ENTRY = 2
-        self.dash.PAPER["nent"]["sec"][sid] = 2
-        self.pt._paper_update([self._row(sid=sid)], self.t0)
-        self.assertEqual(self._kinds(), [("signal_skip", "當日額度用盡")])
-        self.assertNotIn(sid, self.dash.PAPER["orders"]["sec"])
-
-    # --- 4c. 平倉後過了冷卻即可重新進場(同一檔同時仍只有一口) ---
-    def test_can_reenter_same_symbol_after_close(self):
+    # --- 4. 生產預設 PAPER_MAX_ENTRY=1:成交過一次後,同日不再進場 ---
+    def test_default_cap_blocks_reentry_after_a_fill(self):
         sid = "3042"
         pos = {"entry": 100.0, "t_fill": self.t0, "strict": False, "low_since": None,
                "sell": {"limit": 101.0, "t_post": self.t0, "reason": "壞標籤"},
@@ -155,14 +138,27 @@ class PaperCooldownTest(unittest.TestCase):
         self.dash.PAPER["pos"]["sec"][sid] = pos
         t_close = self.t0 + 60
         self.pt._paper_close("sec", sid, pos, 101.0, "賣一", t_close)
+        self.assertEqual(self.dash.PAPER["nent"]["sec"][sid], 1)
         self.logs.clear()
-        # 冷卻內不得重進
-        self.pt._paper_update([self._row(sid=sid)], t_close + 30)
+        self.pt._paper_update([self._row(sid=sid)], t_close + COOL["closed"] + 1)
+        self.assertEqual(self._kinds(), [("signal_skip", "當日額度用盡")])
+        self.assertNotIn(sid, self.dash.PAPER["orders"]["sec"])
+
+    # --- 4b. PAPER_MAX_ENTRY=0 時閘門關閉,平倉後冷卻到期即可再進 ---
+    def test_cap_disabled_allows_reentry(self):
+        sid = "3042"
+        self.dash.PAPER_MAX_ENTRY = 0
+        pos = {"entry": 100.0, "t_fill": self.t0, "strict": False, "low_since": None,
+               "sell": {"limit": 101.0, "t_post": self.t0, "reason": "壞標籤"},
+               "sig": {"hm": "09:40:00", "score": 17.0}}
+        self.dash.PAPER["pos"]["sec"][sid] = pos
+        t_close = self.t0 + 60
+        self.pt._paper_close("sec", sid, pos, 101.0, "賣一", t_close)
+        self.logs.clear()
+        self.pt._paper_update([self._row(sid=sid)], t_close + 30)       # 冷卻內
         self.assertEqual(self.logs, [])
-        # 冷卻到期後可再進,且 nent 已累計 1 次但不擋
         self.pt._paper_update([self._row(sid=sid)], t_close + COOL["closed"] + 1)
         self.assertEqual(self._kinds(), [("signal", None)])
-        self.assertEqual(self.dash.PAPER["nent"]["sec"][sid], 1)
 
     # --- 5. 平倉後累計成交次數並設 900 秒冷卻 ---
     def test_close_increments_entries_and_sets_cooldown(self):
