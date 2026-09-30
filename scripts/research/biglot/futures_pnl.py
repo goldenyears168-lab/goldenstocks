@@ -26,6 +26,14 @@
   今天開盤時損益就不是 0,而是用隔夜進場價對今天開盤價算出來的既有損益——這是使用者
   明確要求的行為(合晶案例:進場價121、9/24進場,今天開盤時應該已經是負的)。
 
+⚠ 2026-09-29→30 jack 糾正(第三輪,踩坑後已revert):曾懷疑日盤收盤後本地tick封存
+凍結在最後一筆成交價、跟富邦App對不上,一度改成「未平倉口的現在損益改信任富邦
+`query_single_position.profit_or_loss`」——**這個方向錯了**。2026-09-30盤前用手機
+App截圖逐檔核對:環球晶/大立光/華邦電三檔,App顯示的現價精確等於本地tick封存的
+最後一筆真實成交價,反而是`query_single_position.market_price`跟App對不上、會在
+收盤後自行漂移(不是穩定的結算價,原因不明,不可信)。結論:**本地tick重建本身
+就是對的,不要改用富邦這個欄位**——教訓見`_current_pnl`docstring。
+
 依賴規則同 biglot/tx_panel.py:`ST`/`datetime`/`TZ` 一律 `import biglot_dashboard`
 屬性存取,不在頂層具名匯入。
 """
@@ -270,7 +278,17 @@ def _pnl_series(group, grid_ts):
 def _current_pnl(group, asof_ts):
     """該檔「現在」損益(NTD),用**最新一筆實際成交**算,不是從圖表的取樣網格反推
     (2026-09-29 jack 抓到環球晶算錯:網格點之間可能卡在兩筆真實成交中間拿到舊價,
-    詳見 commit 說明)。"""
+    詳見 commit 說明)。
+
+    ⚠ 2026-09-29 jack 糾正(第三輪,當天later revert):原本懷疑本地tick收盤後凍結
+    導致跟富邦App對不上,一度改用 `query_single_position.profit_or_loss` 當權威來源
+    ——**這個方向錯了,已revert**。2026-09-30 盤前實測用手機App截圖逐檔核對:
+    環球晶/大立光/華邦電三檔,App顯示的現價(934/6055/173.5)精確等於本地tick封存的
+    最後一筆真實成交價,反而是 `query_single_position.market_price`(938/6050/174.0)
+    跟App對不上、會在收盤後自行漂移,不是可信來源。教訓:本地tick重建本來就是對的,
+    不要看到跟「重新查一次API」的數字不一樣就假設是自己算錯——先用App截圖或其他
+    獨立來源核對,兩邊都拿即時查詢互相比對是不夠的(兩次都查同一支有問題的API欄位,
+    只會讓人誤以為「查得比較新」的那次才對)。"""
     ticks = _load_trade_series(group["fut_code"], biglot_dashboard.ST.date)
     times = [t for t, _ in ticks]
     i = _bs.bisect_right(times, asof_ts) - 1
