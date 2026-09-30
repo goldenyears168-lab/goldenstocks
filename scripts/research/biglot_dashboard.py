@@ -579,11 +579,13 @@ PAPER_COST, PAPER_K, PAPER_TH = 22.0, 3, 15.0
 PAPER_BUY_WAIT, PAPER_SELL_WAIT, PAPER_MAX_HOLD = 30, 60, 3600
 PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
 PAPER_BOOKS = ("bucket", "sec")
-# 取代舊的「訊號一天一次」(seen):每檔每日最多成交 PAPER_MAX_ENTRY 次,其餘用冷卻秒數控制重試。
-# 依據(2026-09-30 127 日面板):同日同檔第 2 次訊號品質與第 1 次無顯著差異(IS -8.65 vs -10.25),
-# 而舊 seen 在 fire 當下就記,連被成因過濾/容量滿/無買一/掛單未成交都會消耗當日唯一額度。
-PAPER_MAX_ENTRY = 2
-PAPER_COOL = {"skip": 600.0, "cap": 30.0, "nobid": 60.0, "unfilled": 300.0, "closed": 900.0}
+# 取代舊的「訊號一天一次」(seen):同一時間同一檔最多持有一口(在途委託/持倉中不重掛),
+# **平倉後可以再次交易**,不設當日次數上限;暫時性的執行障礙只設冷卻秒數,不封鎖整天。
+# 依據(2026-09-30 127 日面板):同日同檔第 2 次訊號品質與第 1 次無顯著差異(IS -8.65 vs -10.25)。
+# PAPER_MAX_ENTRY = 0 表示不限次數;要限次改成正整數即可(閘門仍在,只是預設關閉)。
+PAPER_MAX_ENTRY = 0
+# closed 只為了擋「平倉那一秒分數還在 0 附近抖動 → 立刻原地重進」,不是政策性限制,故取 60 秒。
+PAPER_COOL = {"skip": 600.0, "cap": 30.0, "nobid": 60.0, "unfilled": 300.0, "closed": 60.0}
 
 
 try:

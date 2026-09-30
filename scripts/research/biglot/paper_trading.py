@@ -143,7 +143,7 @@ def _paper_update(rows, now):
                     skip = next((t for t in tags if t.startswith(biglot_dashboard.PAPER_SKIP)), None)
                     busy = len(biglot_dashboard.PAPER["orders"][book]) + len(biglot_dashboard.PAPER["pos"][book])
                     why = cd = None
-                    if nent.get(sid, 0) >= biglot_dashboard.PAPER_MAX_ENTRY:
+                    if biglot_dashboard.PAPER_MAX_ENTRY and nent.get(sid, 0) >= biglot_dashboard.PAPER_MAX_ENTRY:
                         why, cd = "當日額度用盡", 86400.0
                     elif skip:
                         why, cd = skip, biglot_dashboard.PAPER_COOL["skip"]
