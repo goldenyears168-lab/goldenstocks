@@ -579,6 +579,11 @@ PAPER_COST, PAPER_K, PAPER_TH = 22.0, 3, 15.0
 PAPER_BUY_WAIT, PAPER_SELL_WAIT, PAPER_MAX_HOLD = 30, 60, 3600
 PAPER_SKIP = ("處置", "跌停鎖", "跟盤殺")
 PAPER_BOOKS = ("bucket", "sec")
+# 取代舊的「訊號一天一次」(seen):每檔每日最多成交 PAPER_MAX_ENTRY 次,其餘用冷卻秒數控制重試。
+# 依據(2026-09-30 127 日面板):同日同檔第 2 次訊號品質與第 1 次無顯著差異(IS -8.65 vs -10.25),
+# 而舊 seen 在 fire 當下就記,連被成因過濾/容量滿/無買一/掛單未成交都會消耗當日唯一額度。
+PAPER_MAX_ENTRY = 2
+PAPER_COOL = {"skip": 600.0, "cap": 30.0, "nobid": 60.0, "unfilled": 300.0, "closed": 900.0}
 
 
 try:
