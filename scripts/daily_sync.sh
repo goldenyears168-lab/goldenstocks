@@ -459,6 +459,17 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
     log_line "  SKIP（RUN_XQ_STYLE_METRICS=0）"
   fi
 
+  if [[ "${RUN_DISPOSAL_WATCH:-1}" != "0" ]]; then
+    # 注意名單 →「還差幾次被關」計數。TPEx 只有當日快照,漏跑就補不回來,故排在前段。
+    run_step_if_pipeline_enabled "disposal_watch" "處置風險：注意名單抓取" \
+      "$PYTHON" "${ROOT}/scripts/research/fetch_disposal_list.py" || true
+    run_step_optional "處置風險：計數 + disposal_risk.json" \
+      "$PYTHON" "${ROOT}/scripts/research/disposal_risk_watch.py" --top 15 || true
+  else
+    log_line "--- 處置風險 ---"
+    log_line "  SKIP（RUN_DISPOSAL_WATCH=0）"
+  fi
+
   if [[ "${RUN_RRG_MONO_DAILY:-1}" != "0" ]]; then
     run_step_if_pipeline_enabled "rrg_mono_daily" "RRG mono daily brief + slot confirm" \
       "$PYTHON" "${ROOT}/scripts/run_rrg_mono_daily_brief.py" || true
@@ -503,6 +514,12 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
       --sync-db
       --lookback-days "${CHIP_LOOKBACK_DAYS:-14}"
     )
+    # 高波動45檔宇宙不一定是任何追蹤ETF的成分股，只靠ETF持股聯集會讓它們的
+    # 融資餘額同步碰不到、卡在最後一次手動backfill的日期(2026-09-16發現)。
+    HIVOL_UNIVERSE_FILE="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/data/cache/pit_universe_tick/_hivol_universe_v3.json"
+    if [[ -f "${HIVOL_UNIVERSE_FILE}" ]]; then
+      CHIP_ARGS+=(--extra-stock-ids-file "${HIVOL_UNIVERSE_FILE}")
+    fi
     run_step_optional "constituent margin/lending/daytrade (FinMind)" \
       "$PYTHON" "${SRC}/sync_stock_chip_daily.py" "${CHIP_ARGS[@]}"
   else

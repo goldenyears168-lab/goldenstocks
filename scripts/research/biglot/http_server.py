@@ -26,6 +26,7 @@ import urllib.parse as urllib_parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import biglot_dashboard
+from biglot.disposal_view import render_disposal
 from biglot.day_views import render_history, render_day, snapshot_day
 from biglot.timeline_snap import render_timeline_index, render_timeline_view, save_timeline_slot_if_due
 from biglot.stock_meta import render_help
@@ -55,6 +56,9 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path == "/disposal":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = render_disposal(str(q.get("tab", "daily"))[:10]).encode("utf-8")
         elif path == "/timeline":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             date, hhmm = str(q.get("date", ""))[:10], str(q.get("hhmm", ""))[:5]

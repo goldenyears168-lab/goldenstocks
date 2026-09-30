@@ -29,6 +29,15 @@ _DAILY_SYNC_STEPS: dict[str, dict[str, Any]] = {
         "run_env": "RUN_XQ_STYLE_METRICS",
         "run_default": "1",
     },
+    # Infra, not strategy-owned: 抓 TWSE/TPEx「注意有價證券」名單並算出各檔距離處置
+    # 還差幾次(連續 3/5 日、10 日內 6 日、30 日內 12 日)。處置條件完全由已公告的注意
+    # 紀錄決定,所以這是**計數不是預測**;供 biglot 儀表板處置分頁使用,不下單。
+    # ⚠ TPEx 只有當日快照(無歷史 API),漏跑一天上櫃那天的資料就永久補不回來。
+    "disposal_watch": {
+        "strategy_ids": (),
+        "run_env": "RUN_DISPOSAL_WATCH",
+        "run_default": "1",
+    },
     "rrg_mono_daily": {
         "strategy_ids": ("rrg-mono-hold7",),
         "run_env": "RUN_RRG_MONO_DAILY",
