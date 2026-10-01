@@ -231,6 +231,30 @@ VOLRISK, VOLRISK_DATE = {}, None
 OOS_FILE = DATA_DIR.parent / "cache" / "biglot_live_watch" / "oos_scoreboard.json"
 
 
+def _disposal_badge() -> str:
+    """頂部導航的處置按鈕文字。啟動時讀一次 disposal_risk.json。
+
+    儀表板每天開盤前重啟、而注意名單是前一日收盤後公告,所以啟動時讀到的就是
+    「今天開盤前該看的狀態」。讀不到檔案時退回純文字連結,不讓首頁掛掉。
+    """
+    try:
+        import json as _json
+        data = _json.loads((DATA_DIR / "disposal" / "disposal_risk.json").read_text(encoding="utf-8"))
+        st = data.get("stocks") or {}
+        red = sum(1 for v in st.values() if v.get("level") == 3)
+        jail = sum(1 for v in st.values() if v.get("level") == -1)
+        bits = []
+        if red:
+            bits.append(f"🔴{red}")
+        if jail:
+            bits.append(f"⬛{jail}")
+        return "⚠ 處置監測" + (" " + " ".join(bits) if bits else "")
+    except Exception:  # noqa: BLE001
+        return "⚠ 處置監測"
+
+
+_DISPOSAL_BADGE = _disposal_badge()
+
 SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
 <title>大戶{len(NAMES)}檔儀表板</title><style>
@@ -289,7 +313,8 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
 <a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ 36檔圖形總覽</a>
-<a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 每30分快照</a></h3>
+<a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 每30分快照</a>
+<a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a></h3>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
 <div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
