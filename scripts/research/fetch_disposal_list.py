@@ -260,7 +260,7 @@ def _notice_records() -> list[dict]:
         if not day:
             continue
         reason = str(row[4]).replace("\n", " ")
-        out.append({"market": "TWSE", "stock_id": code, "date": day.isoformat(),
+        out.append({"market": "TWSE", "stock_id": code, "name": str(row[2]).strip(), "date": day.isoformat(),
                     "cum": str(row[3]).strip(), "clauses": _parse_clauses(reason), "reason": reason})
     for path in sorted(TPEX_NOTICE_DIR.glob("*.json")):
         for row in json.loads(path.read_text()):
@@ -273,7 +273,7 @@ def _notice_records() -> list[dict]:
             if not day:
                 continue
             reason = str(row[4]).replace("<br>", " ")
-            out.append({"market": "TPEX", "stock_id": code, "date": day.isoformat(),
+            out.append({"market": "TPEX", "stock_id": code, "name": str(row[2]).strip(), "date": day.isoformat(),
                         "cum": str(row[3]).strip(), "clauses": _parse_clauses(reason), "reason": reason})
     seen, dedup = set(), []
     for r in out:
@@ -328,7 +328,7 @@ def main() -> int:
             print(f"TPEx 注意快照失敗（不影響上市名單）: {exc}", file=sys.stderr)
         recs = _notice_records()
         with NOTICE_CSV.open("w", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=["market", "stock_id", "date", "cum", "clauses", "reason"])
+            w = csv.DictWriter(fh, fieldnames=["market", "stock_id", "name", "date", "cum", "clauses", "reason"])
             w.writeheader()
             w.writerows(recs)
         print(f"注意紀錄 {len(recs)} 列 → {NOTICE_CSV}", file=sys.stderr)

@@ -64,8 +64,11 @@ def build(asof: str | None = None) -> dict:
     if N.empty:
         return {}
     cal = _calendar(N)
-    asof = asof or cal[-1]
-    cal = [d for d in cal if d <= asof]
+    # asof 預設取「今天」而非最後一個注意公告日:注意名單是收盤後才公告,盤前跑的時候
+    # 最後公告日是昨天,若拿它當 asof,今天才生效的處置會被漏判成「已達標待公告」。
+    # 注意計數本來就只會用到 date <= asof 的紀錄,所以往後推不會提前使用未來資訊。
+    asof = asof or max(cal[-1], dt.date.today().isoformat())
+    cal = [d for d in cal if d <= asof] or cal
     pos = {d: i for i, d in enumerate(cal)}
     last10 = set(cal[-10:]); last30 = set(cal[-30:])
 
@@ -84,7 +87,8 @@ def build(asof: str | None = None) -> dict:
     by_sid: dict[str, list[dict]] = defaultdict(list)
     for r in N[N["date"] <= asof].itertuples():
         by_sid[str(r.stock_id)].append({"date": str(r.date), "clauses": str(r.clauses or ""),
-                                        "cum": str(r.cum or ""), "market": str(r.market)})
+                                        "cum": str(r.cum or ""), "market": str(r.market),
+                                        "name": str(getattr(r, "name", "") or "")})
     out = {}
     for sid, recs in by_sid.items():
         # ⚠ 只有第一~第八款會被計入處置的連續/頻率條款;第 9~13 款(當沖比、本益比等)
@@ -134,7 +138,7 @@ def build(asof: str | None = None) -> dict:
         out[sid] = {"level": level, "label": label, "streak": st_any, "streak_c1": st_c1,
                     "in10": n10, "in30": n30, "need": need, "last_date": last,
                     "clauses": vrecs[-1]["clauses"], "cum": vrecs[-1]["cum"],
-                    "market": vrecs[-1]["market"],
+                    "market": vrecs[-1]["market"], "name": vrecs[-1].get("name", ""),
                     "all_clauses": recs[-1]["clauses"],
                     "count_since": floor or None,
                     "in_disposal": sid in in_disp,
@@ -159,10 +163,10 @@ def main() -> int:
     hot = [r for r in rows if r[1]["level"] >= 2]
     print(f"asof {data['asof']}  追蹤 {len(rows)} 檔;🔴倒數1 {sum(1 for _, v in rows if v['level'] == 3)} 檔、"
           f"🟠接近 {sum(1 for _, v in rows if v['level'] == 2)} 檔、⬛處置中 {sum(1 for _, v in rows if v['level'] == -1)} 檔\n")
-    print(f"  {'代號':<7}{'市場':<6}{'燈':<4}{'連續':>4}{'10中':>5}{'30中':>5}{'差':>4}  {'最後注意':<12}{'款別':<10}說明")
+    print(f"  {'代號':<7}{'名稱':<8}{'市場':<6}{'燈':<4}{'連續':>4}{'10中':>5}{'30中':>5}{'差':>4}  {'最後注意':<12}{'款別':<10}說明")
     for sid, v in (hot or rows)[:args.top]:
         icon = {3: "🔴", 2: "🟠", 1: "🟡", 0: "  ", -1: "⬛"}[v["level"]]
-        print(f"  {sid:<7}{v['market']:<6}{icon:<3}{v['streak']:>4}{v['in10']:>5}{v['in30']:>5}{v['need']:>4}  "
+        print(f"  {sid:<7}{v.get('name', ''):<8}{v['market']:<6}{icon:<3}{v['streak']:>4}{v['in10']:>5}{v['in30']:>5}{v['need']:>4}  "
               f"{v['last_date']:<12}{v['clauses'] or '-':<10}{v['label']}")
     return 0
 

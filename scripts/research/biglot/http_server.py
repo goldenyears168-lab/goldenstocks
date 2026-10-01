@@ -58,7 +58,7 @@ class H(BaseHTTPRequestHandler):
             body = render_day(d).encode("utf-8")
         elif path == "/disposal":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
-            body = render_disposal(str(q.get("tab", "daily"))[:10]).encode("utf-8")
+            body = render_disposal(str(q.get("tab", "all"))[:10]).encode("utf-8")
         elif path == "/timeline":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             date, hhmm = str(q.get("date", ""))[:10], str(q.get("hhmm", ""))[:5]

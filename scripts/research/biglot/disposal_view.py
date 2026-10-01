@@ -27,7 +27,7 @@ OUT_DIR = DATA_DIR / "disposal"
 RISK_JSON = OUT_DIR / "disposal_risk.json"
 WINDOWS_CSV = OUT_DIR / "disposal_windows.csv"
 
-TABS = (("daily", "處置日報"), ("clause1", "第一款預測"), ("jail", "處置坐牢中"),
+TABS = (("all", "總表"), ("daily", "處置日報"), ("clause1", "第一款預測"), ("jail", "處置坐牢中"),
         ("release", "今天出關"), ("stats", "歷史統計"))
 ICON = {3: "🔴", 2: "🟠", 1: "🟡", 0: "", -1: "⬛"}
 _CACHE: dict = {"t": 0.0, "risk": None, "win": None, "px": {}}
@@ -49,7 +49,11 @@ def _load():
 
 
 def _closes(sids: list[str], n: int = 12) -> dict[str, list[tuple[str, float]]]:
-    """取各檔最近 n 根日線收盤（升冪）。結果併入快取，同一輪多個分頁共用。"""
+    """取各檔最近 n 根日線收盤（升冪）。結果併入快取，同一輪多個分頁共用。
+
+    只抓 45 天:算第一款門檻只需 6 根、累幅只需處置期長度,抓 90 天會讓冷啟動的第一次
+    請求查 30+ 檔而超過瀏覽器 timeout(實測 >6s)。快取命中後約 0.02s。
+    """
     need = [s for s in sids if s not in _CACHE["px"]]
     if need:
         try:
@@ -57,7 +61,7 @@ def _closes(sids: list[str], n: int = 12) -> dict[str, list[tuple[str, float]]]:
             qs = ",".join("?" * len(need))
             rows = con.execute(
                 f"select stock_id,trade_date,close from stock_daily_bars "
-                f"where stock_id in ({qs}) and trade_date>=date('now','-90 day') order by trade_date", need).fetchall()
+                f"where stock_id in ({qs}) and trade_date>=date('now','-45 day') order by trade_date", need).fetchall()
             got: dict[str, list] = {s: [] for s in need}
             for sid, d, c in rows:
                 if c and c > 0 and (not got[sid] or got[sid][-1][0] != d):
@@ -68,6 +72,19 @@ def _closes(sids: list[str], n: int = 12) -> dict[str, list[tuple[str, float]]]:
             for s in need:
                 _CACHE["px"].setdefault(s, [])
     return {s: _CACHE["px"].get(s, []) for s in sids}
+
+
+def _trend_side(closes: list[tuple[str, float]], look: int = 5) -> str:
+    """判斷該檔近期是漲勢還是跌勢 —— 決定第一款要看漲幅側還是跌幅側。
+
+    只印漲幅門檻會誤導跌勢股:2026-10-01 的巨虹 8084 昨日 -9.90%、現價 26.85 已經
+    低於跌幅門檻 27.7(等於已達標),但漲幅側顯示 +100.58%,看起來像「離門檻很遠」。
+    """
+    if len(closes) < 2:
+        return "up"
+    a = closes[-min(look, len(closes))][1]
+    b = closes[-1][1]
+    return "dn" if b < a else "up"
 
 
 def clause1_thresholds(closes: list[tuple[str, float]]) -> dict:
@@ -92,7 +109,13 @@ def clause1_thresholds(closes: list[tuple[str, float]]) -> dict:
         # 25% 款需起迄價差 ≥50 元（高價股另有 300/450… 元級距，這裡只擋基本門檻）
         up = up25 if (up25 - base) >= 50 else up32
         dn = dn25 if (base - dn25) >= 50 else dn32
-        out[h] = {"up": up, "dn": dn, "up_pct": (up / cur - 1) * 100, "dn_pct": (dn / cur - 1) * 100, "base": base}
+        side = _trend_side(closes)
+        main = up if side == "up" else dn
+        pct = (main / cur - 1) * 100
+        out[h] = {"up": up, "dn": dn, "up_pct": (up / cur - 1) * 100, "dn_pct": (dn / cur - 1) * 100,
+                  "base": base, "side": side, "main": main, "pct": pct,
+                  # 已越過門檻 = 漲勢股現價已 ≥ 漲幅門檻,或跌勢股現價已 ≤ 跌幅門檻
+                  "crossed": (cur >= up) if side == "up" else (cur <= dn)}
     return out
 
 
@@ -165,8 +188,10 @@ def _tab_clause1(risk) -> str:
             t = th.get(h)
             if not t:
                 cells.append("<td class='dim'>—</td>"); continue
-            hit = "up" if t["up_pct"] <= 0 else ""
-            cells.append(f"<td class='{hit}'>≥{t['up']:.1f}<br><span class='dim'>{t['up_pct']:+.2f}%</span></td>")
+            arrow = "≥" if t["side"] == "up" else "≤"
+            sub = ("<b class='r3'>已越過</b>" if t["crossed"]
+                   else f"<span class='dim'>{t['pct']:+.2f}%</span>")
+            cells.append(f"<td>{arrow}{t['main']:.1f}<br>{sub}</td>")
         trs.append(f"<tr><td class='l'>{ICON.get(v['level'], '')} {html_mod.escape(sid)} {_name(sid)}</td>"
                    f"<td>{cur:g}</td>" + "".join(cells) +
                    f"<td class='l dim'>{html_mod.escape(v['clauses'] or '—')}</td></tr>")
@@ -254,12 +279,105 @@ def _tab_stats() -> str:
             "<th>開收幅</th><th>t</th></tr>" + trs + "</table>")
 
 
-def render_disposal(tab: str = "daily") -> str:
+def _th(cols) -> str:
+    return "<tr>" + "".join(f"<th class='l'>{c}</th>" if c and c[0] == "~" else f"<th>{c}</th>"
+                            for c in [c.lstrip("~") for c in cols]) + "</tr>"
+
+
+def _tab_all(risk, win, today: str) -> str:
+    """總表：一頁看完「即將進處置 / 坐牢中 / 今天出關」三區塊。"""
+    stocks = risk["stocks"]
+    pend = sorted(((k, v) for k, v in stocks.items() if v["level"] >= 2 and not v["in_disposal"]),
+                  key=lambda kv: (-kv[1]["level"], kv[1]["need"], -kv[1]["in30"]))
+    live = sorted([w for w in win if str(w["start"]) <= today <= str(w["end"])], key=lambda w: w["end"])
+    out_today = [w for w in win if str(w["end"]) == today]
+    px = _closes([k for k, _ in pend] + [w["stock_id"] for w in live], n=20)
+
+    # ── A 即將進處置 ───────────────────────────────────────────
+    trs = []
+    for sid, v in pend:
+        arr = px.get(sid) or []
+        cur = arr[-1][1] if arr else None
+        chg = ((arr[-1][1] / arr[-2][1] - 1) * 100) if len(arr) >= 2 else None
+        th = clause1_thresholds(arr)
+        t1 = th.get(1)
+        if t1:
+            arrow = "漲≥" if t1["side"] == "up" else "跌≤"
+            mark = " <b class='r3'>已越過</b>" if t1["crossed"] else f" <span class='dim'>{t1['pct']:+.1f}%</span>"
+            thc = f"{arrow}{t1['main']:.1f}{mark}"
+        else:
+            thc = "<span class='dim'>—</span>"
+        cls = {3: "r3", 2: "r2"}.get(v["level"], "")
+        has_c1 = "1" in (v["clauses"] or "").split("|")
+        px_cell = f"<td>{cur:g}</td>" if cur else "<td class='dim'>—</td>"
+        trs.append(
+            f"<tr><td class='l {cls}'>{ICON.get(v['level'], '')} {html_mod.escape(sid)} "
+            f"{_name(sid) or html_mod.escape(v.get('name', ''))}</td>"
+            f"<td class='l'>{html_mod.escape(v['market'])}</td>{px_cell}")
+        trs[-1] += (f"<td class='{'up' if (chg or 0) > 0 else 'dn' if chg else ''}'>"
+                    f"{f'{chg:+.2f}%' if chg is not None else '—'}</td>"
+                    f"<td>{v['streak']}</td><td>{v['in10']}</td><td>{v['in30']}</td>"
+                    f"<td class='{cls}'><b>{v['need']}</b></td>"
+                    f"<td class='l'>{html_mod.escape(v['clauses'] or '—')}</td>"
+                    f"<td class='l'>{thc if has_c1 else '<span class=dim>非第一款</span>'}</td></tr>")
+    tbl_a = ("<h3>① 即將進處置（差 2 次以內）</h3><table class='dz'>"
+             + _th(["~代號 名稱", "~市場", "現價", "昨日", "連續", "10中", "30中", "差", "~款別", "~第一款門檻"])
+             + "".join(trs) + "</table>")
+
+    # ── B 坐牢中 ───────────────────────────────────────────────
+    trs = []
+    for w in live:
+        sid = w["stock_id"]; arr = px.get(sid) or []
+        start = str(w["start"])
+        inside = [(d, c) for d, c in arr if d >= start]
+        cum = ((inside[-1][1] / inside[0][1] - 1) * 100) if len(inside) >= 2 else None
+        nth = len(inside)
+        repeat = "累犯" if ("第二次" in str(w["measure"]) or "第三次" in str(w["measure"])) else "初犯"
+        sig = ""
+        if repeat == "累犯" and nth >= 3 and cum is not None:
+            sig = "<b class='up'>🟢 多刀可進</b>" if cum > -10 else "<span class='r3'>跌幅≥10%，訊號消失</span>"
+        elif repeat == "累犯" and cum is not None:
+            sig = f"<span class='dim'>第 {nth} 天，等第 3 天</span>"
+        cc = "up" if (cum or 0) > 0 else "dn" if cum is not None else ""
+        trs.append(f"<tr><td class='l'>{html_mod.escape(sid)} {_name(sid)}</td>"
+                   f"<td class='l'>{html_mod.escape(start[5:])}~{html_mod.escape(str(w['end'])[5:])}</td>"
+                   f"<td class='l'>{repeat}</td><td>{nth}</td>"
+                   f"<td class='{cc}'>{f'{cum:+.2f}%' if cum is not None else '—'}</td>"
+                   f"<td class='l'>{html_mod.escape(str(w['measure'])[:16])}</td>"
+                   f"<td class='l'>{sig}</td></tr>")
+    tbl_b = ("<h3>② 處置坐牢中</h3><table class='dz'>"
+             + _th(["~代號 名稱", "~處置期間", "~犯次", "第N天", "累幅", "~原因", "~多刀訊號"])
+             + "".join(trs) + "</table>")
+
+    # ── C 今天出關 ─────────────────────────────────────────────
+    trs = ["<tr><td class='l'>" + html_mod.escape(w["stock_id"]) + " " + _name(w["stock_id"])
+           + f"</td><td class='l'>{html_mod.escape(str(w['start'])[5:])}~{html_mod.escape(str(w['end'])[5:])}</td>"
+           + f"<td class='l'>{html_mod.escape(str(w['measure'])[:16])}</td></tr>" for w in out_today]
+    tbl_c = ("<h3>③ 今天出關（多刀出場日＝開盤賣）</h3><table class='dz'>"
+             + _th(["~代號 名稱", "~處置期間", "~原因"])
+             + ("".join(trs) or "<tr><td class='l dim' colspan='3'>今天沒有出關的</td></tr>") + "</table>")
+
+    note = ("<div class='note'><b>差</b>＝再被列注意幾次就達處置標準（差 0＝已達標、當天收盤後就公告）。"
+            "觸發＝連續 3 日達第一款／連續 5 日達第一~八款／10 日內 6 日／30 日內 12 日；"
+            "只有第一~第八款累積，計數在上次處置期滿後重新起算。"
+            "<br><b>第一款門檻</b>自動依近期趨勢取漲幅側或跌幅側；<b class='r3'>已越過</b>表示"
+            "現價已在觸發區間內，今天收盤維持現狀就會再中一次。"
+            "<br><b>多刀訊號</b>來自自有 1,478 筆事件回測：累犯 ∧ 處置第 3 天 ∧ 累幅 &gt; −10% 買、"
+            "出關日開盤賣 → 中位 +3.77%、正 62%、t+4.77（IS/OOS 皆顯著）。"
+            "<b>⚠ 分盤排隊成交率完全未驗證，p5 −20.95%、單筆最差 −53%。</b>"
+            "<br>⚠ 上櫃只有當日快照可抓，上櫃個股計數要累積滿 30 個營業日才完整；"
+            "第 3/4 款（量能、週轉率）尚未做門檻反解，實際被中機率比表上高。</div>")
+    return note + tbl_a + tbl_b + tbl_c
+
+
+def render_disposal(tab: str = "all") -> str:
     risk, win = _load()
     today = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
-    tab = tab if tab in dict(TABS) else "daily"
+    tab = tab if tab in dict(TABS) else "all"
     try:
-        if tab == "daily":
+        if tab == "all":
+            body = _tab_all(risk, win, today)
+        elif tab == "daily":
             body = _tab_daily(risk)
         elif tab == "clause1":
             body = _tab_clause1(risk)
