@@ -358,6 +358,22 @@ Before adding new strings, grep this section and [terminology-audit.md](./termin
 | 勝台指% · 總報酬（UI 欄位） | **勝率** · **總報酬率** |
 | 對標 · 對標尺 | **對照基準** |
 | 並讀 | **搭配閱讀** |
+| 開多 · 開空 · 平多 · 平空 | **新倉買進** · **新倉賣出** · **賣出平倉** · **買進平倉（回補）**（§11.1） |
+| 主動吃賣一 · 主動吃買一 · 被動被打到 | **外盤成交** · **內盤成交** · 買單在內盤成交（§11.2） |
+| 往返交易 | **一趟** · **來回** · **完整進出** |
+| 逆勢接 | **接刀** · 逆勢承接 |
+| 安慰劑對照 | **隨機基準對照** · 亂數對照組 |
+| 視角列序 | **排序後排名** · 列位 |
+| MAE · MFE（中文行文） | **最大浮動虧損** · **最大浮動獲利**（§11.4） |
+| 順逆大盤 | **相對大盤同步／背離** |
+| 散買參與% · 散賣參與% · 散戶參與Δ | **散戶買方成交佔比** · **賣方成交佔比** · **買方佔比變化** |
+| 期散 | **期貨散戶（小型契約 1 口）淨額** |
+| 大戶−散戶÷成交% | **大戶淨佔比 − 散戶淨佔比** |
+| 散戶背離（指尾盤減開盤） | **散戶尾盤與開盤佔比差**（「背離」專指價量／指標背離） |
+| 關鍵一條線 | **起漲防守價**（需附計算式） |
+| 隱形大戶守價位 | **冰山委託（iceberg order）偵測價位** |
+| 波動分 · 淨分 | **隔日振幅預測分數** · **綜合評分** |
+| 連3買 · ⚠同賣 · ↓弱開 | **大戶連三日淨買** · **大戶與散戶同向賣出** · **開盤走弱** |
 | 新鮮 · 段落末（RRG 對外） | **fresh** · **依軌跡排序** |
 | 篩選檔 | **篩選條件** |
 | Strategy Hub · 一屏（日報） | **日報首頁** · **每日三問** |
@@ -394,6 +410,7 @@ Cite lineage when introducing methods in reports and docs:
 | **de Kempenaer RRG** · 相對輪動圖 | RRG rotation quadrant |
 | **Zweig / Deemer breadth** · 廣度分析 | Breadth zone · breadth impulse |
 | **Grinold & Kahn IC / ICIR** · 資訊係數／資訊比率 | Factor validation · `run_factor_validation.py` |
+| **Frey & Sandås (2009) iceberg orders** · 冰山委託 | 冰山委託偵測價位（§11.5）· `biglot/iceberg.py` |
 
 ---
 
@@ -546,3 +563,124 @@ Cite lineage when introducing methods in reports and docs:
 | 共識 1（Lens 區 chip） | **四框架收斂 1** |
 | Lens Score（排序） | **參考分** |
 | Regime 色標可保留 | 區塊標題仍只用 **今日亮點**，勿加 Lens |
+
+### 10.10 下單與盤中執行速查 · Order & intraday quick reference
+
+| 現行 · Use | 勿用 · Don't use |
+|------------|------------------|
+| **新倉買進**（做多／建立多單） | 開多（中國期貨／加密圈用法） |
+| **新倉賣出**（做空／放空／建立空單） | 開空 |
+| **賣出平倉**（多單平倉／出場） | 平多 |
+| **買進平倉**（**回補**） | 平空 |
+| **外盤成交**（成交在委賣價，買方主動） | 主動吃賣一 |
+| **內盤成交**（成交在委買價，賣方主動） | 主動吃買一 |
+| 買單**在內盤成交**（對方殺到委買價） | 被動被賣單打到 |
+| **最大浮動虧損** / **最大浮動獲利** | MAE / MFE（僅限系統交易語境，首次需附中文） |
+| **一趟** · **來回** · **完整進出** | 往返交易 |
+| **接刀** · 逆勢承接 | 逆勢接 |
+| **隨機基準對照** · 亂數對照組 | 安慰劑對照（醫學詞，勿移植） |
+| **排序後排名** · 列位 | 視角列序 |
+| **檔**（最小升降單位） | tick alone in 中文 prose |
+| **對手價** · **同向最優價** | 吃價 · 掛一檔（語意不明） |
+
+### 10.11 biglot 儀表板欄名速查 · Dashboard column naming
+
+| 現行 · Use | 勿用 · Don't use |
+|------------|------------------|
+| **相對大盤同步／背離** | 順逆大盤 |
+| **散戶買方成交佔比** / **賣方成交佔比** | 散買參與% / 散賣參與% |
+| **散戶買方佔比變化（30分）** | 散戶參與Δ30分 |
+| **期貨散戶（小型契約 1 口）淨額** | 期散30分 |
+| **大戶淨佔比 − 散戶淨佔比** | 大戶−散戶÷成交% |
+| **散戶尾盤與開盤佔比差** | 散戶背離（「背離」專指價量／指標背離） |
+| **VWAP 乖離** ＋ **大戶賣超後股價位置**（拆兩欄） | 均價乖離／大戶倒貨（兩概念併欄） |
+| **起漲防守價**（需附計算式） | 關鍵一條線（節目用語，無定義） |
+| **冰山委託（iceberg order）偵測價位** | 隱形大戶守價位 |
+| **隔日振幅預測分數** | 波動分 |
+| **綜合評分** | 淨分 |
+| **大戶連三日淨買** / **大戶與散戶同向賣出** / **開盤走弱** | 連3買 / ⚠同賣 / ↓弱開 |
+
+---
+
+## 11. Order & intraday execution terms · 下單與盤中執行術語
+
+新增於 2026-10-04。本節補 §1–§10 未涵蓋的一層：**券商下單介面、成交回報、盤中逐筆**
+的標準台股用語。原則：**市面已有通行說法時一律沿用，不自創簡稱**。
+
+### 11.1 Position opening / closing · 倉別與方向
+
+**Definition (EN):** Taiwan futures brokers label every order by **position effect**
+(`New` = open, `Close` = close) **crossed with** buy/sell direction. The four
+combinations are the only correct way to name a futures order side.
+
+**定義（中文）：** 台股期貨下單一律以**倉別**（新倉／平倉）**交叉**買賣方向命名，
+共四種組合；對帳單與下單畫面皆用此語。
+
+| 倉別＋方向 | 中文標準 | 口語 | Fubon API |
+|-----------|---------|------|-----------|
+| Open long | **新倉買進** | 做多 · 建立多單 | `New` + `Buy` |
+| Open short | **新倉賣出** | 做空 · 放空 | `New` + `Sell` |
+| Close long | **賣出平倉** | 多單平倉 · 出場 | `Close` + `Sell` |
+| Close short | **買進平倉** | **回補** | `Close` + `Buy` |
+
+現股放空另有專名：**融券賣出**（信用交易）、**借券賣出**（SBL）——勿與期貨的
+「新倉賣出」混用。
+
+**Do not use · 勿用:** 開多 · 開空 · 平多 · 平空（中國期貨／加密圈用法）。
+
+### 11.2 Inside / outside market fill · 內盤／外盤成交
+
+**Definition (EN):** A fill is **outside-market**（外盤）when it prints at or above
+the best ask (buyer-initiated), and **inside-market**（內盤）when it prints at or
+below the best bid (seller-initiated). Every Taiwan quote terminal shows 內外盤比.
+
+**定義（中文）：** 成交價落在**委賣價**（含以上）＝**外盤成交**，買方主動；落在
+**委買價**（含以下）＝**內盤成交**，賣方主動。兩者之間則直述「成交在價差之間」。
+
+判讀自己的委託時要講清楚立場：掛買單而**在內盤成交**＝對方殺到你的委買價（被動
+成交）；掛買單而**在外盤成交**＝你主動追價。
+
+**Do not use · 勿用:** 主動吃賣一 · 主動吃買一 · 被動被打到。
+
+### 11.3 Large / retail trader — two incompatible definitions · 大戶與散戶的定義歧義
+
+⚠ **同一個詞在本專案與市面指的是不同東西，報告中必須標明採用哪一種。**
+
+| 口徑 | 定義 | 用在哪裡 |
+|------|------|---------|
+| **流量口徑**（本專案） | 大戶＝**單筆成交金額 ≥1,000 萬**；散戶＝**1 張且 <500 萬**；中實戶＝兩者之間 | biglot 儀表板全部大戶／散戶欄位 · `BIG_AMT` / `RETAIL_CAP` |
+| **持股口徑**（市面通行） | 大戶＝**集保持股 400／800／1,000 張以上之股東** | 集保戶股權分散表 · 儀表板「集保大戶800張占比%」欄 |
+
+**中實戶** 為台股既有詞（中實力戶），可直接使用。流量口徑的「中實戶」與持股口徑的
+「中實戶」同樣不可互推（見 memory `biglot-mid-bucket-stealth-signal`）。
+
+### 11.4 Maximum adverse / favorable excursion · 最大浮動虧損／最大浮動獲利
+
+**Definition (EN):** From the **fill price**, the deepest unrealised loss (MAE) and
+the highest unrealised gain (MFE) reached before a chosen horizon. Report in both
+percent **and 檔**（ticks）—percent is not comparable across price bands because the
+tick ladder changes.
+
+**定義（中文）：** 自**成交價**起算，至指定觀察窗內的最深浮動虧損與最高浮動獲利。
+**必須同時以 % 與檔數表示**——台股升降單位隨價位分級（<10 元 0.01；10–50 元 0.05；
+50–100 元 0.1；100–500 元 0.5；500–1,000 元 1；≥1,000 元 5），只用 % 會讓不同價位
+的標的不可比。
+
+中文行文用**最大浮動虧損／最大浮動獲利**；MAE/MFE 僅在系統交易語境使用且首次需附中文。
+
+### 11.5 Limit price distance & queue position · 掛價距離與排隊位置
+
+**Definition (EN):** Limit-price aggressiveness must be measured in **ticks against
+the opposite-side best price**（對手價），never in percent against the **underlying
+spot** price—single-stock futures carry a basis, so spot-based distance is wrong.
+**Queue ahead**（前面排隊張數）is the resting size already at your price level.
+
+**定義（中文）：**
+- **掛價距對手價（檔）**：買單＝(掛價 − 委賣價) ÷ 檔；賣單反之。≥0 表示可立即成交。
+- **掛價距同向最優價（檔）**：買單＝(掛價 − 委買價) ÷ 檔；=0 表示掛在委買一排隊。
+- **前面排隊張數**：你掛的價位上既有的委託量；超過五檔範圍則不可知。
+
+⚠ 個股期貨掛價距離**不得**以現股價格為基準（有基差）；一律用同一契約的期貨五檔。
+相關工具：`scripts/research/trader_mae_mfe_engine.py`。
+
+**Do not use · 勿用:** 掛價距離用 % 單獨表示 · 以現股價計算期貨掛價距離。
