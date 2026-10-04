@@ -587,8 +587,47 @@ def build_report(cal, label) -> tuple[str, str]:
     return f"大戶佈局 {label} {_now():%m/%d %H:%M}", body
 
 
+
+def _connect_with_retry(deadline_hm: str = "13:30", quiet_sec: float = 60.0):
+    """連到富邦；連不上就退讓重試,直到當日收盤為止。
+
+    為什麼需要（2026-10-04 補）：這支的 launchd 是 **RunAtLoad=false、沒有 KeepAlive、
+    平日 08:30 只跑一次**。原本 `connect_fubon()` 失敗就 raw traceback 退出,行程死掉
+    **整天不會再試** —— 而 2026-09-28 13:14 → 09-29 10:10 富邦端連續 21 小時回 503
+    時就是這樣死的（當天 12 次 traceback）,直接造成 **9/29 開盤完全沒有逐筆資料、
+    錄製到 10:12:44 才開始**。那個缺口到現在還卡在交易研究裡。
+
+    斷路器（src/order/fubon_session.py）只負責「快速失敗 + 告訴你還要等多久」,
+    它不會替你重試 —— 重試節奏刻意留給呼叫端決定。所以這裡要自己有迴圈。
+
+    退讓策略：斷路器開著就睡到它給的 `retry_after`；其他錯誤睡 `quiet_sec`。
+    兩者都不會變成高頻轟炸（9/29 那次是 156 秒一輪、重啟 231 次）。
+    """
+    import time as _t
+
+    from order.fubon_session import FubonBreakerOpen
+
+    n = 0
+    while True:
+        try:
+            return connect_fubon(realtime=True)
+        except FubonBreakerOpen as e:
+            wait = max(quiet_sec, e.retry_after)
+            print(f"[connect] 斷路器開啟中（連續失敗 {e.fails} 次）,{wait:.0f}s 後再試",
+                  flush=True, file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 -- 連不上不能讓行程死掉
+            n += 1
+            wait = quiet_sec
+            print(f"[connect] 第 {n} 次失敗: {exc!r} — {wait:.0f}s 後再試",
+                  flush=True, file=sys.stderr)
+        if _now().strftime("%H:%M") >= deadline_hm:
+            print(f"[connect] 已過 {deadline_hm},今日放棄連線", flush=True, file=sys.stderr)
+            raise SystemExit(1)
+        _t.sleep(wait)
+
+
 def main() -> int:
-    global _RAW
+    global _RAW, _RAW_REF
     signal.signal(signal.SIGTERM, _sig)
     signal.signal(signal.SIGINT, _sig)
     cal = json.loads(CALIB.read_text())
@@ -596,14 +635,18 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     day = _now().strftime("%Y-%m-%d")
     _RAW = (OUT_DIR / f"raw_{day}.jsonl").open("a", encoding="utf-8")
+    _RAW_REF = (OUT_DIR / f"raw_ref_{day}.jsonl").open("a", encoding="utf-8")
 
-    session = connect_fubon(realtime=True)
+    session = _connect_with_retry()
     print(f"session ready · 宇宙 {len(THR)} 檔 · 唯讀", flush=True)
     vix_hist = _load_vixtwn()
-    _PCLOSE.update(_load_prev_close(list(THR)))
-    _AVGVOL.update(_load_avg_volume(list(THR)))
+    # 池外參考列只訂閱/落 raw(儀表板自己分桶),報表與寄信仍只認 cal["universe"]
+    sub_sids = list(THR) + [s for s in off_pool_sids() if s not in THR]
+    _REF_SIDS.update(sub_sids[len(THR):])
+    _PCLOSE.update(_load_prev_close(sub_sids))
+    _AVGVOL.update(_load_avg_volume(sub_sids))
     _load_prev_concord()
-    print(f"prev close loaded {len(_PCLOSE)}/{len(THR)} · avg vol {len(_AVGVOL)}/{len(THR)}", flush=True)
+    print(f"prev close loaded {len(_PCLOSE)}/{len(sub_sids)} · avg vol {len(_AVGVOL)}/{len(sub_sids)}", flush=True)
     print(f"VIXTWN 史 {len(vix_hist[0])} 日（至 {vix_hist[0][-1] if vix_hist[0] else '無'}）", flush=True)
     ws = session.sdk.marketdata.websocket_client.stock
     ws.on("connect", lambda: _raw("connect", None))
