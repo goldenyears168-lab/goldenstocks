@@ -68,6 +68,22 @@ def _px_at(A: dict, t: float) -> tuple[float | None, float | None]:
     return last, nxt
 
 
+def _fill_at(A: dict, t: float) -> tuple[float | None, float | None]:
+    """委託在 t 送出後,第一筆可成交的 (價格, **成交時間**)。
+
+    送出時間 ≠ 成交時間。模擬器一開始把兩者混在同一個時間戳,報表就說不出
+    「掛多久才成交」—— 而那正是他實際紀錄裡最有資訊量的欄位之一
+    （他本人新倉中位等 6.4 分、平倉等 30.0 分）。
+    """
+    ts = A["ts"]
+    if not ts:
+        return None, None
+    j = bisect.bisect_right(ts, t)
+    if j >= len(ts):
+        return None, None
+    return A["px"][j], ts[j]
+
+
 def build_day(day: str, subcat: dict) -> dict:
     """回放一天,補上累計序列與日線參考值。"""
     uni = day_universe(day)
@@ -235,9 +251,10 @@ def simulate(cands: list[dict], DD: dict[str, dict], specs: dict, rates: dict) -
             elif blday is not None and blday < 0 and (t - p["t_in"]) > 1800:
                 reason = "E2 全日大戶減散戶轉負（已持有>30分才判定）"
             if reason:
-                _, nxt = _px_at(A, t)
-                ex = nxt if nxt else px
-                _close(pos, trades, sid, ex, t, reason, rate, shares)
+                ex, t_xfill = _fill_at(A, t)
+                if ex is None:
+                    ex, t_xfill = px, t
+                _close(pos, trades, sid, ex, t, reason, rate, shares, t_xfill)
 
         # ---- 進場
         ranked = sorted(by_t[t], key=lambda c: -c["score"])
@@ -251,7 +268,7 @@ def simulate(cands: list[dict], DD: dict[str, dict], specs: dict, rates: dict) -
             A = acc.get(sid)
             if not A:
                 continue
-            _, entry = _px_at(A, c["t"])
+            entry, t_fill = _fill_at(A, c["t"])
             if not entry:
                 continue
             per = entry * sh * rate(sid)
@@ -259,28 +276,34 @@ def simulate(cands: list[dict], DD: dict[str, dict], specs: dict, rates: dict) -
             held = sum(p["margin"] for p in pos.values())
             if held + per > min(RISK_CAP, EQUITY * 0.5):
                 continue                       # §5 風控上限
-            pos[sid] = {"sid": sid, "root": root, "nm": nm, "entry": entry, "t_in": t,
+            pos[sid] = {"sid": sid, "root": root, "nm": nm, "entry": entry,
+                        "t_in": t, "t_submit_in": c["t"], "t_fill_in": t_fill,
                         "sh": sh, "rate": rate(sid), "lot": 1, "margin": per,
                         "lot_cap": cap, "day_in": day, "tier": c["tier"],
                         "score": c["score"], "grp": c["grp"],
-                        "why": f"{c['tier']} 成交額30分前{100-c['amt5_pct']:.0f}% ∧ 大戶全日前{100-c['big30_pct']:.0f}%"
-                               + (f" ∧ 族群漲幅第{c['chg_pct']:.0f}百分位" if c["chg_pct"] is not None else "")
-                               + (f" ∧ 距加總差額低點{c['agg_from_low_min']:.0f}分" if c["agg_from_low_min"] <= 30 else "")}
+                        "why": f"{c['tier']}｜成交額30分 第{c['amt5_pct']:.0f}百分位 ∧ 大戶佔比全日 第{c['big30_pct']:.0f}百分位"
+                               + (f" ∧ 族群內漲幅 第{c['chg_pct']:.0f}百分位" if c["chg_pct"] is not None else "")
+                               + (f"（加分：距加總差額當日低點 {c['agg_from_low_min']:.0f} 分）"
+                                  if c["agg_from_low_min"] <= 30 else "")}
             legs.append({"t": t, "day": day, "n_pos": len(pos),
                          "margin": sum(p["margin"] for p in pos.values())})
     # 收尾
     for sid in list(pos):
         A = DD[DAYS[-1]]["acc"].get(sid)
         px = A["px"][-1] if A and A["px"] else pos[sid]["entry"]
-        _close(pos, trades, sid, px, last_day_end, "E5 模擬結束強制平倉", rate, shares)
+        _close(pos, trades, sid, px, last_day_end, "E5 模擬結束強制平倉", rate, shares, last_day_end)
     return trades, legs
 
 
-def _ep_day(day, hms):
-    return _epoch(day, hms)
+def _hms(t):
+    return datetime.fromtimestamp(t).strftime("%m-%d %H:%M:%S") if t else None
 
 
-def _close(pos, trades, sid, exit_px, t, reason, rate, shares):
+def _wait(t0, t1):
+    return round(t1 - t0, 1) if (t0 and t1) else None
+
+
+def _close(pos, trades, sid, exit_px, t, reason, rate, shares, t_fill_out=None):
     p = pos.pop(sid)
     gross = (exit_px - p["entry"]) * p["sh"] * p["lot"]
     ret = 100 * (exit_px / p["entry"] - 1)
@@ -291,7 +314,13 @@ def _close(pos, trades, sid, exit_px, t, reason, rate, shares):
                    "exit": exit_px, "t_in": p["t_in"], "t_out": t,
                    "進場": datetime.fromtimestamp(p["t_in"]).strftime("%m-%d %H:%M"),
                    "出場": datetime.fromtimestamp(t).strftime("%m-%d %H:%M"),
-                   "持有分": round((t - p["t_in"]) / 60, 1),
+                   "送出買進": _hms(p.get("t_submit_in")),
+                   "買進成交": _hms(p.get("t_fill_in")),
+                   "買進等待秒": _wait(p.get("t_submit_in"), p.get("t_fill_in")),
+                   "送出平倉": _hms(t),
+                   "平倉成交": _hms(t_fill_out if t_fill_out else t),
+                   "平倉等待秒": _wait(t, t_fill_out),
+                   "持有分": round(((t_fill_out or t) - (p.get("t_fill_in") or p["t_in"])) / 60, 1),
                    "毛損益": round(gross), "報酬%": round(ret, 3),
                    "淨報酬%": round(ret - cost_pct, 3),
                    "淨損益": round(gross - p["margin"] / p["rate"] * cost_pct / 100),
@@ -467,9 +496,11 @@ def main() -> int:
 
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     if not tr.empty:
-        cols = ["進場", "出場", "nm", "root", "grp", "tier", "lot", "entry", "exit",
+        cols = ["nm", "root", "grp", "tier", "lot",
+                "送出買進", "買進成交", "買進等待秒", "entry",
+                "送出平倉", "平倉成交", "平倉等待秒", "exit",
                 "sh", "rate", "margin", "持有分", "報酬%", "淨報酬%", "淨損益",
-                "報酬÷保證金%", "why", "出場原因"]
+                "報酬÷保證金%", "why", "出場原因", "進場", "出場"]
         tr[cols].to_json(out / "paper_trades.json", orient="records", force_ascii=False)
         tr[cols].to_csv(P / "scratch/trader_paper_trades.csv", index=False)
     (out / "paper_stats.json").write_text(
