@@ -23,13 +23,14 @@ class FubonBreakerTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._old = os.environ.get("GOLDENSTOCKS_DATA_DIR")
         os.environ["GOLDENSTOCKS_DATA_DIR"] = self._tmp.name
-        os.environ.pop("FUBON_BREAKER_DISABLE", None)
+        os.environ["FUBON_BREAKER_ENABLE"] = "1"   # 預設關閉,測試要明確打開
         import importlib
         import order.fubon_session as FS
         self.FS = importlib.reload(FS)
         self.FS.breaker_reset()
 
     def tearDown(self):
+        os.environ.pop("FUBON_BREAKER_ENABLE", None)
         if self._old is None:
             os.environ.pop("GOLDENSTOCKS_DATA_DIR", None)
         else:
@@ -91,13 +92,17 @@ class FubonBreakerTest(unittest.TestCase):
         self.assertFalse(self.FS.breaker_state()["open"])
         self.assertEqual(self.FS.breaker_state()["fails"], 0)
 
-    def test_env_kill_switch(self):
+    def test_disabled_by_default(self):
+        """★ 預設必須是關的 —— 它是跨行程共用狀態,誤觸發會擋住全機 collector。"""
         self.FS._breaker_record(ValueError("503 Service Unavailable"))
-        os.environ["FUBON_BREAKER_DISABLE"] = "1"
+        os.environ.pop("FUBON_BREAKER_ENABLE", None)
         try:
-            self.FS._breaker_check()                  # 緊急時人工繞過
+            self.assertFalse(self.FS.breaker_enabled())
+            self.FS._breaker_check()                  # 不該擋
+            self.FS._breaker_record(ValueError("503 Service Unavailable"))
+            self.assertEqual(self.FS.breaker_state()["fails"], 1, "關閉時不該再累加")
         finally:
-            os.environ.pop("FUBON_BREAKER_DISABLE")
+            os.environ["FUBON_BREAKER_ENABLE"] = "1"
 
     def test_corrupt_state_file_never_blocks_trading(self):
         """斷路器自己壞掉,最壞就是回到沒有斷路器的舊行為,絕不能擋住交易。"""

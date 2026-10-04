@@ -22,6 +22,11 @@ from clone_agent.approval import (
 )
 
 CSS = """
+/* ★ body/html 必須自己設底色：/agent 與 /paper 回的是沒有 <html><body> 包裹的片段,
+   瀏覽器會用預設白底,只有 .ag 容器內是深色 —— 外圈一圈白的就是這個原因。
+   主儀表板的 SHELL 有自己的 body{background:#0d1117},這兩頁沒有,要補。 */
+html,body{background:#0d1117;color:#e6edf3;margin:0;padding:0}
+body{padding:10px 12px 40px}
 /* 色票一律沿用 biglot 儀表板（GitHub dark）：
    #0d1117 底 · #161b22 面板 · #30363d 框 · #e6edf3 字 · #8b949e 次要
    #3fb950 綠(好) · #ff7b72 紅(壞) · #e3b341 琥珀(注意) · #79c0ff 連結 · #388bfd 焦點 */
@@ -179,6 +184,12 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
  {body}</div>"""
 
 
+#: 首頁 agentbox 是嵌在主儀表板裡的片段,主頁已有 body 樣式,這裡不可重設 body
+#: （重設會把主表的邊距一起改掉）。只有獨立頁 /agent /paper 才需要 body 底色。
+FRAG_CSS = CSS.split("/* 色票", 1)[1]
+FRAG_CSS = "/* 色票" + FRAG_CSS
+
+
 def render_pending_block(day: str) -> str:
     """儀表板首頁最上方的精簡待批准區（由 /agentfrag 輪詢換內容）。
 
@@ -191,13 +202,13 @@ def render_pending_block(day: str) -> str:
     pend = [c for c in cs if c["intent_id"] not in ds]
     if not pend:
         done = len(cs) - len(pend)
-        return (f"<style>{CSS}</style><div class='ag'><div class='sub' style='margin:0'>"
+        return (f"<style>{FRAG_CSS}</style><div class='ag'><div class='sub' style='margin:0'>"
                 f"🤖 代理人：{day} 無待批准委託"
                 f"{f'（已裁決 {done} 筆）' if done else ''}　"
                 f"<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a>"
                 f"</div></div>")
     cards = "".join(_card(c, None) for c in pend)
-    return f"""<style>{CSS}</style><div class='ag'>
+    return f"""<style>{FRAG_CSS}</style><div class='ag'>
 <div class='hd' style='margin-bottom:6px'>
  <span class='nm'>🤖 代理人待批准
   <span class='tag' style='background:#9e6a03'>{len(pend)}</span></span>

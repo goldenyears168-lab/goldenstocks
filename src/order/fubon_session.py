@@ -172,9 +172,24 @@ def breaker_reset() -> None:
     _breaker_write({})
 
 
+def breaker_enabled() -> bool:
+    """斷路器預設**關閉**，要用 `FUBON_BREAKER_ENABLE=1` 明確打開。
+
+    為什麼不預設開（2026-10-04 jack 要求「先不要動富邦 API，避免明天資料沒收好」）：
+    斷路器的狀態是**跨行程共用的檔案**，這是它的價值（一支退讓、其他支看得到），
+    但也是它的風險 —— 任一支 collector 的連線失敗都會記進去，連續失敗會把冷卻
+    升到 30 分鐘，而那期間**會擋住其他所有 collector**，包含 08:30 才跑一次的
+    biglot-live-watch。本來只是「某一支連不上」，變成「全機都連不上」。
+
+    9/28–29 那次是富邦端真的掛了 21 小時，斷路器會有幫助；但在富邦正常的日子，
+    它只增加一條新的失效路徑。要先在非關鍵路徑觀察幾天，確認不會誤觸發再打開。
+    """
+    return os.environ.get("FUBON_BREAKER_ENABLE") == "1"
+
+
 def _breaker_check() -> None:
     import time
-    if os.environ.get("FUBON_BREAKER_DISABLE") == "1":
+    if not breaker_enabled():
         return
     d = _breaker_read()
     nxt = float(d.get("next_try", 0) or 0)
@@ -186,6 +201,8 @@ def _breaker_check() -> None:
 
 def _breaker_record(exc: BaseException) -> None:
     import time
+    if not breaker_enabled():
+        return
     msg = f"{type(exc).__name__}: {exc}"
     if not any(m.lower() in msg.lower() for m in _BREAKER_MARKS):
         return                               # 設定類錯誤不進斷路器,讓它照常爆出來
@@ -200,6 +217,8 @@ def _breaker_record(exc: BaseException) -> None:
 
 
 def _breaker_clear() -> None:
+    if not breaker_enabled():
+        return
     if _breaker_read():
         _breaker_write({})
         print("[fubon-breaker] 連線恢復,已重置", file=sys.stderr)
