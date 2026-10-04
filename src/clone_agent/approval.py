@@ -84,7 +84,8 @@ def load_decisions(day: str) -> dict[str, dict[str, Any]]:
     return out
 
 
-def record_decision(day: str, iid: str, decision: str, skip_reason: str = "") -> dict[str, Any]:
+def record_decision(day: str, iid: str, decision: str, skip_reason: str = "",
+                    edited: dict[str, Any] | None = None) -> dict[str, Any]:
     """寫入一筆裁決。**這個函式不會送出任何委託單**，只寫帳本。
 
     `iid` 必須存在於當天的候選檔，否則拒絕。沒有這道檢查的話，任何字串都會被寫進
@@ -95,9 +96,36 @@ def record_decision(day: str, iid: str, decision: str, skip_reason: str = "") ->
         raise ValueError(f"bad decision {decision!r}")
     if iid not in {c["intent_id"] for c in load_candidates(day)}:
         raise ValueError(f"unknown intent_id {iid!r} for {day}")
-    rec = {"intent_id": iid, "decision": decision,
-            "skip_reason": skip_reason if decision == "skip" else "",
-            "decided_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    rec: dict[str, Any] = {
+        "intent_id": iid, "decision": decision,
+        "skip_reason": skip_reason if decision == "skip" else "",
+        "decided_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    # 他改了什麼比他按了什麼更有價值 —— 改動量就是「規則離他的腦袋還差多遠」的量尺，
+    # 所以只記真的跟建議值不同的欄位，沒改的不寫（避免帳本充滿雜訊）。
+    if edited:
+        c = next((x for x in load_candidates(day) if x["intent_id"] == iid), {})
+        diff = {}
+        for k, cast in (("price", float), ("lot", int)):
+            if edited.get(k) is None:
+                continue
+            try:
+                v = cast(edited[k])
+            except (TypeError, ValueError):
+                raise ValueError(f"bad {k}={edited[k]!r}") from None
+            if k == "price" and not (0 < v < 100_000):
+                raise ValueError(f"price out of range: {v}")
+            if k == "lot" and not (1 <= v <= 20):
+                raise ValueError(f"lot out of range: {v}")
+            # 候選本身沒有這個欄位時，無從判斷「改了沒」—— 不能把預設值當成人改的，
+            # 否則帳本會把每一筆都標成有編輯，改動量這個訊號就廢了。
+            sug = c.get(k, 1 if k == "lot" else None)
+            if sug is not None and abs(v - float(sug)) > 1e-9:
+                diff[k] = v
+        note = str(edited.get("note") or "").strip()[:300]
+        if note:
+            diff["note"] = note
+        if diff:
+            rec["edited"] = diff
     p = _data_dir() / f"decisions_{day}.jsonl"
     with open(p, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")

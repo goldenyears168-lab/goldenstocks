@@ -99,13 +99,47 @@ class CloneApprovalTest(unittest.TestCase):
         self.assertEqual(self.A.intent_id(base), self.A.intent_id(dict(base)))
         self.assertNotEqual(self.A.intent_id(base), self.A.intent_id({**base, "price": 525.0}))
 
+    def test_edit_only_recorded_when_different(self):
+        """沒改就不該寫 edited —— 否則帳本全是雜訊，看不出他真正改了哪些。"""
+        c = self.A.load_candidates(self.day)[0]
+        self.A.record_decision(self.day, self.ids[0], "approve",
+                               edited={"price": c["price"], "lot": c.get("lot", 1), "note": ""})
+        self.assertNotIn("edited", self.A.load_decisions(self.day)[self.ids[0]])
+
+    def test_edit_recorded_when_changed(self):
+        self.A.record_decision(self.day, self.ids[0], "approve",
+                               edited={"price": 526.0, "lot": 2, "note": "再加一口"})
+        e = self.A.load_decisions(self.day)[self.ids[0]]["edited"]
+        self.assertEqual(e["price"], 526.0)
+        self.assertEqual(e["lot"], 2)
+        self.assertEqual(e["note"], "再加一口")
+
+    def test_edit_out_of_range_rejected_and_nothing_written(self):
+        for bad in ({"price": -5}, {"price": 0}, {"price": 200_000},
+                    {"lot": 0}, {"lot": 999}, {"price": "DROP TABLE"}, {"lot": "x"}):
+            with self.assertRaises(ValueError, msg=f"should reject {bad}"):
+                self.A.record_decision(self.day, self.ids[0], "approve", edited=bad)
+        self.assertEqual(self.A.load_decisions(self.day), {})
+
+    def test_note_truncated_and_stripped(self):
+        self.A.record_decision(self.day, self.ids[0], "approve",
+                               edited={"note": "  " + "x" * 500 + "  "})
+        self.assertEqual(len(self.A.load_decisions(self.day)[self.ids[0]]["edited"]["note"]), 300)
+
     def test_pages_render_without_data_files(self):
         """缺 capital_legs.json / fills.json 時頁面要降級顯示，不是 500。"""
-        from clone_agent.panels import (render_approvals, render_capital,
-                                        render_fills, render_pending, render_spec, shell)
-        for fn in (render_pending, render_capital, render_approvals, render_fills, render_spec):
-            html = shell("/", fn(self.day), self.day)
-            self.assertIn("<title>", html)
+        from clone_agent.panels import render_agent_page
+        html = render_agent_page(self.day)
+        self.assertIn("操盤手代理人", html)
+        for f in ("f-px", "f-lot", "f-note"):      # 價格/口數/理由必須是可編輯欄位
+            self.assertIn(f, html)
+        self.assertIn("不會送出任何委託單", html)
+
+    def test_blocked_candidates_have_no_submit_buttons(self):
+        """被規則擋下的候選仍要顯示（供覆盤），但排在後面且標記出來。"""
+        from clone_agent.panels import render_agent_page
+        html = render_agent_page(self.day)
+        self.assertIn("被規則擋下", html)
 
 
 if __name__ == "__main__":

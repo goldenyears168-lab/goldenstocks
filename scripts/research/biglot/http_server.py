@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import biglot_dashboard
 from biglot.disposal_view import render_disposal
 from biglot.day_views import render_history, render_day, snapshot_day
-from biglot.timeline_snap import render_timeline_index, render_timeline_view, save_timeline_slot_if_due
+from biglot.timeline_snap import render_timeline_page, render_timeline_frag, save_timeline_slot_if_due
 from biglot.stock_meta import render_help
 from biglot.render_views import GRID_SHELL, render_grid_frag, render_stock_frag, render_stock
 from biglot.user_state import _load_notes, _save_stock_note, _hold_toggle, _oos_update_at_close
@@ -56,13 +56,27 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path == "/agent":
+            # 複製人操盤手代理人（階段 A）。lazy import:clone_agent 若壞掉只壞這一頁,
+            # 不能讓儀表板起不來。該套件不 import 富邦 SDK,構造上無法送單。
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            try:
+                from clone_agent.panels import render_agent_page
+                day = str(q.get("day", ""))[:10] or biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
+                body = render_agent_page(day).encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                body = f"<div class='meta'>agent page error: {html_mod.escape(repr(exc))}</div>".encode()
         elif path == "/disposal":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_disposal(str(q.get("tab", "all"))[:10]).encode("utf-8")
         elif path == "/timeline":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            date, hhmm = str(q.get("date", ""))[:10] or None, str(q.get("hhmm", ""))[:5] or None
+            body = render_timeline_page(date, hhmm).encode("utf-8")
+        elif path == "/timelinefrag":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             date, hhmm = str(q.get("date", ""))[:10], str(q.get("hhmm", ""))[:5]
-            body = (render_timeline_view(date, hhmm) if (date and hhmm) else render_timeline_index(date or None)).encode("utf-8")
+            body = render_timeline_frag(date, hhmm).encode("utf-8")
         elif path in ("/stock", "/stockfrag"):
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             sid = str(q.get("sid", ""))[:8]
@@ -109,6 +123,19 @@ class H(BaseHTTPRequestHandler):
                     raise ValueError("bad sid/action")
                 _hold_toggle(sid, act, biglot_dashboard.ST.last_px.get(sid))
                 body, code = json.dumps({"ok": True, "holds": list(biglot_dashboard.HOLDS)}).encode(), 200
+            except Exception as exc:  # noqa: BLE001
+                body, code = f"err {exc!r}".encode(), 500
+        elif path == "/agentdecide":
+            try:
+                from clone_agent.approval import SKIP_REASONS, record_decision
+                n = int(self.headers.get("Content-Length") or 0)
+                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:4000])
+                sr = str(q.get("skip_reason", ""))[:60]
+                if str(q["decision"]) == "skip" and sr and sr not in SKIP_REASONS:
+                    raise ValueError("unknown skip_reason")
+                rec = record_decision(str(q["day"])[:10], str(q["intent_id"])[:32],
+                                      str(q["decision"]), sr, q.get("edited"))
+                body, code = json.dumps({"ok": True, **rec}, ensure_ascii=False).encode(), 200
             except Exception as exc:  # noqa: BLE001
                 body, code = f"err {exc!r}".encode(), 500
         elif path == "/notes":

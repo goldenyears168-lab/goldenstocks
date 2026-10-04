@@ -1,90 +1,102 @@
-"""複製人操盤手頁面 —— 各分頁渲染器。
+"""複製人操盤手代理人 —— 單頁渲染（掛在 biglot 儀表板 8771 的 /agent）。
 
-頁面定位：這是**操盤手自己的工作台**，不是研究儀表板。所以只放三件事——
-我現在要不要下單（待批准）、我的錢在哪（資金水位）、我做過什麼（批准／成交紀錄），
-再加一份可查的量化規格，避免規則變成口耳相傳。
+為什麼是單頁不是五個分頁：使用者明確要求「不喜歡點來點去」。盤中要的是一眼看完
+「要不要下單 → 錢夠不夠 → 做過什麼」，分頁會讓第二層資訊永遠不被看到。
+量化規格不常看，收在 <details> 裡。
 
-所有數字都讀 `${GOLDENSTOCKS_DATA_DIR}/data/clone_agent/*.json`，頁面裡**不硬寫數字**
-（避免研究更新後頁面說謊）。圖表是純手寫 inline SVG：沒有 JS 圖表庫、離線可看、
-手機 Safari 不會因為 CDN 擋掉就變白頁。
+為什麼掛在 8771 不是獨立 port：他遠端一律走 Tailscale，而 Tailscale 只通 8771。
+我原本把「架構乾淨」排在「他用得到」前面，那是錯的優先順序。安全邊界仍在
+——本套件不 import 富邦 SDK、不 import `src/order/`，由測試掃描釘住。
 
-同樣的硬邊界：本模組不 import 富邦 SDK、不 import `src/order/`。
+委託卡的價格／口數／理由是**可編輯**的：代理人給建議，人改完再送。他改了什麼比
+他按了什麼更有價值 —— 改動量就是「規則離他的腦袋還差多遠」的量尺。
 """
 from __future__ import annotations
 
 import html
 import json
-from pathlib import Path
 from typing import Any
 
 from clone_agent.approval import (
     SKIP_REASONS, _data_dir, load_candidates, load_decisions,
 )
 
-TABS = [("/", "待批准"), ("/capital", "資金水位"), ("/approvals", "批准紀錄"),
-        ("/fills", "成交紀錄"), ("/spec", "量化規格")]
-
 CSS = """
-*{box-sizing:border-box}
-body{background:#11151a;color:#dfe6ee;font:13px/1.55 -apple-system,"PingFang TC",sans-serif;margin:0;padding:0}
-.wrap{padding:10px 12px 40px;max-width:1000px;margin:0 auto}
-nav{display:flex;gap:2px;background:#0c1014;border-bottom:1px solid #2b343d;padding:0 8px;
-    position:sticky;top:0;z-index:9;overflow-x:auto}
-nav a{color:#8b97a4;text-decoration:none;padding:9px 13px;font-size:13px;white-space:nowrap;
-      border-bottom:2px solid transparent}
-nav a.on{color:#dfe6ee;border-bottom-color:#2b6cb0;font-weight:600}
-nav a:hover{color:#dfe6ee}
-h1{font-size:16px;margin:10px 0 2px}
-h2{font-size:14px;margin:20px 0 6px;color:#b8c4d0;border-bottom:1px solid #222a32;padding-bottom:4px}
-.sub{color:#7f8c99;font-size:11px;margin-bottom:10px}
-.warn{background:#3a2a12;border:1px solid #7a5a20;color:#f0c674;padding:8px 10px;border-radius:6px;
-      font-size:12px;margin:10px 0 14px}
-.ok{background:#16281c;border-color:#2f6b40;color:#8fd19e}
-table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px}
-th{background:#1a2027;color:#8b97a4;text-align:right;padding:5px 7px;font-weight:600;
-   border-bottom:1px solid #2b343d;white-space:nowrap}
-th:first-child,td:first-child{text-align:left}
-td{padding:4px 7px;border-bottom:1px solid #1b2228;text-align:right;white-space:nowrap}
-tr:hover td{background:#161c22}
-.pos{color:#8fd19e}.neg{color:#e08a7a}.dim{color:#6b7682}
-.kpi{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
-.kpi div{background:#1a2027;border:1px solid #2b343d;border-radius:7px;padding:7px 11px;min-width:104px}
-.kpi b{display:block;font-size:17px;line-height:1.3}
-.kpi span{color:#7f8c99;font-size:10px}
-.card{background:#1a2027;border:1px solid #2b343d;border-radius:8px;padding:10px 12px;margin-bottom:10px}
-.card.done{opacity:.42}.card.blk{border-left:3px solid #7a5a20}
-.hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
-.nm{font-size:15px;font-weight:600}
-.tag{font-size:10px;padding:1px 6px;border-radius:3px;background:#2b6cb0;color:#fff;vertical-align:2px}
-.tag.c{background:#7a5a20}
-.t{color:#7f8c99;font-size:11px}
-.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px;margin:8px 0}
-.grid4 div{background:#141a20;border-radius:5px;padding:5px 8px}
-.grid4 span{display:block;color:#7f8c99;font-size:10px}
-.grid4 b{font-size:14px}
-ul{margin:6px 0 8px;padding-left:19px}
-li{margin:1px 0}
-li.hit::marker{content:"✓ "}li.hit{color:#8fd19e}
-li.bonus::marker{content:"+ "}li.bonus{color:#8ab4f8}
-li.risk::marker{content:"⚠ "}li.risk{color:#f0c674}
-.btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
-button{background:#2b6cb0;color:#fff;border:0;border-radius:5px;padding:7px 16px;font-size:13px;cursor:pointer}
-button.sk{background:#3a434d}button:active{opacity:.7}
-select{background:#222a32;color:#dfe6ee;border:1px solid #39434d;border-radius:5px;padding:6px;font-size:12px}
-.vd{font-size:12px;font-weight:600}.vd.a{color:#8fd19e}.vd.s{color:#e08a7a}
-svg{background:#141a20;border:1px solid #2b343d;border-radius:7px;display:block;max-width:100%}
-.lg{display:flex;gap:14px;font-size:11px;margin:6px 0 2px;flex-wrap:wrap}
-.lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-code{background:#141a20;padding:1px 5px;border-radius:3px;font-size:11px;color:#b8c4d0}
+.ag{font:13px/1.55 -apple-system,"PingFang TC",sans-serif;color:#dfe6ee;max-width:1080px}
+.ag h2{font-size:14px;margin:22px 0 6px;color:#b8c4d0;border-bottom:1px solid #222a32;padding-bottom:4px}
+.ag .sub{color:#7f8c99;font-size:11px;margin:2px 0 8px}
+.ag .warn{background:#3a2a12;border:1px solid #7a5a20;color:#f0c674;padding:7px 10px;
+  border-radius:6px;font-size:12px;margin:8px 0 12px}
+.ag table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:6px}
+.ag th{background:#1a2027;color:#8b97a4;text-align:right;padding:5px 7px;font-weight:600;
+  border-bottom:1px solid #2b343d;white-space:nowrap}
+.ag th:first-child,.ag td:first-child{text-align:left}
+.ag td{padding:4px 7px;border-bottom:1px solid #1b2228;text-align:right;white-space:nowrap}
+.ag tr:hover td{background:#161c22}
+.ag .pos{color:#8fd19e}.ag .neg{color:#e08a7a}.ag .dim{color:#6b7682}
+.ag .kpi{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}
+.ag .kpi div{background:#1a2027;border:1px solid #2b343d;border-radius:7px;padding:6px 11px;min-width:98px}
+.ag .kpi b{display:block;font-size:17px;line-height:1.3}
+.ag .kpi span{color:#7f8c99;font-size:10px}
+.ag .card{background:#1a2027;border:1px solid #2b343d;border-radius:8px;padding:10px 12px;margin-bottom:9px}
+.ag .card.done{opacity:.4}.ag .card.blk{border-left:3px solid #7a5a20;opacity:.72}
+.ag .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ag .nm{font-size:15px;font-weight:600}
+.ag .tag{font-size:10px;padding:1px 6px;border-radius:3px;background:#2b6cb0;color:#fff;vertical-align:2px}
+.ag .tag.c{background:#7a5a20}
+.ag .t{color:#7f8c99;font-size:11px}
+.ag .ed{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:6px;margin:8px 0}
+.ag .ed label{background:#141a20;border-radius:5px;padding:4px 8px;display:block}
+.ag .ed span{display:block;color:#7f8c99;font-size:10px;margin-bottom:1px}
+.ag .ed input{background:#0d1117;color:#dfe6ee;border:1px solid #30363d;border-radius:4px;
+  padding:3px 6px;font-size:14px;width:100%;font-variant-numeric:tabular-nums}
+.ag .ed input:focus{outline:0;box-shadow:0 0 0 1px #388bfd;background:#0d1117}
+.ag .ed b{font-size:15px;display:block;padding:3px 0}
+.ag .ed .chg input{border-color:#b58900;background:#1c1708}
+.ag ul{margin:6px 0 8px;padding-left:19px}
+.ag li{margin:1px 0}
+.ag li.hit::marker{content:"✓ "}.ag li.hit{color:#8fd19e}
+.ag li.bonus::marker{content:"+ "}.ag li.bonus{color:#8ab4f8}
+.ag li.risk::marker{content:"⚠ "}.ag li.risk{color:#f0c674}
+.ag .note{width:100%;background:#0d1117;color:#dfe6ee;border:1px solid #30363d;border-radius:4px;
+  padding:4px 7px;font-size:12px;margin-top:2px;font-family:inherit}
+.ag .btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.ag button{background:#2b6cb0;color:#fff;border:0;border-radius:5px;padding:7px 17px;
+  font-size:13px;cursor:pointer}
+.ag button.sk{background:#3a434d}.ag button:disabled{opacity:.45;cursor:default}
+.ag select{background:#222a32;color:#dfe6ee;border:1px solid #39434d;border-radius:5px;
+  padding:6px;font-size:12px}
+.ag .vd{font-size:12px;font-weight:600}.ag .vd.a{color:#8fd19e}.ag .vd.s{color:#e08a7a}
+.ag svg{background:#141a20;border:1px solid #2b343d;border-radius:7px;display:block;max-width:100%}
+.ag .lg{display:flex;gap:13px;font-size:11px;margin:5px 0 2px;flex-wrap:wrap}
+.ag .lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.ag details{margin:8px 0}.ag summary{cursor:pointer;color:#79c0ff;font-size:13px;padding:4px 0}
+.ag code{background:#141a20;padding:1px 5px;border-radius:3px;font-size:11px;color:#b8c4d0}
 """
 
 JS = """
-async function dec(iid,d,el){
-  const b=el.closest('.btns'); b.querySelectorAll('button').forEach(x=>x.disabled=true);
-  const sel=el.closest('.card').querySelector('select');
-  const r=await fetch('/decide',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({day:DAY,intent_id:iid,decision:d,skip_reason:d==='skip'&&sel?sel.value:''})});
-  if(r.ok) location.reload(); else {alert('寫入失敗 '+r.status); b.querySelectorAll('button').forEach(x=>x.disabled=false);}
+function mg(el){
+  const c=el.closest('.card'), p=+c.querySelector('.f-px').value, l=+c.querySelector('.f-lot').value;
+  const sh=+c.dataset.sh, rt=+c.dataset.rate, eq=+c.dataset.eq;
+  const m=p*sh*rt*l;
+  c.querySelector('.f-mg').textContent=isFinite(m)?Math.round(m).toLocaleString():'—';
+  c.querySelector('.f-leg').textContent=isFinite(m)?(100*m/eq).toFixed(1)+'%':'—';
+  const cap=+c.dataset.cap;
+  c.querySelector('.f-lot').parentElement.classList.toggle('chg', l!==+c.dataset.lot0);
+  c.querySelector('.f-px').parentElement.classList.toggle('chg', p!==+c.dataset.px0);
+  const w=c.querySelector('.f-warn');
+  w.textContent = l>cap ? ('⚠ 超過價格帶上限 '+cap+' 口') : '';
+}
+async function agdec(iid,d,el){
+  const c=el.closest('.card'); c.querySelectorAll('button').forEach(x=>x.disabled=true);
+  const sel=c.querySelector('select.f-sr');
+  const r=await fetch('/agentdecide',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({day:AGDAY,intent_id:iid,decision:d,
+      skip_reason:d==='skip'&&sel?sel.value:'',
+      edited:{price:+c.querySelector('.f-px').value,lot:+c.querySelector('.f-lot').value,
+              note:c.querySelector('.f-note').value}})});
+  if(r.ok){location.reload();}
+  else{const t=await r.text();alert('寫入失敗: '+t);c.querySelectorAll('button').forEach(x=>x.disabled=false);}
 }
 """
 
@@ -94,286 +106,251 @@ def _j(name: str) -> Any:
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
 
-def shell(path: str, body: str, day: str = "") -> str:
-    nav = "".join(f"<a href='{h}{('?day='+day) if day and h!='/spec' else ''}' "
-                  f"class='{'on' if h == path else ''}'>{t}</a>" for h, t in TABS)
-    return (f"<!doctype html><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>操盤手代理人</title><style>{CSS}</style><nav>{nav}</nav>"
-            f"<div class='wrap'>{body}</div>"
-            f"<script>const DAY={json.dumps(day)};{JS}</script>")
-
-
 def _n(v: Any, d: int = 0, sign: bool = False) -> str:
     if v is None or v != v:
         return "—"
-    s = f"{v:+,.{d}f}" if sign else f"{v:,.{d}f}"
-    return s
+    return f"{v:+,.{d}f}" if sign else f"{v:,.{d}f}"
 
 
-def _cls(v: Any) -> str:
+def _c(v: Any) -> str:
     return "" if v is None or v != v else ("pos" if v > 0 else ("neg" if v < 0 else "dim"))
 
 
-# ------------------------------------------------------------- 待批准
-
-def render_pending(day: str) -> str:
-    cs = load_candidates(day)
-    ds = load_decisions(day)
-    ok = [c for c in cs if c.get("verdict") != "blocked"]
-    cards = []
-    for c in sorted(cs, key=lambda x: (x.get("verdict") == "blocked", x.get("time", ""))):
-        d = ds.get(c["intent_id"])
-        blk = c.get("verdict") == "blocked"
-        hits = "".join(f"<li class='hit'>{html.escape(x)}</li>" for x in c.get("hits", []))
-        bon = "".join(f"<li class='bonus'>{html.escape(x)}</li>" for x in c.get("bonus", []))
-        rk = "".join(f"<li class='risk'>{html.escape(x)}</li>" for x in c.get("risks", []))
-        if d:
-            lab = "已批准" if d["decision"] == "approve" else f"已略過（{d.get('skip_reason') or '未填'}）"
-            btns = (f"<div class='btns'><span class='vd {'a' if d['decision']=='approve' else 's'}'>"
-                    f"{html.escape(lab)}</span><span class='t'>{html.escape(d.get('decided_at',''))}</span></div>")
-        else:
-            opts = "".join(f"<option>{html.escape(r)}</option>" for r in SKIP_REASONS)
-            btns = (f"<div class='btns'><button onclick=\"dec('{c['intent_id']}','approve',this)\">"
-                    f"批准送出</button><select>{opts}</select>"
-                    f"<button class='sk' onclick=\"dec('{c['intent_id']}','skip',this)\">略過</button></div>")
-        mg = c.get("margin", 0) or 0
-        cards.append(f"""<div class='card{' done' if d else ''}{' blk' if blk else ''}'>
- <div class='hd'><span class='nm'>{html.escape(str(c.get('uname','')))}
-   <span class='t'>{html.escape(str(c.get('symbol','')))}</span>
-   <span class='tag{' c' if blk else ''}'>{html.escape(str(c.get('action','')))}</span></span>
-  <span class='t'>{html.escape(str(c.get('time','')))}</span></div>
- <div class='grid4'>
-  <div><span>倉別 · 方向</span><b>{html.escape(str(c.get('action','')))}</b></div>
-  <div><span>委託價格</span><b>{_n(c.get('price'),1)}</b></div>
-  <div><span>口數</span><b>{c.get('lot',1)} 口</b></div>
-  <div><span>使用保證金</span><b>{_n(mg)}</b></div>
- </div>
- <div class='t'>{html.escape(str(c.get('price_note','')))} · {html.escape(str(c.get('leg_note','')))}</div>
- <ul>{hits}{bon}{rk}</ul>
- {btns}</div>""")
-    nd = sum(1 for c in ok if c["intent_id"] not in ds)
-    return f"""<h1>待批准 · {day}</h1>
-<div class='sub'>規則通過 {len(ok)} 筆（{nd} 筆待你裁決）· 被規則擋下 {len(cs)-len(ok)} 筆（列在後面，供覆盤）</div>
-<div class='warn'>本服務<b>沒有 import 富邦 SDK</b>，構造上無法送單。按「批准送出」目前只寫入帳本，
-供 A→C 升級的同意率統計。真正接上送單要等 PRD §8 下單層完成、四層鎖打開——那會是另一次明確的交辦。</div>
-{''.join(cards) or "<div class='sub'>這一天沒有候選。</div>"}"""
+def _esc(v: Any) -> str:
+    return html.escape(str(v if v is not None else ""))
 
 
-# ------------------------------------------------------------- 資金水位
+# ------------------------------------------------------------ 待批准卡
 
-def render_capital(day: str) -> str:
+def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
+    iid = c["intent_id"]
+    blk = c.get("verdict") == "blocked"
+    px, lot = c.get("price") or 0, c.get("lot", 1) or 1
+    sh, rate = c.get("shares", 2000), c.get("rate", 0.2025)
+    eq, cap = c.get("equity", 1_748_587), c.get("lot_cap", 1)
+    mg = px * sh * rate * lot
+    hits = "".join(f"<li class='hit'>{_esc(x)}</li>" for x in c.get("hits", []))
+    bon = "".join(f"<li class='bonus'>{_esc(x)}</li>" for x in c.get("bonus", []))
+    rk = "".join(f"<li class='risk'>{_esc(x)}</li>" for x in c.get("risks", []))
+
+    if dec:
+        e = dec.get("edited") or {}
+        chg = "．".join(f"{k} 改成 {v}" for k, v in e.items() if k != "note")
+        note = e.get("note", "")
+        lab = "已批准" if dec["decision"] == "approve" else f"已略過（{dec.get('skip_reason') or '未填'}）"
+        extra = (f"<span class='t'>{_esc(chg)}</span>" if chg else "") + \
+                (f"<span class='t'>備註：{_esc(note)}</span>" if note else "")
+        body = (f"<div class='btns'><span class='vd {'a' if dec['decision']=='approve' else 's'}'>"
+                f"{_esc(lab)}</span>{extra}<span class='t'>{_esc(dec.get('decided_at',''))[:19]}</span></div>")
+    else:
+        opts = "".join(f"<option>{_esc(r)}</option>" for r in SKIP_REASONS)
+        body = f"""<div class='ed'>
+ <label><span>倉別·方向</span><b>{_esc(c.get('action'))}</b></label>
+ <label><span>委託價格（可改）</span><input class='f-px' type='number' step='any' value='{px}' oninput='mg(this)'></label>
+ <label><span>口數（可改，上限 {cap}）</span><input class='f-lot' type='number' min='1' max='20' value='{lot}' oninput='mg(this)'></label>
+ <label><span>使用保證金（{rate*100:.2f}%）</span><b class='f-mg'>{_n(mg)}</b></label>
+ <label><span>佔權益</span><b class='f-leg'>{100*mg/eq:.1f}%</b></label>
+</div>
+<div class='t f-warn' style='color:#f0c674'></div>
+<div class='t'>{_esc(c.get('price_note'))}</div>
+<ul>{hits}{bon}{rk}</ul>
+<input class='note f-note' placeholder='理由／備註（可補你自己的判斷，會一起存進帳本）'>
+<div class='btns'><button onclick="agdec('{iid}','approve',this)">批准（記錄）</button>
+<select class='f-sr'>{opts}</select>
+<button class='sk' onclick="agdec('{iid}','skip',this)">略過</button></div>"""
+
+    return f"""<div class='card{' done' if dec else ''}{' blk' if blk else ''}'
+ data-sh='{sh}' data-rate='{rate}' data-eq='{eq}' data-cap='{cap}' data-px0='{px}' data-lot0='{lot}'>
+ <div class='hd'><span class='nm'>{_esc(c.get('uname'))}
+  <span class='t'>{_esc(c.get('symbol'))}</span>
+  <span class='tag{' c' if blk else ''}'>{_esc(c.get('action'))}</span></span>
+  <span class='t'>{_esc(c.get('time'))}</span></div>
+ {body}</div>"""
+
+
+# ------------------------------------------------------------ 資金水位圖
+
+def _capital() -> str:
     rows = _j("capital_legs.json") or []
     if not rows:
-        return "<h1>資金水位</h1><div class='sub'>還沒有資料。</div>"
+        return "<div class='sub'>還沒有資金水位資料。</div>"
     days = sorted({r["day"] for r in rows})
-    W, H, PL, PT, PB = 940, 300, 42, 14, 34
+    W, H, PL, PT, PB = 1040, 250, 40, 12, 30
     n = len(rows)
-    xs = lambda i: PL + (W - PL - 10) * i / max(1, n - 1)  # noqa: E731
+    xs = lambda i: PL + (W - PL - 10) * i / max(1, n - 1)   # noqa: E731
     ys = lambda v: PT + (H - PT - PB) * (1 - max(0, min(100, v)) / 100)  # noqa: E731
-    series = [("持倉保證金", "持倉", "#8fd19e"), ("未成交委託單保證金", "掛單", "#8ab4f8"),
-              ("現金", "現金", "#f0c674")]
-    paths = []
-    for lab, key, col in series:
-        pts = " ".join(f"{xs(i):.1f},{ys(r[key]):.1f}" for i, r in enumerate(rows))
-        paths.append(f"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='1.8'/>")
-    grid = "".join(f"<line x1='{PL}' y1='{ys(v):.1f}' x2='{W-10}' y2='{ys(v):.1f}' "
-                   f"stroke='#232b33' stroke-width='1'/>"
-                   f"<text x='{PL-6}' y='{ys(v)+3.5:.1f}' fill='#6b7682' font-size='10' "
+    ser = [("持倉保證金", "持倉", "#8fd19e"), ("未成交委託單", "掛單", "#8ab4f8"), ("現金", "現金", "#f0c674")]
+    lines = "".join(f"<polyline points='{' '.join(f'{xs(i):.1f},{ys(r[k]):.1f}' for i, r in enumerate(rows))}'"
+                    f" fill='none' stroke='{c}' stroke-width='1.7'/>" for _, k, c in ser)
+    grid = "".join(f"<line x1='{PL}' y1='{ys(v):.1f}' x2='{W-10}' y2='{ys(v):.1f}' stroke='#232b33'/>"
+                   f"<text x='{PL-5}' y='{ys(v)+3.5:.1f}' fill='#6b7682' font-size='10' "
                    f"text-anchor='end'>{v}%</text>" for v in (0, 25, 50, 75, 100))
-    tgt = (f"<rect x='{PL}' y='{ys(50):.1f}' width='{W-PL-10}' height='{ys(16.7)-ys(50):.1f}' "
-           f"fill='#2b6cb0' opacity='.10'/>"
-           f"<line x1='{PL}' y1='{ys(33.3):.1f}' x2='{W-10}' y2='{ys(33.3):.1f}' "
-           f"stroke='#2b6cb0' stroke-width='1' stroke-dasharray='4 3'/>")
-    seps = []
-    for d in days[1:]:
-        i = next(k for k, r in enumerate(rows) if r["day"] == d)
-        seps.append(f"<line x1='{xs(i):.1f}' y1='{PT}' x2='{xs(i):.1f}' y2='{H-PB}' "
-                    f"stroke='#39434d' stroke-width='1'/>")
-    labs = []
+    band = (f"<rect x='{PL}' y='{ys(50):.1f}' width='{W-PL-10}' height='{ys(16.7)-ys(50):.1f}' "
+            f"fill='#2b6cb0' opacity='.09'/><line x1='{PL}' y1='{ys(33.3):.1f}' x2='{W-10}' "
+            f"y2='{ys(33.3):.1f}' stroke='#2b6cb0' stroke-dasharray='4 3'/>")
+    seps = labs = ""
     for d in days:
         idx = [k for k, r in enumerate(rows) if r["day"] == d]
-        labs.append(f"<text x='{(xs(idx[0])+xs(idx[-1]))/2:.1f}' y='{H-PB+16}' fill='#8b97a4' "
-                    f"font-size='10' text-anchor='middle'>{d[5:]}</text>")
-    lg = "".join(f"<span><i style='background:{c}'></i>{l}</span>" for l, _, c in series)
-    tbl = ["<table><tr><th>日期</th><th>持倉中位</th><th>掛單中位</th><th>現金中位</th>"
-           "<th>持倉最高</th><th>現金最低</th></tr>"]
-    for d in days:
-        g = [r for r in rows if r["day"] == d]
-        med = lambda k: sorted(x[k] for x in g)[len(g) // 2]  # noqa: E731
-        tbl.append(f"<tr><td>{d}</td><td>{med('持倉'):.1f}%</td><td>{med('掛單'):.1f}%</td>"
-                   f"<td>{med('現金'):.1f}%</td><td>{max(x['持倉'] for x in g):.1f}%</td>"
-                   f"<td class='{_cls(min(x['現金'] for x in g)-20)}'>{min(x['現金'] for x in g):.1f}%</td></tr>")
-    tbl.append("</table>")
-    allm = lambda k: sorted(r[k] for r in rows)[n // 2]  # noqa: E731
-    return f"""<h1>資金水位 · 三腿消長</h1>
-<div class='sub'>每 5 分鐘一點，共 {n} 個時點 / {len(days)} 天。保證金用台灣期交所公告的
-<b>原始保證金率</b>（級距 1/2/3 = 13.5%/16.2%/20.25%，另有 21.6%〜40.5%），不是固定 13.5%。
-平倉委託不佔保證金（平倉是釋放），所以只有新倉委託算進「掛單」腿。</div>
-<div class='kpi'>
- <div><b class='{_cls(allm('持倉')-16.7)}'>{allm('持倉'):.1f}%</b><span>持倉保證金 中位</span></div>
- <div><b>{allm('掛單'):.1f}%</b><span>委託單保證金 中位</span></div>
- <div><b>{allm('現金'):.1f}%</b><span>現金 中位</span></div>
+        if d != days[0]:
+            seps += f"<line x1='{xs(idx[0]):.1f}' y1='{PT}' x2='{xs(idx[0]):.1f}' y2='{H-PB}' stroke='#39434d'/>"
+        labs += (f"<text x='{(xs(idx[0])+xs(idx[-1]))/2:.1f}' y='{H-PB+15}' fill='#8b97a4' "
+                 f"font-size='10' text-anchor='middle'>{d[5:]}</text>")
+    med = lambda k, g: sorted(x[k] for x in g)[len(g) // 2]  # noqa: E731
+    tb = "".join(f"<tr><td>{d}</td><td>{med('持倉',[r for r in rows if r['day']==d]):.1f}%</td>"
+                 f"<td>{med('掛單',[r for r in rows if r['day']==d]):.1f}%</td>"
+                 f"<td>{med('現金',[r for r in rows if r['day']==d]):.1f}%</td>"
+                 f"<td>{max(r['持倉'] for r in rows if r['day']==d):.1f}%</td>"
+                 f"<td>{min(r['現金'] for r in rows if r['day']==d):.1f}%</td></tr>" for d in days)
+    lg = "".join(f"<span><i style='background:{c}'></i>{lab}</span>" for lab, _, c in ser)
+    return f"""<div class='kpi'>
+ <div><b class='{_c(med('持倉',rows)-16.7)}'>{med('持倉',rows):.1f}%</b><span>持倉保證金 中位</span></div>
+ <div><b>{med('掛單',rows):.1f}%</b><span>委託單保證金 中位</span></div>
+ <div><b>{med('現金',rows):.1f}%</b><span>現金 中位</span></div>
  <div><b>{max(r['持倉']+r['掛單'] for r in rows):.1f}%</b><span>持倉+掛單 最高</span></div>
- <div><b>84.1%</b><span>風控上限 147萬／權益</span></div>
-</div>
-<div class='lg'>{lg}<span style='color:#6b7682'>虛線 = 1/3 目標；藍帶 = ±50% 相對容忍區（16.7–50%）</span></div>
-<svg viewBox='0 0 {W} {H}' width='{W}' height='{H}'>{grid}{tgt}{''.join(seps)}{''.join(paths)}{''.join(labs)}</svg>
-<h2>分日水位</h2>{''.join(tbl)}
-<div class='sub'>不變量：<b>持倉腿從來沒有「偏高」過</b>，只會偏低。三分法的瓶頸不是檔數不夠，
-是新倉成交率只有 48%——這跟「提高周轉率」是同一件事。</div>"""
+ <div><b>84.1%</b><span>風控上限 147萬</span></div></div>
+<div class='lg'>{lg}<span class='dim'>虛線=1/3 目標；藍帶=±50% 相對容忍（16.7–50%）</span></div>
+<svg viewBox='0 0 {W} {H}'>{grid}{band}{seps}{lines}{labs}</svg>
+<table><tr><th>日期</th><th>持倉中位</th><th>掛單中位</th><th>現金中位</th><th>持倉最高</th><th>現金最低</th></tr>{tb}</table>
+<div class='sub'>保證金用台灣期交所公告的<b>原始保證金率</b>（級距1/2/3 = 13.5/16.2/20.25%，另有 21.6–40.5%），
+不是固定 13.5%。平倉委託不佔保證金（平倉是釋放），只有新倉算進掛單腿。
+<b>不變量：持倉腿從沒「偏高」過，只會偏低</b> —— 瓶頸是新倉成交率只有 48%。</div>"""
 
 
-# ------------------------------------------------------------- 批准紀錄
+# ------------------------------------------------------------ 主頁
 
-def render_approvals(day: str) -> str:
+def render_agent_page(day: str) -> str:
+    cs = load_candidates(day)
+    ds = load_decisions(day)
+    okc = [c for c in cs if c.get("verdict") != "blocked"]
+    pend = [c for c in okc if c["intent_id"] not in ds]
+    cards = "".join(_card(c, ds.get(c["intent_id"]))
+                    for c in sorted(cs, key=lambda x: (x.get("verdict") == "blocked", x.get("time", ""))))
     days = sorted({p.name[11:21] for p in _data_dir().glob("candidates_*.jsonl")})
-    tot = okn = 0
-    rows = []
+    sel = "".join(f"<option{' selected' if d == day else ''}>{d}</option>" for d in days)
+
+    # 批准紀錄（全期）
+    ar, tot, apr = [], 0, 0
     for d in days:
-        cs = {c["intent_id"]: c for c in load_candidates(d)}
-        for iid, dec in load_decisions(d).items():
-            c = cs.get(iid, {})
-            a = dec["decision"] == "approve"
-            tot += 1; okn += a
-            rows.append((d, c.get("time", ""), c.get("uname", "?"), c.get("action", ""),
-                         c.get("price"), c.get("margin"), a, dec.get("skip_reason", ""),
-                         dec.get("decided_at", "")))
-    rows.sort(key=lambda r: (r[0], r[1]))
-    body = "".join(
-        f"<tr><td>{r[0][5:]} {html.escape(str(r[1]))}</td><td>{html.escape(str(r[2]))}</td>"
-        f"<td>{html.escape(str(r[3]))}</td><td>{_n(r[4],1)}</td><td>{_n(r[5])}</td>"
-        f"<td class='{'pos' if r[6] else 'neg'}'>{'批准' if r[6] else '略過'}</td>"
-        f"<td style='text-align:left'>{html.escape(str(r[7]))}</td>"
-        f"<td class='dim'>{html.escape(str(r[8])[:19])}</td></tr>" for r in rows)
-    rate = f"{100*okn/tot:.1f}%" if tot else "—"
-    return f"""<h1>批准紀錄</h1>
-<div class='sub'>這份帳本是 A→C 升級的唯一依據：連續 20 個交易日同意率 ≥80% 才談全自動。
-「略過」一定要選原因，因為不同意的那幾筆才是改進規則的材料。</div>
-<div class='kpi'><div><b>{tot}</b><span>已裁決</span></div>
-<div><b class='pos'>{okn}</b><span>批准</span></div>
-<div><b class='neg'>{tot-okn}</b><span>略過</span></div>
-<div><b>{rate}</b><span>同意率（門檻 80%）</span></div></div>
-<table><tr><th>時間</th><th>標的</th><th>倉別</th><th>價格</th><th>保證金</th><th>裁決</th>
-<th style='text-align:left'>略過原因</th><th>裁決時間</th></tr>{body or "<tr><td colspan=8 class='dim'>還沒有裁決紀錄</td></tr>"}</table>"""
+        m = {c["intent_id"]: c for c in load_candidates(d)}
+        for iid, de in load_decisions(d).items():
+            c = m.get(iid, {})
+            a = de["decision"] == "approve"
+            tot += 1; apr += a
+            e = de.get("edited") or {}
+            ar.append((d, c.get("time", ""), c.get("uname", "?"), c.get("action", ""),
+                       e.get("price", c.get("price")), e.get("lot", c.get("lot")),
+                       a, de.get("skip_reason", ""),
+                       "．".join(f"{k}→{v}" for k, v in e.items() if k != "note") or
+                       (e.get("note", "") and "有備註") or ""))
+    ar.sort()
+    arb = "".join(f"<tr><td>{r[0][5:]} {_esc(r[1])}</td><td>{_esc(r[2])}</td><td>{_esc(r[3])}</td>"
+                  f"<td>{_n(r[4],1)}</td><td>{_n(r[5])}</td>"
+                  f"<td class='{'pos' if r[6] else 'neg'}'>{'批准' if r[6] else '略過'}</td>"
+                  f"<td style='text-align:left'>{_esc(r[7])}</td>"
+                  f"<td style='text-align:left' class='dim'>{_esc(r[8])}</td></tr>" for r in ar)
 
-
-# ------------------------------------------------------------- 成交紀錄
-
-def render_fills(day: str) -> str:
+    # 成交紀錄
     f = _j("fills.json") or []
-    if not f:
-        return "<h1>成交紀錄</h1><div class='sub'>還沒有資料。</div>"
-    pnl = sum(x["net_pnl"] for x in f)
-    w = sum(1 for x in f if x["win"])
-    mg = sum(x["保證金"] for x in f)
-    body = "".join(
-        f"<tr><td>{html.escape(str(x['uname']))} <span class='dim'>{x['root']}</span></td>"
+    fb = "".join(
+        f"<tr><td>{_esc(x['uname'])} <span class='dim'>{x['root']}</span></td>"
         f"<td>{'多' if x['direction']=='long' else '空'}</td><td>{x['qty']}</td>"
         f"<td class='dim'>{x['entry_ts'][5:16]}</td><td>{_n(x['entry_px'],1)}</td>"
         f"<td class='dim'>{x['exit_ts'][5:16]}</td><td>{_n(x['exit_px'],1)}</td>"
         f"<td class='dim'>{x['rate%']}%</td><td>{_n(x['保證金'])}</td>"
-        f"<td class='{_cls(x['net_pnl'])}'>{_n(x['net_pnl'],0,True)}</td>"
-        f"<td class='{_cls(x['net_ret_pct'])}'>{_n(x['net_ret_pct'],2,True)}%</td>"
-        f"<td class='{_cls(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
+        f"<td class='{_c(x['net_pnl'])}'>{_n(x['net_pnl'],0,True)}</td>"
+        f"<td class='{_c(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
         f"<td class='dim'>{_n(x['hold_min'],0)}</td></tr>"
         for x in sorted(f, key=lambda y: y["entry_ts"]))
-    return f"""<h1>成交紀錄</h1>
-<div class='sub'>完整進出 {len(f)} 趟（2026-09-29 起）。「報酬÷保證金」才是真正的資金效率——
-每口保證金從 3 萬到 24 萬差 8 倍，用報酬率看會嚴重誤判哪一趟做得好。</div>
-<div class='kpi'><div><b class='{_cls(pnl)}'>{_n(pnl,0,True)}</b><span>淨損益</span></div>
-<div><b>{100*w/len(f):.1f}%</b><span>勝率 {w}/{len(f)}</span></div>
-<div><b>{_n(mg)}</b><span>累計動用保證金</span></div>
-<div><b class='{_cls(pnl)}'>{100*pnl/mg:+.2f}%</b><span>保證金報酬率</span></div>
-<div><b>{sorted(x['hold_min'] for x in f)[len(f)//2]:.0f} 分</b><span>中位持有</span></div></div>
+    pnl = sum(x["net_pnl"] for x in f) if f else 0
+    mgs = sum(x["保證金"] for x in f) if f else 1
+    wn = sum(1 for x in f if x["win"])
+
+    return f"""<style>{CSS}</style><div class='ag'>
+<div class='hd'><h2 style='border:0;margin:4px 0'>🤖 操盤手代理人 · 階段 A</h2>
+<span class='t'>資料日
+<select onchange="location.href='/agent?day='+this.value">{sel}</select></span></div>
+
+<div class='warn'>這個頁面<b>不會送出任何委託單</b>。<code>src/clone_agent/</code> 沒有 import 富邦 SDK，
+構造上無法下單（有測試掃描釘住）。按「批准」只是把你的裁決＋你改過的價格口數寫進帳本，
+供 A→C 升級的同意率統計。真正接上送單要等 PRD §8 下單層完成、四層鎖打開。</div>
+
+<h2>① 待批准 · {day}　<span class='t'>規則通過 {len(okc)} 筆（{len(pend)} 筆待裁決）·
+被規則擋下 {len(cs)-len(okc)} 筆（排在後面供覆盤）</span></h2>
+<div class='sub'>價格、口數、理由都可以改 —— 代理人給建議，你改完再送。
+改動會一起存進帳本：<b>你改了什麼，比你按了什麼更有價值</b>，那是規則離你腦袋還差多遠的量尺。</div>
+{cards or "<div class='sub'>這一天沒有候選。</div>"}
+
+<h2>② 資金水位 · 三腿消長</h2>
+{_capital()}
+
+<h2>③ 成交紀錄　<span class='t'>{len(f)} 趟（2026-09-29 起）</span></h2>
+<div class='kpi'><div><b class='{_c(pnl)}'>{_n(pnl,0,True)}</b><span>淨損益</span></div>
+<div><b>{100*wn/len(f) if f else 0:.1f}%</b><span>勝率 {wn}/{len(f)}</span></div>
+<div><b>{_n(mgs)}</b><span>累計動用保證金</span></div>
+<div><b class='{_c(pnl)}'>{100*pnl/mgs:+.2f}%</b><span>保證金報酬率</span></div></div>
+<div class='sub'>「報酬÷保證金」才是真正的資金效率——每口保證金從 3 萬到 24 萬差 8 倍，
+用報酬率看會誤判哪一趟做得好。</div>
 <table><tr><th>標的</th><th>方向</th><th>口</th><th>進場</th><th>進場價</th><th>出場</th><th>出場價</th>
-<th>保證金率</th><th>保證金</th><th>淨損益</th><th>報酬%</th><th>÷保證金%</th><th>分鐘</th></tr>{body}</table>"""
+<th>保證金率</th><th>保證金</th><th>淨損益</th><th>÷保證金%</th><th>分鐘</th></tr>{fb}</table>
+
+<h2>④ 批准紀錄　<span class='t'>已裁決 {tot} · 批准 {apr} ·
+同意率 {f'{100*apr/tot:.1f}%' if tot else '—'}（升級門檻：連續 20 日 ≥80%）</span></h2>
+<table><tr><th>時間</th><th>標的</th><th>倉別</th><th>價格</th><th>口</th><th>裁決</th>
+<th style='text-align:left'>略過原因</th><th style='text-align:left'>我改了什麼</th></tr>
+{arb or "<tr><td colspan=8 class='dim'>還沒有裁決紀錄</td></tr>"}</table>
+
+<details><summary>⑤ 量化規格（點開）</summary>{_spec()}</details>
+<script>const AGDAY={json.dumps(day)};{JS}</script></div>"""
 
 
-# ------------------------------------------------------------- 量化規格
-
-def render_spec(day: str) -> str:
+def _spec() -> str:
     s = _j("spec.json") or {}
     g = s.get
-    def T(rows): return "".join(f"<tr><td style='text-align:left'>{a}</td><td>{b}</td></tr>" for a, b in rows)
-    return f"""<h1>代理人量化規格</h1>
-<div class='sub'>研究窗 <b>{g('研究窗')}</b>。所有數字都來自這四天逐單重放，不是意見。
+    T = lambda rows: "".join(f"<tr><td style='text-align:left'>{a}</td>"  # noqa: E731
+                            f"<td style='text-align:left'>{b}</td></tr>" for a, b in rows)
+    mrs = g("保證金率分級") or {}
+    return f"""<div class='sub'>研究窗 <b>{g('研究窗')}</b>。數字全來自四天逐單重放。
 完整規格與否證清單在 <code>docs/trader-clone-agent-prd.md</code>。</div>
-
-<div class='kpi'>
-<div><b>{g('手動委託')}</b><span>手動委託</span></div>
-<div><b>{g('完整來回')}</b><span>完整來回</span></div>
-<div><b class='pos'>{_n(g('淨損益'),0,True)}</b><span>淨損益</span></div>
-<div><b>{g('勝率%')}%</b><span>勝率</span></div>
-<div><b>{_n(g('帳戶權益'))}</b><span>帳戶權益</span></div>
-<div><b>{_n(g('風控上限'))}</b><span>風控上限</span></div>
-</div>
-
-<h2>一、進場（§3）</h2>
-<table><tr><th style='text-align:left'>規則</th><th>數字</th></tr>{T([
- ("H1 時間窗", "09:00–13:40（四天 100% 落在此窗；夜盤 0%、盤後 2.1%）"),
- ("H2 方向", "只做多。條件反向只出平倉卡，不出開空卡"),
- ("H3 契約", "大型（2000 股）。小型費率是大型的 10.6 倍"),
- ("H4 低量門檻", f"5 分成交額 ≥ {_n(g('低量門檻萬'))} 萬（擋掉 {g('低量門檻擋掉%')}% 的委託，只放棄 {g('低量門檻放棄獲利%')}% 的獲利）"),
- ("R2 高信心", "5 分成交額前 25% ∧ 大戶佔比30分前 25% → 覆蓋 39.4%、lift 3.82x"),
+<h2>進場</h2><table>{T([
+ ("H1 時間窗", "09:00–13:40（四天 100% 落在此窗）"),
+ ("H2 方向", "只做多；條件反向只出平倉卡"),
+ ("H3 契約", "大型（2000 股）—— 小型費率是大型的 10.6 倍"),
+ ("H4 低量門檻", f"5 分成交額 ≥ {_n(g('低量門檻萬'))} 萬（擋掉 {g('低量門檻擋掉%')}%、只放棄 {g('低量門檻放棄獲利%')}% 獲利）"),
+ ("R2 高信心", "5分成交額前 25% ∧ 大戶佔比30分前 25% → 覆蓋 39.4%、lift 3.82x"),
  ("R6 候選池", "兩者都前 50% → 覆蓋 51.5%、lift 2.31x"),
- ("最強殘差因子", "大戶減散戶（5 分），控住兩個量能項後 logit z=+2.75、p=0.006"),
- ("尺度排序", "5 分 ≳ 30 分 ≫ 當日（隨機基準對照賽馬）"),
- ("族群內挑誰", "當日漲幅最低（命中 60%、p=0.0006）＋ 20MA 乖離最小（50%、p=0.0022），兩者獨立可相加"),
- ("上升趨勢定義", "20MA 自己在往上爬，不管股價在不在均線上"),
- ("加分項", "42 檔加總差額正在變大（正的變多或負的變少都算）＋ 距差額當日低點 ≤30 分（1.99x、p=0.012）"),
+ ("最強殘差因子", "大戶減散戶（5分），控住量能後 logit z=+2.75、p=0.006"),
+ ("族群內挑誰", "漲幅最低（60%、p=0.0006）＋ 20MA 乖離最小（50%、p=0.0022），兩者獨立"),
+ ("加分項", "42檔加總差額正在變大 ＋ 距差額當日低點 ≤30 分（1.99x、p=0.012）"),
 ])}</table>
-
-<h2>二、掛價（§4）—— 進場該快、出場該慢</h2>
-<table><tr><th style='text-align:left'>側</th><th>政策</th></tr>{T([
- ("進場", f"吃對手價 EV {g('進場EV_吃對手價%')}% ≳ 掛買一 {g('進場EV_掛買一%')}% &gt; 實際 {g('進場EV_實際%')}%。預設掛委買一，R2 高信心直接吃對手價"),
- ("進場禁區", "掛價 −6~−3 檔成交率只有 11%（前面排隊中位 31 張、五檔總量 222 張）"),
+<h2>掛價 —— 進場該快、出場該慢</h2><table>{T([
+ ("進場", f"吃對手價 EV {g('進場EV_吃對手價%')}% ≳ 掛買一 {g('進場EV_掛買一%')}% &gt; 實際 {g('進場EV_實際%')}%"),
+ ("進場禁區", "−6~−3 檔成交率只有 11%（前面排隊中位 31 張）"),
  ("五檔成交率", "委買一 88% / 二 33% / 三 0% / 四 50% / 五 0% / 簿外 47%"),
- ("出場 賣出平倉", f"掛對手價上方 +4 檔。n={g('出場_賣出平倉_n')}、平均 +{g('出場_賣出平倉_平均檔')} 檔、14/16 勝、<b>最差 +0.0 無負值</b>"),
- ("出場 回補空單", f"吃對手價。平均 {g('出場_回補_平均檔')} 檔、3 筆中 2 筆負、最差 −13 檔"),
- ("出場護欄", "不能用距離（任何距離門檻都讓總帳變差）。用「方向反轉放棄排隊」＋ 13:25 強制平倉"),
- ("成交率對照", f"新倉 {g('新倉成交率%')}%（中位等待 {g('新倉中位等待分')} 分） vs 平倉 {g('平倉成交率%')}%（{g('平倉中位等待分')} 分）"),
+ ("出場 賣出平倉", f"掛對手價上方 +4 檔。n={g('出場_賣出平倉_n')}、平均 +{g('出場_賣出平倉_平均檔')} 檔、<b>最差 +0.0 無負值</b>"),
+ ("出場 回補空單", f"吃對手價。平均 {g('出場_回補_平均檔')} 檔、3 筆中 2 筆負"),
+ ("出場護欄", "不能用距離（任何距離門檻都讓總帳變差）；用方向反轉放棄排隊 ＋ 13:25 強制平倉"),
 ])}</table>
-
-<h2>三、風控（§5）—— 用保證金不用檔數</h2>
-<table><tr><th style='text-align:left'>項目</th><th>數字</th></tr>{T([
- ("保證金率", "台灣期交所原始保證金率分級：" + " / ".join(f"{k} {v}%" for k, v in (g('保證金率分級') or {}).items() if k != "其他") + f"；另有 {(g('保證金率分級') or {}).get('其他')}"),
- ("每口保證金範圍", f"最低 {(g('每口保證金範圍') or {}).get('最低')}；最高 {(g('每口保證金範圍') or {}).get('最高')} → 差 8 倍，所以檔數是無效的風控單位"),
- ("三分法", f"持倉／掛單／現金 各 1/3，容忍 ±50% 相對（16.7–50%）。實測中位 {(g('三水位中位') or {}).get('持倉')}% / {(g('三水位中位') or {}).get('掛單')}% / {(g('三水位中位') or {}).get('現金')}%"),
- ("硬閘", f"持倉+掛單 ≤ {_n(g('風控上限'))}（= 權益的 84.1%）。四天有 4 筆委託踩線被靜默退單"),
- ("價格帶口數上限", "400–600 元 4 檔各 1 口 ／ 600–900 元 3 檔 ／ 900–1200 元 2 檔 ／ &gt;1200 元 1 檔"),
- ("同時持倉", "最多 4 檔（人類注意力上限；實測中位 4、最多 5）"),
- ("最大浮動虧損", "做多 30 分 2.2 檔 ／ 60 分 2.8 檔 ／ 收盤 3.5 檔（最壞 −2.08%）。做空 7.6 檔（最壞 −5.74%）"),
+<h2>風控 —— 用保證金不用檔數</h2><table>{T([
+ ("保證金率", " / ".join(f"{k} {v}%" for k, v in mrs.items() if k != "其他") + f"；另有 {mrs.get('其他')}"),
+ ("每口範圍", f"{(g('每口保證金範圍') or {}).get('最低')} ～ {(g('每口保證金範圍') or {}).get('最高')} → 差 8 倍，所以檔數是無效的風控單位"),
+ ("三分法", "持倉目標 35–50%（下限 20%）／掛單上限 35%／現金硬下限 20%"),
+ ("硬閘", f"持倉+掛單 ≤ {_n(g('風控上限'))}（權益的 84.1%）—— 四天有 4 筆委託踩線被靜默退單"),
+ ("價格帶口數", "400–600 元 4 檔各 1 口／600–900 元 3 檔／900–1200 元 2 檔／&gt;1200 元 1 檔"),
+ ("最大浮動虧損", "做多 30分 2.2 檔／60分 2.8／收盤 3.5（最壞 −2.08%）；做空 7.6 檔"),
+ ("標準差地板", f"σ={g('單筆報酬標準差%')}%、族群內 ρ={g('族群內殘差相關')} → 地板 σ√ρ={g('變異數地板%')}%。10 筆同族群只降 17%"),
 ])}</table>
-
-<h2>四、標準差的真相（§5.4）</h2>
-<div class='sub'>單筆報酬標準差 σ = {g('單筆報酬標準差%')}%，族群內殘差相關 ρ = {g('族群內殘差相關')}。
-組合標準差 = σ·√((1+(n−1)ρ)/n)，<b>變異數地板 = σ√ρ = {g('變異數地板%')}%</b>，n 加到無限大也降不過。</div>
-<table><tr><th>同時 n 筆</th><th>ρ=0 獨立</th><th>ρ=0.134 跨族群</th><th>ρ=0.659 同族群</th></tr>
-<tr><td>4</td><td>1.077%</td><td>1.275%</td><td class='neg'>1.858%</td></tr>
-<tr><td>10</td><td>0.681%</td><td>1.011%</td><td class='neg'>1.793%</td></tr></table>
-<div class='sub'>10 筆同族群只降 17%（跨族群降 53%、完全獨立降 68%）。
-<b>已裁決：集中在 1–2 個風口族群、接受 1.75% 地板、靠勝率撐。</b></div>
-
-<h2>五、明確不得使用（已證偽）</h2>
-<ul>
-<li class='risk'>小型個股期貨 —— 來回費率 9.0bp vs 大型 0.8bp</li>
-<li class='risk'>檔數當風控單位 —— 每口保證金差 8 倍</li>
-<li class='risk'>加總差額「絕對水位 &gt;0」當濾網 —— 會擋掉 9/29 全部 9 筆賺錢長單</li>
-<li class='risk'>加總差額「30 分增量 &gt;0」當濾網 —— 86.8% 的分鐘都成立，零資訊量</li>
-<li class='risk'>ATR% 盤整壓縮 —— 44 筆全部 ≤0.30 百分位，零判別力</li>
-<li class='risk'>散戶類欄位進分數 —— FDR 全部不顯著（散買參與30m q=0.979）</li>
-<li class='risk'>「伺服器代工」族群 —— 殘差相關 0.075 ≈ 全市場基準，假族群</li>
-<li class='risk'>傳統均線多空排列當濾網 —— 控分數後 R² 增量 &lt;0.7pp</li>
-<li class='risk'>固定 % 門檻定義盤中事件 —— 49% 事件會擠在開盤 15 分，一律先正規化</li>
-</ul>
-
-<h2>六、階段 A → C 的升級門檻（§1）</h2>
-<ol>
-<li>階段 A 連續 <b>20 個交易日</b>，代理人建議與你實際裁決的同意率 <b>≥80%</b></li>
-<li>不同意的那些逐筆覆盤完畢，原因已回寫規則或標記為「人類判斷優先」</li>
-<li>影子帳（代理人全自動 vs 你實際）淨值差距 ≤0.5%，且無單筆 &gt;−3% 的失控單</li>
-<li>下單層通過 PRD §8 的八項 fail-closed 測試</li>
-</ol>
-<div class='warn'>尚未決定的大問題：代理人比人更敏感之後，應該是<b>門檻比人更高</b>（寧缺勿濫）
-還是<b>比人更早掛單</b>（吃排隊優勢）？這題要等階段 A 累積足夠候選才有資料回答，現在不猜。</div>"""
+<h2>明確不得使用（已證偽）</h2><ul>
+<li class='risk'>小型個股期貨（來回費率 9.0bp vs 大型 0.8bp）</li>
+<li class='risk'>檔數當風控單位（每口保證金差 8 倍）</li>
+<li class='risk'>加總差額「絕對水位 &gt;0」當濾網（會擋掉 9/29 全部 9 筆賺錢長單）</li>
+<li class='risk'>加總差額「30 分增量 &gt;0」當濾網（86.8% 的分鐘都成立，零資訊量）</li>
+<li class='risk'>ATR% 盤整壓縮（44 筆全部 ≤0.30 百分位）</li>
+<li class='risk'>散戶類欄位進分數（FDR 全部不顯著）</li>
+<li class='risk'>「伺服器代工」族群（殘差相關 0.075 ≈ 全市場基準）</li>
+<li class='risk'>傳統均線多空排列當濾網（控分數後 R² 增量 &lt;0.7pp）</li>
+<li class='risk'>固定 % 門檻定義盤中事件（49% 事件擠在開盤 15 分）</li></ul>
+<h2>階段 A → C 升級門檻</h2><ol>
+<li>連續 <b>20 個交易日</b>，代理人建議與你裁決的同意率 <b>≥80%</b></li>
+<li>不同意的逐筆覆盤完畢，原因回寫規則或標記「人類判斷優先」</li>
+<li>影子帳淨值差距 ≤0.5%，無單筆 &gt;−3% 的失控單</li>
+<li>下單層通過 PRD §8 八項 fail-closed 測試</li></ol>"""

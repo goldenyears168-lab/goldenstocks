@@ -46,7 +46,7 @@ from biglot.utils import _par30, _b30n, _b5n  # noqa: E402
 from biglot.reference_loaders import (  # noqa: E402
     _load_daily_trend, _load_key_line, _load_atr_state, _load_prev_close_db,
     _load_hist, _load_etf981_holdings, _load_pe_peer, _load_vixtwn, _load_xq_style,
-    _load_holder_big800,
+    _load_holder_big800, _load_prev2d_totals,
 )
 from biglot.paper_trading import _paper_blank  # noqa: E402
 
@@ -58,15 +58,34 @@ GAP_JUMP_AMT = 500_000_000
 GAP_SECONDS = 90
 REFRESH_SEC = 1   # 背景 ingest(~2ms)+render(~23ms) 每秒約 2.5% 單核,client 抓 ~66KB/s,mini 綽綽有餘
 
+SMFI_ACTIVE_FROM = "11:45"
+# 散戶背離(SMFI)「現在」這一側從幾點開始顯示/計分:2026-10-04 jack 交辦「我想要的是盤中
+# 當中可以用到的欄位,隨時取得,即時變化較好」——原本設計是收盤後才看的隔夜預測因子(尾盤
+# 12:55-13:20 vs 開盤),只在收盤前25分鐘才有值。改成近30分滾動窗(跟5分/30分欄位同算法)
+# 後,用 scripts/research/retail_smfi_rolling30_timing.py 對47個5分鐘收尾點逐一重新驗證
+# (次日跳空/次日收對收兩個標的,IS 2026-03-02~06-30、OOS 07-01~09-01,日聚類 Spearman IC),
+# 結果:11:45 之前 KEEP/UNDECIDED/DROP 來回跳動(雜訊圍繞臨界值,不可信),11:45 起兩個標的
+# 才連續站穩(OOS |t|>=2 一路到收盤,12:05~12:30最強 t+2.9~+4.6)。11:45 之前沒有證據支持
+# 有訊號,不是技術限制,所以就顯示 None(—),不硬擠一個雜訊數字假裝盤中隨時都能看。
+
 CALIB = DATA_DIR / "cache" / "pit_universe_tick" / "_live_calib.json"
 _cal = json.load(open(CALIB))
 NAMES = {r["sid"]: r["name"] for r in _cal["universe"]}
+# 監測名單角色(config/biglot_roles.json):參考列=只看族群脈絡,不進排名/標籤/淨分/旗標;獨=原地標注
+from biglot_roles import load_roles as _load_roles  # noqa: E402
+ROLES = _load_roles()
+REF_POOL = {r["sid"]: r for r in ROLES.get("reference_in_pool", []) if r["sid"] in NAMES}
+REF_EXTRA = {r["sid"]: r for r in ROLES.get("reference_off_pool", [])}      # 池外:不在 calib/NAMES,走獨立訂閱
+REF_SIDS = set(REF_POOL) | set(REF_EXTRA)
+REF_NAMES = {sid: (NAMES.get(sid) or r["name"]) for sid, r in {**REF_POOL, **REF_EXTRA}.items()}
+INDEP = {r["sid"]: r for r in ROLES.get("independent", []) if r["sid"] in NAMES}
+GROUP_STRENGTH = ROLES.get("group_strength", {})
 CATS = {r["sid"]: r["cat"][:4] for r in _cal["universe"]}
 # 細分產業(45檔手動策展,較 cat 粗類細一層,方便看族群輪動);查無則退回 CATS
 SUBCAT = {
     "2492": "被動-MLCC", "6173": "被動-陶瓷", "2327": "被動-MLCC", "3042": "石英元件",
     "6182": "矽晶圓", "6488": "矽晶圓", "3532": "矽晶圓", "5483": "矽晶圓",
-    "2303": "晶圓代工", "6770": "晶圓代工",
+    "2303": "晶圓代工", "6770": "記憶體-利基代工",
     "2449": "封測", "6147": "封測-驅動IC", "3374": "封測-晶圓級",
     "2408": "DRAM記憶體", "2344": "記憶體-利基", "2337": "記憶體-NOR", "3006": "記憶體IC設計",
     "3443": "IC設計-ASIC",
@@ -138,15 +157,15 @@ HOLD_BAD = ("散戶虛拉", "噴後過熱", "急跌·竭盡∧散戶接")
 # 產業交界畫粗線(band)。查無的股票排最後。
 _CLUSTERS = [
     ("矽晶圓", ["6182", "6488", "5483", "3532"]),
-    ("晶圓代工", ["2303", "6770"]),
-    ("記憶體", ["2344", "2408", "2337", "3006"]),
+    ("晶圓代工", ["2303"]),
+    ("記憶體", ["2344", "2408", "2337", "3006", "6770"]),
     ("封測", ["2449", "6147", "3374"]),
     ("半導體測試設備/探針卡", ["6223"]),
     ("化合物半導體", ["3105", "2455"]),
     ("被動元件", ["2327", "2492", "6173", "3042"]),
     ("CCL銅箔基板", ["6213", "6274", "2383"]),
-    ("ABF載板", ["8046", "3189", "3037"]),
-    ("PCB/載板", ["2368", "4958", "8039", "8358"]),
+    ("ABF載板", ["8046", "3189", "3037", "4958"]),
+    ("PCB/載板", ["2368", "8039", "8358"]),
     ("散熱", ["3324", "3653", "3017"]),
     ("光學", ["3406", "3008"]),
     ("光通訊/光模組", ["3081"]),
@@ -156,8 +175,10 @@ _CLUSTERS = [
     ("塑化", ["1303"]),
     ("航運", ["2615", "2609"]),
 ]
-SORT_INDEX = {sid: i for i, sid in enumerate(s for _n, sids in _CLUSTERS for s in sids)}
-CLUSTER_OF = {sid: name for name, sids in _CLUSTERS for sid in sids}
+# 池外參考列接在各自族群末尾(池內參考列 6770/4958 已直接寫在上面各組末尾)
+_CLUSTERS_ALL = [(n, sids + [s for s, r in REF_EXTRA.items() if r["group"] == n]) for n, sids in _CLUSTERS]
+SORT_INDEX = {sid: i for i, sid in enumerate(s for _n, sids in _CLUSTERS_ALL for s in sids)}
+CLUSTER_OF = {sid: name for name, sids in _CLUSTERS_ALL for sid in sids}
 try:
     _rb = json.load(open(DATA_DIR.parent / "cache" / "biglot_live_watch" / "_rvol_base.json"))
     RVOL_BASE = _rb.get("base", {})
@@ -255,52 +276,212 @@ def _disposal_badge() -> str:
 
 _DISPOSAL_BADGE = _disposal_badge()
 
-SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
-<title>大戶{len(NAMES)}檔儀表板</title><style>
-body{{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',monospace;margin:8px}}
-h3{{margin:4px 0;font-size:14px}}
-.meta{{color:#8b949e;font-size:11px;margin-bottom:6px}}
-table{{border-collapse:collapse;width:100%;white-space:nowrap}}
-th,td{{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}}
-th{{position:sticky;top:0;z-index:2;background:#161b22;color:#8b949e;font-weight:600;cursor:pointer}}
-th[data-nosort]{{cursor:default}}
-th.g5{{color:#e3b341}} th.g30{{color:#79c0ff}} th.gd{{color:#d2a8ff}}
-td.nm{{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}}
-th.stk{{position:sticky;left:0;z-index:3}}
+# 表格互動共用 JS(排序＋凍結欄):即時頁(下面 SHELL)跟歷史回放滑桿頁(biglot/timeline_snap.py)
+# 都要用同一套——兩邊都是「#app 裡塞一張 render() 產出的表格,內容會被整包替換」這個共同
+# 前提(即時頁每秒被 /frag 換掉;回放頁拖滑桿時被 /timelinefrag 換掉),邏輯完全一樣,差別只在
+# 「誰、多久換一次 #app 的內容」。2026-10-04 jack 交辦歷史回放滑桿時抽出來成獨立常數,
+# 避免回放頁另外複製一份、以後排序規則改了要改兩個地方(技術債)。純字串、不是 f-string,
+# 大括號不用跳脫;SHELL 用 f-string 插入這個常數時只需要單層 {{TABLE_INTERACT_JS}}。
+# ⚠ 不含 <script> 外殼:SHELL 本來就有自己開著的 <script> 區塊,插入點在裡面,包了
+# 外殼反而會變成巢狀 <script>(不合法,瀏覽器會提早在第一個 </script> 截斷);
+# 要獨立成頁的呼叫端(biglot/timeline_snap.py)自己在插入處包 <script>...</script>。
+TABLE_INTERACT_JS = """
+// 表格點標題排序(仿 XQ 全球贏家;2026-09-29 jack 交辦)。#app 的內容可能被整包 innerHTML 換掉,
+// 不能像靜態頁那樣原地重排 <tr> 就結束——排序「狀態」記在這個閉包的變數裡(不受換頁影響),
+// 事件也代理到 #app(不會被砍掉)而不是綁在每次都重生的 <th> 上。呼叫端每次把新內容塞進
+// #app 後呼叫 window.__applySort() 用同一份狀態重新排一次,體感上是「持續排序」。
+// 排序鍵一律讀 <td data-sort> 屬性(渲染時後端已經把原始數值塞進去,不猜畫面文字格式)。
+// 第一欄「股票」不是排序鍵——現行順序本來就是固定產業鏈排序,點它=清空排序狀態、回到這個預設順序。
+(function(){
+  const app=document.getElementById('app');
+  let sortIdx=null, sortDir=1;   // sortIdx=null → 預設順序(產業鏈);sortDir 1=大到小 −1=小到大
+  function applySort(){
+    const table=app.querySelector('table'); if(!table) return;
+    const theadRow=table.querySelector('thead tr'); const tbody=table.querySelector('tbody');
+    if(!theadRow||!tbody) return;
+    table.classList.toggle('sorted', sortIdx!==null);
+    const ths=[...theadRow.children];
+    if(sortIdx!==null && ths[sortIdx]){
+      ths[sortIdx].insertAdjacentHTML('beforeend', ' <span class="sortind">'+(sortDir>0?'▼':'▲')+'</span>');
+    }
+    if(sortIdx===null) return;   // 預設順序:吃伺服器算好的原始列順序,不重排
+    const rows=[...tbody.children];
+    rows.sort((a,b)=>{
+      const av=a.children[sortIdx]&&a.children[sortIdx].dataset.sort, bv=b.children[sortIdx]&&b.children[sortIdx].dataset.sort;
+      const an=(av===undefined||av==='')?null:parseFloat(av), bn=(bv===undefined||bv==='')?null:parseFloat(bv);
+      if(an===null&&bn===null) return 0;
+      if(an===null) return 1; if(bn===null) return -1;   // 缺值一律排最後,不受方向影響
+      return sortDir*(bn-an);
+    });
+    rows.forEach(r=>tbody.appendChild(r));
+  }
+  app.addEventListener('click', e=>{
+    const th=e.target.closest&&e.target.closest('thead th'); if(!th) return;
+    const theadRow=th.closest('tr'); const ths=[...theadRow.children]; const i=ths.indexOf(th);
+    if(i===0){sortIdx=null; sortDir=1; applySort(); return;}   // 股票欄=回到預設順序
+    if(th.dataset.nosort!==undefined) return;   // 不可排序欄(期貨買/賣·順逆大盤·訊號·隱形大戶·筆記)
+    if(sortIdx===i){sortDir=-sortDir;} else {sortIdx=i; sortDir=1;}   // 同欄再點=反向,首次點=大到小
+    applySort();
+  });
+  window.__applySort=applySort;
+})();
+// 凍結欄(2026-09-29 jack 交辦):股票/現價/期貨買/期貨賣共四欄橫向捲動時固定不動。股票欄(th.stk/td.nm)
+// 本來就是 left:0 寫死不用量;後三欄(class=frz)的實際寬度會隨內容變動(價格位數/委託量字數),
+// 沒辦法在 CSS 寫死 left,每次 #app 換完內容後量測一次目前的真實寬度、疊加計算 left 寫進 style。
+(function(){
+  const app=document.getElementById('app');
+  function applyFreeze(){
+    const table=app.querySelector('table'); if(!table) return;
+    const stkTh=table.querySelector('th.stk'); if(!stkTh) return;
+    let left=stkTh.getBoundingClientRect().width;
+    const offsets=[];
+    table.querySelectorAll('thead th.frz').forEach(th=>{
+      th.style.left=left+'px'; offsets.push(left); left+=th.getBoundingClientRect().width;
+    });
+    table.querySelectorAll('tbody tr').forEach(tr=>{
+      const tds=tr.querySelectorAll('td.frz');
+      tds.forEach((td,i)=>{ if(offsets[i]!==undefined) td.style.left=offsets[i]+'px'; });
+    });
+  }
+  window.__applyFreeze=applyFreeze;
+})();
+"""
+
+# 主表格排版(2026-10-04 jack 交辦「排版跟字體盡量跟原本的儀表板一樣」「能不能共用排版的
+# css,我想要程式碼簡單化」):在這之前,SHELL(即時頁)跟 ARC_CSS(歷史回放/個股詳情/歷史
+# 分頁)各自維護一份高度相似但不完全一樣的表格 CSS——字體大小(12px vs 13px)、儲存格留白
+# (7px vs 9px)、邊界margin(8px vs 10px)微妙不同,而且各自都漏了對方有的規則:SHELL 沒有
+# `.rolechip`/`tr.refrow`/`tr.indep`/`tr.hold` 這組參考列/獨立標注/持倉列的底色樣式(雖然
+# render_main.py 確實有輸出這些 class,等於即時頁這幾個視覺提示長期沒有樣式、不是故意的);
+# ARC_CSS 沒有 `.cat`(族群分類小字)/`th.g5`/`th.g30`/`th.gd`(5分/30分/全日欄位色碼)/
+# `.warnv`/`.sigup`/`.sigdn`/`.rk1`/`.rkN`/`.lup`/`.ldn` 這些訊號與排版強調色,導致歷史回放
+# 頁看起來「族群分類沒有分開、沒那麼好讀」——使用者在 2026-10-04 的截圖比對就是在講這個。
+# 不是兩邊各修一次,而是直接把全部表格相關規則合併成這一份共用常數,字體/留白/margin 一律
+# 採用 SHELL(現役儀表板)的數值當基準,SHELL 跟 ARC_CSS 都改吃這一份,不再各自維護副本。
+TABLE_CSS = """
+body{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',monospace;margin:8px}
+h3{margin:4px 0;font-size:14px}
+a{color:#79c0ff;text-decoration:none}
+.meta{color:#8b949e;font-size:11px;margin-bottom:6px}
+table{border-collapse:collapse;width:100%;white-space:nowrap}
+th,td{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}
+th{position:sticky;top:0;z-index:2;background:#161b22;color:#8b949e;font-weight:600;cursor:pointer;user-select:none}
+th[data-nosort]{cursor:default}
+th.g5{color:#e3b341} th.g30{color:#79c0ff} th.gd{color:#d2a8ff}
+th .sub{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1px}
+td.nm{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}
+th.stk{position:sticky;left:0;top:0;z-index:3}
 /* 凍結欄(2026-09-29 jack 交辦):現價/期貨買/期貨賣跟股票欄一起固定,橫向捲動不跟著跑。
    left 是動態的(每欄實際渲染寬度不同),交給 JS 量測後寫進 style.left,這裡只定 position/z-index/背景。 */
-th.frz{{position:sticky;z-index:3}}
-td.frz{{position:sticky;z-index:1;background:#0d1117}}
-tbody tr td{{border-bottom:1px solid #1c2128}}
-tbody tr.band td{{border-bottom:2px solid #454d57}}
-table.sorted tbody tr.band td{{border-bottom:1px solid #1c2128}}  /* 手動排序時產業交界粗線失去意義,隱藏 */
-.sortind{{color:#58a6ff}}
-tbody tr:hover{{background:#1c2635 !important}}
-tbody tr:hover td.nm{{background:#1c2635 !important}}
-tbody tr:hover td.frz{{background:#1c2635 !important}}
-.cat{{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}}
-th .sub{{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1px}}
-.up{{color:#ff7b72}} .dn{{color:#3fb950}} .dim{{color:#484f58}}
-.lup{{background:#d1242f;color:#fff;font-weight:700}}  /* 漲停:紅底白字(台股慣例) */
-.ldn{{background:#1a7f37;color:#fff;font-weight:700}}  /* 跌停:綠底白字 */
-.nlup{{color:#ff7b72;font-weight:700}} .nldn{{color:#3fb950;font-weight:700}}  /* 接近漲/跌停:粗紅/綠 */
-.hit{{text-decoration:underline;text-decoration-color:#f2cc60;text-decoration-thickness:2px;text-underline-offset:3px}}  /* 期貨成交價落在的那一邊:黃底線 */
-.warnv{{color:#e3b341}} .wall{{color:#d2a8ff;font-weight:700}}
-.vr0{{color:#58a6ff}} .vr1{{color:#e3b341;font-weight:700}} .vr2{{color:#f0883e;font-weight:700}}
-.flag{{color:#e3b341;text-align:left}}
-.sigdn{{color:#3fb950}} .sigup{{color:#ff7b72}}
-.rk1{{color:#ffd700;font-weight:700}} .rkN{{color:#3fb950;font-weight:700}}
-.flagbar{{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}}
+th.frz{position:sticky;z-index:3}
+td.frz{position:sticky;z-index:1;background:#0d1117}
+tbody tr td{border-bottom:1px solid #1c2128}
+tbody tr.band td{border-bottom:2px solid #454d57}
+table.sorted tbody tr.band td{border-bottom:1px solid #1c2128}
+.sortind{color:#58a6ff}
+tbody tr:hover{background:#1c2635 !important}
+tbody tr:hover td.nm{background:#1c2635 !important}
+tbody tr:hover td.frz{background:#1c2635 !important}
+.cat{color:#8b949e;font-weight:400;font-size:10px;margin-left:4px}
+/* 池內參考列/獨立標注列底色+角色徽章(2026-09-29;SHELL過去漏接這組規則,一併補上) */
+tr.refrow td{background:#12161c}tr.refrow td.nm{box-shadow:inset 3px 0 #30363d}
+tr.indep td{opacity:.72}tr.indep td.nm{box-shadow:inset 3px 0 #7d6a1a}
+.rolechip{display:inline-block;font-size:9px;line-height:1.3;padding:0 3px;margin-left:3px;border-radius:2px;vertical-align:1px}
+.rref{background:#30363d;color:#c9d1d9}.rind{background:#4d3f0f;color:#e3b341}
+tr.hold td{box-shadow:inset 3px 0 #58a6ff}tr.hexit td{background:#3a3300 !important}tr.hbad td{background:#4a1a1a !important}tr.hexp td{background:#2a2a2a !important}
+.top5{color:#ffd700;font-weight:700}.bot5{color:#3fb950;font-weight:700}
+.up{color:#ff7b72} .dn{color:#3fb950} .dim{color:#484f58} .nx{background:#161b22}
+.lup{background:#d1242f;color:#fff;font-weight:700}
+.ldn{background:#1a7f37;color:#fff;font-weight:700}
+.nlup{color:#ff7b72;font-weight:700} .nldn{color:#3fb950;font-weight:700}
+.hit{text-decoration:underline;text-decoration-color:#f2cc60;text-decoration-thickness:2px;text-underline-offset:3px}
+.warnv{color:#e3b341} .wall{color:#d2a8ff;font-weight:700}
+.vr0{color:#58a6ff} .vr1{color:#e3b341;font-weight:700} .vr2{color:#f0883e;font-weight:700}
+.flag{color:#e3b341;text-align:left}
+.sigdn{color:#3fb950} .sigup{color:#ff7b72}
+.rk1{color:#ffd700;font-weight:700} .rkN{color:#3fb950;font-weight:700}
+.flagbar{padding:3px 8px;font-size:12px;background:#161b22;margin-bottom:4px}
+"""
+
+# 台指近月／期貨留倉損益兩個面板的 CSS,即時頁(SHELL)跟歷史回放頁(timeline_snap.py)共用
+# ——2026-10-04 jack 交辦「恢復台指期的圖形」「整個操盤體驗才會一致」時抽出來,理由跟
+# TABLE_INTERACT_JS 一樣:兩邊都要畫同一種圖、同一套 hover 互動,不要維護兩份。
+TX_PNL_CSS = """
+.txp{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6;position:relative}
+#txtip{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}
+#txline{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}
+#pnltip{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}
+#pnlline{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}
+"""
+
+# 面板本體(進頁第一時間的佔位內容,真正資料靠 #txsrc/#pnlsrc 隱藏 div 搬過來——見下面
+# CHART_HOVER_JS 旁的搬運邏輯與 render_main.py::_tx_panel/_pnl_panel)。純靜態標記,
+# 不含任何 Python 變數,兩邊逐字共用。
+TX_PNL_PANELS_HTML = (
+    "<div id=\"pnlp\" class=\"txp\"><div id=\"pnlbody\"><span class=\"dim\">期貨留倉損益 載入中…</span></div>"
+    "<div id=\"pnltip\"></div><div id=\"pnlline\"></div></div>\n"
+    "<div id=\"txp\" class=\"txp\"><div id=\"txbody\"><span class=\"dim\">台指近月 載入中…</span></div>"
+    "<div id=\"txtip\"></div><div id=\"txline\"></div></div>"
+)
+
+# 兩個圖的 hover 互動(找最近取樣點、顯示 tooltip+垂直線)。含 {len(NAMES)} 這一處真正的
+# Python 插值,所以是 f-string,其餘花括號都是 JS 字面量、單層就好(不是嵌在 SHELL 的
+# f-string 裡面,不用雙重跳脫)。
+CHART_HOVER_JS = f"""
+// 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
+(function(){{
+  const box=document.getElementById('txp'), tip=document.getElementById('txtip'), ln=document.getElementById('txline');
+  box.addEventListener('mousemove',e=>{{
+    const svg=box.querySelector('svg'); if(!svg){{tip.style.display='none';ln.style.display='none';return;}}
+    if(!svg._pts){{try{{svg._pts=JSON.parse(svg.dataset.pts);}}catch(_){{return;}}}}
+    const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect(), x=e.clientX-r.left;
+    if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
+    let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
+    if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
+    let _th='台指 '+best[2]+'  <b>'+best[3].toLocaleString()+'</b>';
+    if(best[4]!=null){{_th+='<br>{len(NAMES)}檔大戶 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span>'
+      +' · 散戶 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span>'
+      +' · 差 '+best[6].toLocaleString()+'萬';}}
+    tip.innerHTML=_th; tip.style.display='block';
+    const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
+    tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=(r.top-b.top+best[1]-38)+'px';
+  }});
+  box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
+}})();
+// 期貨留倉損益圖 hover(2026-09-29 jack 交辦):找最近取樣點,顯示時間+5檔各自損益+合計。
+// data-pts 每點=[x, 時間, 合計, 檔1損益, 檔2損益, ...],data-names=5檔名稱陣列(跟 data-pts 順序對應)。
+(function(){{
+  const box=document.getElementById('pnlp'), tip=document.getElementById('pnltip'), ln=document.getElementById('pnlline');
+  box.addEventListener('mousemove',e=>{{
+    const svg=box.querySelector('svg'); if(!svg){{tip.style.display='none';ln.style.display='none';return;}}
+    if(!svg._pts){{try{{svg._pts=JSON.parse(svg.dataset.pts); svg._names=JSON.parse(svg.dataset.names);}}catch(_){{return;}}}}
+    const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect(), x=e.clientX-r.left;
+    if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
+    let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
+    if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
+    let _th=best[1]+' 合計 <b>'+(best[2]!=null?best[2].toLocaleString():'—')+'</b>';
+    const names=svg._names||[];
+    for(let k=0;k<names.length;k++){{
+      const v=best[3+k];
+      _th+='<br>'+names[k]+' '+(v!=null?v.toLocaleString():'—');
+    }}
+    tip.innerHTML=_th; tip.style.display='block';
+    const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
+    tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=Math.max(0,e.clientY-b.top-70)+'px';
+  }});
+  box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
+}})();
+"""
+
+SHELL = f"""<!DOCTYPE html><html lang="zh-Hant"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=0.6">
+<title>大戶{len(NAMES) - len(REF_POOL) - len(INDEP)}核心儀表板</title><style>
+{TABLE_CSS}
 .disc{{font-size:11px;line-height:1.7;background:#161b22;border:1px solid #30363d;
 border-radius:6px;padding:6px 10px;margin-bottom:6px}}
 .disc b{{color:#e6edf3}} .disc .ok{{color:#3fb950}} .disc .no{{color:#ff7b72}}
 .disc summary{{cursor:pointer;color:#8b949e;font-weight:600}}
-.txp{{flex:0 0 700px;width:700px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;line-height:1.6;position:relative}}
-#txtip{{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}}
-#txline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
-#pnltip{{position:absolute;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:5;white-space:nowrap}}
-#pnlline{{position:absolute;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:4}}
+{TX_PNL_CSS}
 #notes{{outline:none;min-height:60px;padding:2px 4px;border-radius:4px}} #notes:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}}
 #nstat{{color:#8b949e;font-size:10px;text-align:right}}
 td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
@@ -308,19 +489,20 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 .ne:focus{{max-width:none;white-space:normal;overflow:visible}}
 .ne:focus{{background:#0d1117;box-shadow:0 0 0 1px #388bfd}} .nt{{margin-left:4px;font-size:9px;white-space:nowrap}}
 </style></head><body>
-<h3>大戶-散戶 {len(NAMES)}檔即時儀表板
+<h3>大戶-散戶 {len(NAMES) - len(REF_POOL) - len(INDEP)}檔核心即時儀表板<span style="font-size:11px;color:#8b949e;margin-left:6px">＋{len(INDEP)}檔獨立標注＋{len(REF_SIDS)}檔參考列(不進排名/標籤/淨分)</span>
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
 <a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
 <a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
-<a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ 36檔圖形總覽</a>
-<a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 每30分快照</a>
-<a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a></h3>
+<a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ {len(NAMES)}檔圖形總覽</a>
+<a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 歷史回放</a>
+<a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a>
+<a href="/agent" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#102a1c;border:1px solid #2f6b40;color:#8fd19e;text-decoration:none">🤖 操盤手代理人</a>
+<a href="#" onclick="this.href='http://'+location.hostname+':8780/messages/'" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#12263f;border:1px solid #2f6feb;color:#79c0ff;text-decoration:none">📨 訊息</a></h3>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
 <div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
 <div id="nstat">未編輯</div></details>
-<div id="pnlp" class="txp"><div id="pnlbody"><span class="dim">期貨留倉損益 載入中…</span></div><div id="pnltip"></div><div id="pnlline"></div></div>
-<div id="txp" class="txp"><div id="txbody"><span class="dim">台指近月 載入中…</span></div><div id="txtip"></div><div id="txline"></div></div>
+{TX_PNL_PANELS_HTML}
 </div>
 <div id="app"><div class="meta">載入中…</div></div>
 <script>
@@ -378,108 +560,8 @@ tick();
   app.addEventListener('click',async e=>{{const b=e.target.closest&&e.target.closest('.hbtn'); if(!b) return; e.preventDefault(); e.stopPropagation();
     try{{await fetch('/hold',{{method:'POST',body:JSON.stringify({{sid:b.dataset.sid,action:b.dataset.action}})}});}}catch(_){{}}}});
 }})();
-// 表格點標題排序(仿 XQ 全球贏家;2026-09-29 jack 交辦)。#app 每秒被整包 innerHTML 換掉,
-// 不能像靜態頁那樣原地重排 <tr> 就結束——排序「狀態」記在這個閉包的變數裡(不受換頁影響),
-// 事件也代理到 #app(不會被砍掉)而不是綁在每次都重生的 <th> 上。每次 tick() 換完內容後
-// 呼叫 window.__applySort() 用同一份狀態重新排一次,體感上是「持續排序」。
-// 排序鍵一律讀 <td data-sort> 屬性(渲染時後端已經把原始數值塞進去,不猜畫面文字格式)。
-// 第一欄「股票」不是排序鍵——現行順序本來就是固定產業鏈排序,點它=清空排序狀態、回到這個預設順序。
-(function(){{
-  const app=document.getElementById('app');
-  let sortIdx=null, sortDir=1;   // sortIdx=null → 預設順序(產業鏈);sortDir 1=大到小 −1=小到大
-  function applySort(){{
-    const table=app.querySelector('table'); if(!table) return;
-    const theadRow=table.querySelector('thead tr'); const tbody=table.querySelector('tbody');
-    if(!theadRow||!tbody) return;
-    table.classList.toggle('sorted', sortIdx!==null);
-    const ths=[...theadRow.children];
-    if(sortIdx!==null && ths[sortIdx]){{
-      ths[sortIdx].insertAdjacentHTML('beforeend', ' <span class="sortind">'+(sortDir>0?'▼':'▲')+'</span>');
-    }}
-    if(sortIdx===null) return;   // 預設順序:吃伺服器算好的原始列順序,不重排
-    const rows=[...tbody.children];
-    rows.sort((a,b)=>{{
-      const av=a.children[sortIdx]&&a.children[sortIdx].dataset.sort, bv=b.children[sortIdx]&&b.children[sortIdx].dataset.sort;
-      const an=(av===undefined||av==='')?null:parseFloat(av), bn=(bv===undefined||bv==='')?null:parseFloat(bv);
-      if(an===null&&bn===null) return 0;
-      if(an===null) return 1; if(bn===null) return -1;   // 缺值一律排最後,不受方向影響
-      return sortDir*(bn-an);
-    }});
-    rows.forEach(r=>tbody.appendChild(r));
-  }}
-  app.addEventListener('click', e=>{{
-    const th=e.target.closest&&e.target.closest('thead th'); if(!th) return;
-    const theadRow=th.closest('tr'); const ths=[...theadRow.children]; const i=ths.indexOf(th);
-    if(i===0){{sortIdx=null; sortDir=1; applySort(); return;}}   // 股票欄=回到預設順序
-    if(th.dataset.nosort!==undefined) return;   // 不可排序欄(期貨買/賣·順逆大盤·訊號·隱形大戶·筆記)
-    if(sortIdx===i){{sortDir=-sortDir;}} else {{sortIdx=i; sortDir=1;}}   // 同欄再點=反向,首次點=大到小
-    applySort();
-  }});
-  window.__applySort=applySort;
-}})();
-// 凍結欄(2026-09-29 jack 交辦):股票/現價/期貨買/期貨賣共四欄橫向捲動時固定不動。股票欄(th.stk/td.nm)
-// 本來就是 left:0 寫死不用量;後三欄(class=frz)的實際寬度會隨內容變動(價格位數/委託量字數),
-// 沒辦法在 CSS 寫死 left,每次 #app 換完內容後量測一次目前的真實寬度、疊加計算 left 寫進 style。
-(function(){{
-  const app=document.getElementById('app');
-  function applyFreeze(){{
-    const table=app.querySelector('table'); if(!table) return;
-    const stkTh=table.querySelector('th.stk'); if(!stkTh) return;
-    let left=stkTh.getBoundingClientRect().width;
-    const offsets=[];
-    table.querySelectorAll('thead th.frz').forEach(th=>{{
-      th.style.left=left+'px'; offsets.push(left); left+=th.getBoundingClientRect().width;
-    }});
-    table.querySelectorAll('tbody tr').forEach(tr=>{{
-      const tds=tr.querySelectorAll('td.frz');
-      tds.forEach((td,i)=>{{ if(offsets[i]!==undefined) td.style.left=offsets[i]+'px'; }});
-    }});
-  }}
-  window.__applyFreeze=applyFreeze;
-}})();
-// 台指圖 hover:找最近取樣點,顯示 時間/價 + 垂直線(事件掛在容器上,svg 每秒被換掉也不用重綁)
-(function(){{
-  const box=document.getElementById('txp'), tip=document.getElementById('txtip'), ln=document.getElementById('txline');
-  box.addEventListener('mousemove',e=>{{
-    const svg=box.querySelector('svg'); if(!svg){{tip.style.display='none';ln.style.display='none';return;}}
-    if(!svg._pts){{try{{svg._pts=JSON.parse(svg.dataset.pts);}}catch(_){{return;}}}}
-    const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect(), x=e.clientX-r.left;
-    if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
-    let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
-    if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
-    let _th='台指 '+best[2]+'  <b>'+best[3].toLocaleString()+'</b>';
-    if(best[4]!=null){{_th+='<br>36檔大戶 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span>'
-      +' · 散戶 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span>'
-      +' · 差 '+best[6].toLocaleString()+'萬';}}
-    tip.innerHTML=_th; tip.style.display='block';
-    const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
-    tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=(r.top-b.top+best[1]-38)+'px';
-  }});
-  box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
-}})();
-// 期貨留倉損益圖 hover(2026-09-29 jack 交辦):找最近取樣點,顯示時間+5檔各自損益+合計。
-// data-pts 每點=[x, 時間, 合計, 檔1損益, 檔2損益, ...],data-names=5檔名稱陣列(跟 data-pts 順序對應)。
-(function(){{
-  const box=document.getElementById('pnlp'), tip=document.getElementById('pnltip'), ln=document.getElementById('pnlline');
-  box.addEventListener('mousemove',e=>{{
-    const svg=box.querySelector('svg'); if(!svg){{tip.style.display='none';ln.style.display='none';return;}}
-    if(!svg._pts){{try{{svg._pts=JSON.parse(svg.dataset.pts); svg._names=JSON.parse(svg.dataset.names);}}catch(_){{return;}}}}
-    const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect(), x=e.clientX-r.left;
-    if(x<0||x>r.width||e.clientY<r.top||e.clientY>r.bottom){{tip.style.display='none';ln.style.display='none';return;}}
-    let best=null,bd=1e9; for(const p of svg._pts){{const d=Math.abs(p[0]-x); if(d<bd){{bd=d;best=p;}}}}
-    if(!best||bd>12){{tip.style.display='none';ln.style.display='none';return;}}
-    let _th=best[1]+' 合計 <b>'+(best[2]!=null?best[2].toLocaleString():'—')+'</b>';
-    const names=svg._names||[];
-    for(let k=0;k<names.length;k++){{
-      const v=best[3+k];
-      _th+='<br>'+names[k]+' '+(v!=null?v.toLocaleString():'—');
-    }}
-    tip.innerHTML=_th; tip.style.display='block';
-    const lx=r.left-b.left+best[0]; ln.style.left=lx+'px'; ln.style.top=(r.top-b.top)+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
-    tip.style.left=Math.min(lx+8,b.width-190)+'px'; tip.style.top=Math.max(0,e.clientY-b.top-70)+'px';
-  }});
-  box.addEventListener('mouseleave',()=>{{tip.style.display='none';ln.style.display='none';}});
-}})();
+{TABLE_INTERACT_JS}
+{CHART_HOVER_JS}
 </script>
 </body></html>"""
 
@@ -626,15 +708,7 @@ except Exception:  # noqa: BLE001
     PAPER = _paper_blank(None)
 
 
-ARC_CSS = """<style>body{background:#0d1117;color:#c9d1d9;font:13px/1.6 -apple-system,'PingFang TC',monospace;margin:10px}
-tr.hold td{box-shadow:inset 3px 0 #58a6ff}tr.hexit td{background:#3a3300 !important}tr.hbad td{background:#4a1a1a !important}tr.hexp td{background:#2a2a2a !important}
-table{border-collapse:collapse;white-space:nowrap}th,td{padding:2px 9px;text-align:right;border-bottom:1px solid #21262d}
-th{background:#161b22;color:#8b949e;position:sticky;top:0;z-index:2;cursor:pointer;user-select:none}
-td.nm{position:sticky;left:0;background:#0d1117;text-align:left;font-weight:600;color:#e6edf3;z-index:1}
-th.stk{position:sticky;left:0;top:0;z-index:3}
-.top5{color:#ffd700;font-weight:700}.bot5{color:#3fb950;font-weight:700}
-.up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.nx{background:#161b22}
-a{color:#79c0ff;text-decoration:none}h3{margin:4px 0}.meta{color:#8b949e;font-size:11px}</style>"""
+ARC_CSS = "<style>" + TABLE_CSS + TX_PNL_CSS + "</style>"
 
 
 SORT_JS = """<script>
@@ -679,24 +753,16 @@ _HELP_GROUPS = [
         ("日內%", "現價/今日開盤−1。盤中相對『開盤』的走勢,與對昨收互補。", "跳空開高後拉回:對昨收仍紅、日內%卻綠=開高走低。兩欄一起讀分辨跳空 vs 盤中動能。"),
         ("盤前試撮(共用欄)", "不另立欄:08:30~09:00 無成交時,試撮價塞進『價』欄、試撮跳空%塞『對昨收』,皆帶『試』上標;09:00開盤後自動轉為成交資料。(試撮買一/賣一改到個股詳情頁的五檔看)", "開盤前看試撮預判開盤;試撮價會被大單掛撤誘導,非確定開盤價。"),
         ("30分bps", "近30分窗價格報酬(1bps=0.01%)。主尺度。", "驗證格(噴後過熱/跌深接/勿追)判斷的價格軸。"),
-        ("順逆市", "個股30分方向 vs 市場方向(=全宇宙36檔等權30分報酬,即頂端『市場代理30分』)。順漲/順跌=同向;逆強=大盤跌它漲;逆弱=大盤漲它跌。門檻:個股|30分|≥20bps ∧ 市場|30分|≥5bps 兩邊都夠力才標,否則顯示—。", "市場是個股報酬最強控制變數——先看這格:順漲/順跌多是隨大盤,逆強/逆弱才有個股獨立alpha。"),
+        ("順逆市", "個股30分方向 vs 市場方向(=全宇宙42檔等權30分報酬,即頂端『市場代理30分』)。順漲/順跌=同向;逆強=大盤跌它漲;逆弱=大盤漲它跌。門檻:個股|30分|≥20bps ∧ 市場|30分|≥5bps 兩邊都夠力才標,否則顯示—。", "市場是個股報酬最強控制變數——先看這格:順漲/順跌多是隨大盤,逆強/逆弱才有個股獨立alpha。"),
         ("5分bps", "近5分窗價格報酬。最短尺度、雜訊最大。", "只作即時異動參考,別單獨下判斷。"),
         ("即時RS", "個股日內% − 宇宙日內%(百分點)。負(綠)=相對壓著(彈簧);＞+1(黃)=已彈開。", "隔夜挑股:壓著的彈簧優先。軟否決:日線弱∧已彈=毒格−31bps。"),
     ]),
-    ("大戶三尺度(單筆≥1000萬;全系統核心)", [
-        ("大戶淨額三尺度", "大戶=單筆成交≥1000萬;每筆按主動方向(價≥賣一→買、≤買一→賣)計正負,累加成淨額。單位一律=萬(5分/30分/全日)。5分/30分為每秒滾動窗;訊號標籤用完成5分桶版。", "三尺度=不同記憶長度的同一件事。"),
-        ("5分大戶", "最新完成5分窗的大戶淨額(單位萬)。最短窗、最即時。", "看『現在』誰在進出;易反覆,配30分看。"),
-        ("30分大戶", "近30分滾動窗大戶淨額(單位萬)。主尺度。", "驗證格的大戶軸。與價格軸(30分bps)交叉:跌×大戶買=跌深接。"),
-        ("全日大戶", "開盤一路累加至今的大戶淨額,收盤即全日最終值。單位=萬元(NT$),與 5分/30分 同尺。最重要。", "紅=整天淨買、綠=淨賣。÷成交金額=佔比%(隔夜排序主鍵)。三尺度並排看背離:短窗買∧全日仍賣=誘多/出貨。"),
-        ("權證5分 / 權證30分", "該標的底下的**活躍權證**(前一交易日成交額前 600 檔、對映到 36 檔標的;認購為主、認售稀少)近5分 / 近30分滾動窗。數字=認購/認售**成交額(活動量)**,單位萬——只代表多方/空方商品有多熱,**散戶倒認購也算認購成交**,不帶方向。小字=**簽號後多方占比**:每筆成交用當下買一/賣一判主動方(≥賣一=主動買、≤買一=主動賣、中間用tick rule),多方=主動買認購+主動賣認售、空方=主動賣認購+主動買認售,占比=多方÷(多方+空方)。**判斷字與顏色同一規則:≥60% 偏多(紅)、≤40% 偏空(綠)、40~60% 中性(灰);主動額 <10 萬標『量小』不判斷**(權證單價低,一筆 1 張常只有幾百元,<10 萬顯示一位小數)。資料源:富邦 ws 逐筆(2 連線×300 檔,單線上限 300),不用 MIS、不吃 REST 配額。", "⚠純描述性、**尚未回測**,不進訊號欄。**『權證做多』看小字占比與顏色,不看購/售活動量。**機制假說:散戶主動買認購→造市商賣認購並買現股避險(機械性買盤),可能與中實桶有交集;反面它也可能只是散戶追價放大鏡——方向待影子帳驗(『大戶5分≥3千萬∧散買%<5%』對照組每窗自動記錄權證欄位與5/30分/收盤結果)。"),
-        ("佔比%", "全日大戶淨額 ÷ 成交金額。", "隔夜今收→明開跳空最強預測(IC+0.097/t7.1)。中市值重殺看這欄不看絕對金額(旺矽絕對−5.8億進不了榜、佔比−11%才顯眼)。"),
-        ("全日散戶", "全日散戶(1張∧＜500萬)淨額(億)。", "散戶大買常是出貨對手方;參與過高(黃)=毒藥側。"),
-    ]),
-    ("散戶(1張∧＜500萬;買賣拆兩側)", [
-        ("散買30 / 散買%", "30分 / 5分窗散戶『買方』參與(散戶買額÷窗總額)。毒藥側。", "只買不賣格−11bps/t−4.9;≥5%標黃=散戶在追,留不到收盤。"),
-        ("散賣30 / 散賣%", "散戶『賣方』參與。投降側,無資訊(less bad)。", "散戶賣≠訊號;真正毒的是散戶買。"),
-        ("Δ參與30", "30分散戶總參與較前一窗的變化。", "跳升=散戶剛湧入(常見於急拉尾聲)。"),
-        ("5分散戶淨", "5分窗散戶淨額(萬)。", "最短窗散戶方向,雜訊大。"),
+    ("大戶/散戶四尺度(單筆≥1000萬;全系統核心,2026-10-02改版)", [
+        ("五欄並列的統一架構", "5分/30分/全日/近兩日(2026-10-03新增)四個時間尺度,**每個尺度都是同一組五欄**:大戶→散戶→權證→大戶−散戶→大戶佔比。大戶=單筆成交≥1000萬,每筆按主動方向(價≥賣一→買、≤買一→賣)計正負累加;散戶=1張且<500萬。淨額單位一律=萬。5分/30分為每秒滾動窗(訊號標籤仍用完成5分桶版判定);全日=開盤累加至今;近兩日=昨開盤累積到現在(昨天全天+今天至今)。", "三/四尺度並排看背離:短窗買∧全日仍賣=誘多/出貨;近兩日可以看出『今天的動作是延續昨天、還是今天才反過來』。"),
+        ("{尺度}大戶 / {尺度}散戶", "各尺度的大戶/散戶淨額(萬)。全日大戶是隔夜排序主鍵。", "紅=淨買、綠=淨賣。"),
+        ("權證5分 / 權證30分 / 權證全日 / 權證近兩日", "該標的底下的**活躍權證**(前一交易日成交額前 600 檔、對映到 42 檔標的;認購為主、認售稀少)各尺度滾動窗。數字=認購/認售**成交額(活動量)**,單位萬——只代表多方/空方商品有多熱,**散戶倒認購也算認購成交**,不帶方向。小字=**簽號後多方占比**:每筆成交用當下買一/賣一判主動方(≥賣一=主動買、≤買一=主動賣、中間用tick rule),多方=主動買認購+主動賣認售、空方=主動賣認購+主動買認售,占比=多方÷(多方+空方)。**判斷字與顏色同一規則:≥60% 偏多(紅)、≤40% 偏空(綠)、40~60% 中性(灰);主動額 <10 萬標『量小』不判斷**(權證單價低,一筆 1 張常只有幾百元,<10 萬顯示一位小數)。資料源:富邦 ws 逐筆(2 連線×300 檔,單線上限 300),不用 MIS、不吃 REST 配額。近兩日版=昨天收盤最後一次快照+今天至今累計。", "⚠純描述性、**尚未回測**,不進訊號欄。**『權證做多』看小字占比與顏色,不看購/售活動量。**機制假說:散戶主動買認購→造市商賣認購並買現股避險(機械性買盤),可能與中實桶有交集;反面它也可能只是散戶追價放大鏡——方向待影子帳驗。"),
+        ("{尺度}大戶−散戶", "(大戶淨−散戶淨)÷該尺度成交額=大戶佔比−散戶佔比(%),A/B/C/D分類:A大戶買·散戶未主導/B大戶帶散戶/C大戶倒·散戶接刀/D大戶賣·散戶不接。**只有全日版經127日面板驗證過具體bps數字**(隔夜A組+124/B組+75/C組−11/D組−13);5分/30分/近兩日版只借用同一套分類門檻(±10%/±15%)跟邏輯,未分別驗證過,不附bps數字,純描述性參考,不進分數。", "127日檢定:此欄控大戶佔比後無獨立方向資訊,排序仍用大戶佔比本身。"),
+        ("{尺度}大戶佔比", "大戶淨額÷該尺度成交額(%)。全日版是隔夜排序主鍵(IC+0.097/t7.1)。5分/30分/近兩日版純描述性參考,不進分數。", "隔夜今收→明開跳空最強預測。中市值重殺看這欄不看絕對金額(旺矽絕對−5.8億進不了榜、佔比−11%才顯眼)。"),
     ]),
     ("隔夜挑股因子(收盤導向,13:20後看)", [
         ("壓縮1h", "(現價 ÷ 最近12個5分桶均價 − 1)×100%,即現價相對『近1小時均價』的位置。需≥8桶才算,13:20後最有意義。負(綠)=壓在均價下=彈簧;正=已彈高。", "隔夜挑股鍵。壓縮∧站上5日線隔夜+93.8/t5.10;噴高(正值大)=甜蜜點流失。是『蓄勢隔夜』紅籤條件之一。"),
@@ -726,6 +792,13 @@ _HELP_GROUPS = [
 # 故同一頁 today=即時、d=過去日=回放,完全共用。per-(sid,日) 增量快取,重繪只讀新增 bytes。
 DETAIL: dict = {}
 DETAIL_LOCK = threading.Lock()   # _stock_series 增量讀非執行緒安全:loop(總覽/AGG)與 HTTP(詳情頁)同時呼叫會把同一段 bytes 解析兩次(2026-09-24 大戶累計 2 倍事故)
+
+#: 近兩日尺度(2026-10-03):前一交易日全天 大戶/散戶/成交額/權證購售簽號 總額,sid -> {...}。
+#: 換日時整包重新賦值(biglot/ingest.py),屬於第 18 個「危險全域」,規則同 DAILY_TREND 等。
+#: 必須放在 DETAIL/DETAIL_LOCK 定義「之後」——_load_prev2d_totals() 內部會呼叫 _stock_series()
+#: 重放前一交易日封存,該函式需要 biglot_dashboard.DETAIL_LOCK 已經存在,放在模組前段會在
+#: import 當下直接炸掉(partially initialized module 錯誤,2026-10-03 實測踩到)。
+PREV2D: dict = _load_prev2d_totals()
 
 
 if __name__ == "__main__":

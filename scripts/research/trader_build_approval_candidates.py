@@ -148,7 +148,9 @@ def main() -> int:
         c = {"day": r.day, "time": str(r.submit)[:8], "symbol": f"{root}({sp.get('name', root)})",
              "uname": r.uname, "side": "Buy", "action": "新倉買進" if r.side == "Buy" else "新倉賣出",
              "price": px, "price_note": pnote, "lot": min(1, cap),
-             "margin": round(per), "leg_note": f"每口 {per:,.0f} 元 = 權益的 {100*per/EQUITY:.1f}%；價格帶上限 {cap} 口",
+             "margin": round(per), "shares": int(sh), "rate": round(rate, 4), "lot_cap": cap,
+             "equity": EQUITY,
+             "leg_note": f"每口 {per:,.0f} 元 = 權益的 {100*per/EQUITY:.1f}%；價格帶上限 {cap} 口",
              "hits": hits, "bonus": bonus, "risks": risks,
              "verdict": "blocked" if blocked else "ok",
              "actual_status": int(r.status) if pd.notna(r.status) else None}
