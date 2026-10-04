@@ -49,6 +49,12 @@ from stock_db import DATA_DIR
 
 _FILLS_CACHE: dict = {"t": 0.0, "fills": [], "entry_ts_map": {}}
 _FILLS_TTL = 900.0  # 15 分鐘,jack 2026-09-29 定案
+#: 查詢失敗後的退讓秒數（negative caching）。沒有這個的話,失敗時 `t` 不更新 →
+#: 下一輪 render 又會重試 → 盤中每 5 秒一次,而每次連不上要耗 ~45s 的 TCP/TLS
+#: 逾時,render 迴圈等於停擺。2026-10-04 實測首頁回應 44.6s 就是這個。
+#: 這跟 2026-09-28/29 那次 21 小時 503 故障是同一個失效模式（見
+#: src/order/fubon_session.py 的連線斷路器註解）。
+_FILLS_FAIL_TTL = 300.0
 _LOOKBACK_DAYS = 90  # 抓多久以前的成交,涵蓋任何可能的跨日留倉
 
 _ROOT_PATH_CACHE: dict = {}
@@ -76,7 +82,9 @@ def _load_fubon_fills():
           "entry_ts_map": {order_no: epoch_ts} 只覆蓋今天的單(get_futopt_order_results範圍)}。
     """
     now = time.time()
-    if now - _FILLS_CACHE["t"] < _FILLS_TTL and _FILLS_CACHE["fills"]:
+    # ★ 不再要求 fills 非空:第一次就失敗時 fills 是空的,舊版那個 `and` 會讓 TTL
+    #   短路失效,變成每輪都重試。
+    if now - _FILLS_CACHE["t"] < _FILLS_TTL:
         return _FILLS_CACHE["fills"], _FILLS_CACHE["entry_ts_map"]
     try:
         from datetime import date, timedelta
@@ -139,7 +147,14 @@ def _load_fubon_fills():
             _FILLS_CACHE["entry_ts_map"] = entry_ts_map
             _FILLS_CACHE["t"] = now
     except Exception as e:  # noqa: BLE001
-        print(f"[futures_pnl] fills query failed, using stale cache: {e}", file=sys.stderr)
+        # ★ 失敗也要推進時間戳,否則每次 render 都重試（見 _FILLS_FAIL_TTL 註解）。
+        #   推進量比成功時短,讓富邦恢復後 5 分鐘內就會重新嘗試。
+        _FILLS_CACHE["t"] = now - _FILLS_TTL + _FILLS_FAIL_TTL
+        if type(e).__name__ == "FubonBreakerOpen":
+            # 斷路器開著＝別人已經確認富邦掛了,這裡安靜退讓,不要洗版
+            print(f"[futures_pnl] 斷路器開啟中,略過本輪（{e}）", file=sys.stderr)
+        else:
+            print(f"[futures_pnl] fills query failed, using stale cache: {e}", file=sys.stderr)
     return _FILLS_CACHE["fills"], _FILLS_CACHE["entry_ts_map"]
 
 
