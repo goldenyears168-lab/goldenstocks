@@ -396,8 +396,15 @@ def main() -> int:
             if today != day:
                 roll(today)
             if not (args.start <= hm <= args.end):
-                # 盤前就睡、收盤後也睡（等明天）—— 不 return,這樣今晚啟動明早會自動接上
-                time.sleep(min(300, args.interval * 5)); continue
+                # 盤前就睡、收盤後也睡（等明天）—— 不 return,這樣今晚啟動明早會自動接上。
+                # ★ 睡眠長度要「不睡過頭」：固定睡 300 秒的話,08:58 進睡眠會睡到 09:03,
+                #   開盤前三分鐘的訊號全漏。改成算到開盤還有多久,最多睡到那一刻。
+                nap = 300.0
+                if hm < args.start:
+                    h, m = args.start.split(":")
+                    tgt = now_dt.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+                    nap = max(1.0, min(nap, (tgt - now_dt).total_seconds()))
+                time.sleep(nap); continue
         n = 0 if scan_times is not None else tape.poll()
         if args.asof:            # 歷史重放:把「現在」固定在指定時點
             now_dt = datetime.fromisoformat(f"{day}T{args.asof}:00")
