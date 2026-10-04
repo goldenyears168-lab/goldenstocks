@@ -46,6 +46,9 @@ class H(BaseHTTPRequestHandler):
             body = biglot_dashboard.PAGE["frag"].encode("utf-8")
         elif path == "/history":
             body = render_history().encode("utf-8")
+        elif path == "/stories":
+            from biglot.story_tags import render_stories
+            body = render_stories().encode("utf-8")
         elif path == "/help":
             body = render_help().encode("utf-8")
         elif path == "/grid":

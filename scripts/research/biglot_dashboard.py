@@ -511,6 +511,7 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <a href="#" id="sndtog" onclick="event.preventDefault();const v=localStorage.getItem('sigsound')==='1'?'0':'1';localStorage.setItem('sigsound',v);this.textContent=v==='1'?'🔔 提示音開':'🔕 提示音關';return false" style="font-size:11px;margin-left:6px;padding:1px 7px;border-radius:4px;background:#161b22;border:1px solid #30363d;color:#8b949e;text-decoration:none">🔕 提示音關</a>
 <a href="/paper" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#2d1f3d;border:1px solid #5a3f7a;color:#d2a8ff;text-decoration:none">🧪 紙上模擬</a>
 <a href="#" onclick="this.href='http://'+location.hostname+':8780/messages/'" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#12263f;border:1px solid #2f6feb;color:#79c0ff;text-decoration:none">📨 訊息</a></h3>
+<a href="/stories" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">📚 故事</a>
 <div id="agentbox" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
