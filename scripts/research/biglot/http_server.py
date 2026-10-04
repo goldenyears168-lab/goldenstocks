@@ -56,6 +56,12 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path == "/paper":
+            try:
+                from clone_agent.panels import render_paper_page
+                body = render_paper_page().encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                body = f"<div class='meta'>paper page error: {html_mod.escape(repr(exc))}</div>".encode()
         elif path == "/agentfrag":
             # 首頁最上方的精簡待批准區。獨立輪詢(比主表慢很多),壞掉不影響主表。
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}

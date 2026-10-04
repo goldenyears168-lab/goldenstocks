@@ -497,6 +497,7 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 歷史回放</a>
 <a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a>
 <a href="/agent" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#102a1c;border:1px solid #2f6b40;color:#8fd19e;text-decoration:none">🤖 操盤手代理人</a>
+<a href="/paper" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#2d1f3d;border:1px solid #5a3f7a;color:#d2a8ff;text-decoration:none">🧪 紙上模擬</a>
 <a href="#" onclick="this.href='http://'+location.hostname+':8780/messages/'" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#12263f;border:1px solid #2f6feb;color:#79c0ff;text-decoration:none">📨 訊息</a></h3>
 <div id="agentbox" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:14px;align-items:stretch">

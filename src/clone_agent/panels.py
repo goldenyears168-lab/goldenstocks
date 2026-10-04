@@ -394,3 +394,106 @@ def _spec() -> str:
 <li>不同意的逐筆覆盤完畢，原因回寫規則或標記「人類判斷優先」</li>
 <li>影子帳淨值差距 ≤0.5%，無單筆 &gt;−3% 的失控單</li>
 <li>下單層通過 PRD §8 八項 fail-closed 測試</li></ol>"""
+
+
+# ------------------------------------------------------------ 紙上模擬
+
+_LVL = {"致命": "#ff7b72", "高": "#e3b341", "中": "#79c0ff", "低": "#8b949e"}
+
+
+def render_paper_page(day: str = "") -> str:
+    """全自動紙上模擬（零人工審核）。
+
+    這一頁的任務不是展示績效,是**在上線前找出模擬騙了我們的地方**。所以異常區放最前面,
+    而且每一條都寫出門檻與為什麼那個門檻合理 —— 看起來漂亮的回測比看起來難看的危險。
+    """
+    d = _j("paper_stats.json") or {}
+    S, A = d.get("stats") or {}, d.get("anomalies") or []
+    tr = _j("paper_trades.json") or []
+    if not S:
+        return ("<style>" + CSS + "</style><div class='ag'><h2>紙上模擬</h2>"
+                "<div class='sub'>還沒有結果。跑 "
+                "<code>scripts/research/trader_paper_sim.py</code> 產生。</div></div>")
+
+    g = S.get
+    anom = "".join(
+        f"<div class='card' style='border-left:3px solid {_LVL.get(a['level'],'#8b949e')};margin-bottom:6px'>"
+        f"<div><span class='tag' style='background:{_LVL.get(a['level'],'#484f58')};color:#0d1117'>"
+        f"{_esc(a['level'])}</span> <b>{_esc(a['item'])}</b> — {_esc(a['detail'])}</div>"
+        f"<div class='sub' style='margin:4px 0 0'>→ {_esc(a['why'])}</div></div>" for a in A)
+
+    rows = "".join(
+        f"<tr><td>{_esc(x['nm'])} <span class='dim'>{_esc(x['root'])}</span></td>"
+        f"<td><span class='tag'{'' if x['tier']=='R2' else ' style=background:#30363d'}>{_esc(x['tier'])}</span></td>"
+        f"<td class='dim'>{_esc(x['進場'])}</td><td>{_n(x['entry'],1)}</td>"
+        f"<td class='dim'>{_esc(x['出場'])}</td><td>{_n(x['exit'],1)}</td>"
+        f"<td class='dim'>{_n(x['持有分'],0)}</td><td>{_n(x['margin'])}</td>"
+        f"<td class='{_c(x['淨損益'])}'>{_n(x['淨損益'],0,True)}</td>"
+        f"<td class='{_c(x['淨報酬%'])}'>{_n(x['淨報酬%'],2,True)}%</td>"
+        f"<td class='{_c(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
+        f"<td style='text-align:left' class='dim'>{_esc(x['why'])}</td>"
+        f"<td style='text-align:left' class='dim'>{_esc(x['出場原因'])}</td></tr>"
+        for x in sorted(tr, key=lambda y: y["進場"]))
+
+    def kpi(label, key, d_=0, sign=False, good=None):
+        v = g(key)
+        cls = "" if good is None or v is None else ("pos" if (v > good) == (good >= 0) else "neg")
+        return f"<div><b class='{cls}'>{_n(v,d_,sign) if isinstance(v,(int,float)) else _esc(v)}</b><span>{label}</span></div>"
+
+    return f"""<style>{CSS}</style><div class='ag'>
+<h2>🧪 紙上模擬 · 全自動（零人工審核）</h2>
+<div class='sub'>2026-09-29 → 10-02 · 掃全宇宙 42 檔 × 每分鐘 · 完全照 PRD 規則執行,
+沒有任何人工批改。<b>進場價一律用訊號分鐘結束後第 1 秒之後的第一筆成交價</b>
+（延後 1 秒是刻意的:同秒成交會製造假 alpha）。成本 0.8bp 來回,保證金用期交所公告費率。</div>
+
+<h2 style='color:#ff7b72'>⚠ 異常 {len(A)} 項 —— 請先看這裡</h2>
+<div class='sub'>這一頁的任務不是展示績效,是在上線前找出模擬騙了我們的地方。
+<b>看起來漂亮的回測比看起來難看的危險。</b></div>
+{anom or "<div class='sub'>沒有偵測到異常。</div>"}
+
+<h2>績效總覽</h2>
+<div class='kpi'>
+{kpi("候選訊號數","候選訊號數")}{kpi("實際進場","實際進場筆數")}
+{kpi("訊號→進場轉換率%","訊號→進場轉換率%",2)}
+{kpi("淨損益","淨損益",0,True,0)}{kpi("勝率%","勝率%",1)}
+{kpi("保證金報酬率%","保證金報酬率%",2,True,0)}
+{kpi("最大回撤","最大回撤")}{kpi("盈虧比","盈虧比",2)}
+</div>
+
+<h2 style='color:#ff7b72'>致命拆帳：日內 vs 跨日留倉</h2>
+<div class='sub'>進場規則是<b>日內</b>訊號（5 分／30 分大戶流）。如果獲利全在隔夜,
+賺的就是隔夜漂移而不是規則 —— 而隔夜曝險完全不在規則的解釋與風控範圍內。</div>
+<table><tr><th>分類</th><th>筆數</th><th>淨損益</th><th>佔總損益%</th></tr>
+<tr><td>日內進出</td><td>{_n(g('日內筆數'))}</td>
+ <td class='{_c(g('日內淨損益'))}'>{_n(g('日內淨損益'),0,True)}</td>
+ <td class='dim'>—</td></tr>
+<tr><td><b>跨日留倉</b></td><td>{_n(g('跨日留倉筆數'))}</td>
+ <td class='{_c(g('跨日留倉淨損益'))}'>{_n(g('跨日留倉淨損益'),0,True)}</td>
+ <td class='neg'>{_n(g('跨日佔總損益%'),1)}%</td></tr></table>
+
+<h2>風險與資金</h2>
+<div class='kpi'>
+{kpi("單筆報酬÷保證金 標準差%","單筆報酬標準差%",2)}
+{kpi("每日損益標準差","每日損益標準差")}
+{kpi("淨損益÷每日損益標準差","夏普式比值(淨損益÷每日損益標準差)",2)}
+{kpi("最大單筆虧損","最大單筆虧損",0,True)}
+{kpi("最大同時持倉","最大同時持倉")}
+{kpi("平均持倉腿%","平均持倉保證金佔權益%",1)}
+{kpi("最高持倉腿%","最高持倉保證金佔權益%",1)}
+{kpi("中位持有分","中位持有分鐘",0)}
+</div>
+<div class='sub'>「夏普式比值」= 四天淨損益 ÷ 每日損益標準差。樣本只有 4 天,
+比值 &lt;2 就跟運氣區分不開 —— 這不是年化夏普值,不要拿去跟別的策略比。</div>
+
+<h2>分散度</h2>
+<div class='kpi'>{kpi("交易日數","交易日數")}{kpi("每日平均筆數","每日平均筆數",1)}
+{kpi("不重複標的","不重複標的數")}{kpi("不重複族群","不重複族群數")}
+{kpi("累計動用保證金","累計動用保證金")}</div>
+<div class='sub'>族群數要配合族群內殘差相關 ρ=0.659 一起看:同族群的筆數不是獨立賭注,
+筆數多不等於分散,日報酬標準差會被低估。</div>
+
+<h2>逐筆交易 · {len(tr)} 筆</h2>
+<table><tr><th>標的</th><th>層級</th><th>進場</th><th>進場價</th><th>出場</th><th>出場價</th>
+<th>分鐘</th><th>保證金</th><th>淨損益</th><th>淨報酬%</th><th>÷保證金%</th>
+<th style='text-align:left'>進場理由</th><th style='text-align:left'>出場原因</th></tr>{rows}</table>
+</div>"""
