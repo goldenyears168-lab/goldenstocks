@@ -145,6 +145,11 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
     sh, rate = c.get("shares", 2000), c.get("rate", 0.2025)
     eq, cap = c.get("equity", 1_748_587), c.get("lot_cap", 1)
     mg = px * sh * rate * lot
+    st = c.get("stars")
+    star_cls = {4: "background:#1f6feb", 3: "background:#2d7d46",
+                2: "background:#6b4a10;color:#e3b341",
+                1: "background:#30363d;color:#8b949e",
+                0: "background:#21262d;color:#484f58"}.get(st, "background:#30363d")
     hits = "".join(f"<li class='hit'>{_esc(x)}</li>" for x in c.get("hits", []))
     bon = "".join(f"<li class='bonus'>{_esc(x)}</li>" for x in c.get("bonus", []))
     rk = "".join(f"<li class='risk'>{_esc(x)}</li>" for x in c.get("risks", []))
@@ -179,7 +184,8 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
  data-sh='{sh}' data-rate='{rate}' data-eq='{eq}' data-cap='{cap}' data-px0='{px}' data-lot0='{lot}'>
  <div class='hd'><span class='nm'>{_esc(c.get('uname'))}
   <span class='t'>{_esc(c.get('symbol'))}</span>
-  <span class='tag{' c' if blk else ''}'>{_esc(c.get('action'))}</span></span>
+  <span class='tag{' c' if blk else ''}'>{_esc(c.get('action'))}</span>
+  {f"<span class='tag' style='{star_cls}'>{_esc(c.get('tier'))}</span>" if st is not None else ""}</span>
   <span class='t'>{_esc(c.get('time'))}</span></div>
  {body}</div>"""
 
@@ -207,6 +213,8 @@ def render_pending_block(day: str) -> str:
                 f"{f'（已裁決 {done} 筆）' if done else ''}　"
                 f"<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a>"
                 f"</div></div>")
+    # 排序＝幫他做完第一關：★ 多的在最上面,同星級再按時間。
+    pend.sort(key=lambda c: (-(c.get("stars") or 0), c.get("time", "")))
     cards = "".join(_card(c, None) for c in pend)
     return f"""<style>{FRAG_CSS}</style><div class='ag'>
 <div class='hd' style='margin-bottom:6px'>

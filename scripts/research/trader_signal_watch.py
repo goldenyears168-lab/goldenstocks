@@ -55,10 +55,20 @@ CALIB = DATA / "data/cache/pit_universe_tick/_live_calib.json"
 BIG_AMT = 10_000_000          # 單筆主動成交 ≥1000 萬 = 大戶
 RETAIL_CAP = 5_000_000        # 1 張且 <500 萬 = 散戶
 GAP_SECONDS, GAP_JUMP_AMT = 90, 500_000_000
-AMT_PCT_MIN = 70              # 成交額 30 分前 30%
-PULLBACK_MAX = -1.0           # 距當日高 ≤ −1%
+# ── 門檻分兩層（2026-10-04 jack 要求「卡片大概 50 筆以上,我還要審批」）──
+#
+# 寬門檻決定「會不會跳卡」,嚴門檻決定「排在多前面」。他要的是一份**有富集的短名單**,
+# 自己做第二關,不是一份已經篩到剩 5 張的清單。網格搜尋的結果（4 天、23 檔戰場）：
+#   嚴（原 v5c）  5.5 張/日 · 超額 +1.953% · 4/4 · 9 檔
+#   寬（現行）   48.0 張/日 · 超額 +0.872% · 4/4 · 20 檔   ← 仍是無條件基準 +0.432% 的 2 倍
+# 代價是超額砍 55%,換來 8.7 倍的候選量與 2.2 倍的標的涵蓋。
+AMT_PCT_MIN = 30              # 寬：成交額 30 分 前 70%
+AMT_PCT_STRICT = 70           # 嚴：前 30%
+PULLBACK_MAX = -0.5           # 寬：距當日高 ≤ −0.5%
+PULLBACK_STRICT = -1.0        # 嚴：≤ −1%
+CHG_CM_STRICT = 50            # 嚴：共動夥伴內當日漲幅最低一半
 SKIP_HOURS = (12, 13)
-RECHECK_MIN = 30              # 同一檔重複通知的冷卻（分鐘）
+RECHECK_MIN = 20              # 同一檔重複跳卡的冷卻（分鐘）
 
 
 def tick_size(px: float) -> float:
@@ -197,34 +207,59 @@ class Tape:
         return last, hi
 
 
+_FUT_CACHE: dict[tuple[str, str], tuple[float, list, list, list]] = {}
+
+
 def fut_quote(root: str, day: str, now: float):
-    """從期貨五檔快取取最新買一／賣一。只讀檔。"""
+    """期貨買一／賣一 **在 now 當下**的值。只讀檔,不連富邦。
+
+    三個坑都處理了：
+      · 不能只取檔尾最後一筆 —— 重放時那是收盤報價（前視）;要用時間索引取 ≤ now。
+      · `stale=True` 的快照要丟（買賣簿逾時沒更新,價格是凍的）。
+      · bp[0]/ap[0] 偶爾回 0.0 搭配巨量,bp[1]/ap[1] 才是真最優價
+        （見 [[watchlist-books-zero-price-quirk]]）—— 一律過濾 price>0。
+
+    檔案會持續長大,所以快取記錄上次讀到的 byte offset,每次只讀新增的部分。
+    """
+    key = (root, day)
     for cand in (root.lower(), root.lower() + "f"):
-        p = CACHE / f"{cand}_books" / f"{cand}_books_{day}.jsonl"
-        if p.exists() and p.stat().st_size > 100:
+        path = CACHE / f"{cand}_books" / f"{cand}_books_{day}.jsonl"
+        if path.exists() and path.stat().st_size > 100:
             break
     else:
         return None, None
-    last = None
-    with open(p) as fh:
-        try:
-            fh.seek(max(0, p.stat().st_size - 200_000))
-            fh.readline()
-        except Exception:  # noqa: BLE001
-            pass
-        for line in fh:
-            if '"bids"' not in line:
-                continue
-            try:
-                r = json.loads(line)
-            except Exception:  # noqa: BLE001
-                continue
-            if r.get("stale") or r.get("session") != "day":
-                continue
-            bb, aa = r.get("bids") or [], r.get("asks") or []
-            if bb and aa:
-                last = (float(bb[0]["price"]), float(aa[0]["price"]))
-    return last if last else (None, None)
+    off, ts, bids, asks = _FUT_CACHE.get(key, (0.0, [], [], []))
+    if path.stat().st_size > off:
+        with open(path) as fh:
+            fh.seek(int(off))
+            for line in fh:
+                if not line.endswith("\n"):
+                    break
+                off += len(line.encode())
+                if '"bids"' not in line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                if r.get("stale") or r.get("session") != "day":
+                    continue
+                bb = [x for x in (r.get("bids") or []) if float(x.get("price") or 0) > 0]
+                aa = [x for x in (r.get("asks") or []) if float(x.get("price") or 0) > 0]
+                if not bb or not aa:
+                    continue
+                try:
+                    t = datetime.fromisoformat(r["ts"]).timestamp()
+                except Exception:  # noqa: BLE001
+                    continue
+                ts.append(t); bids.append(float(bb[0]["price"])); asks.append(float(aa[0]["price"]))
+        _FUT_CACHE[key] = (off, ts, bids, asks)
+    if not ts:
+        return None, None
+    j = bisect.bisect_right(ts, now) - 1
+    if j < 0 or now - ts[j] > 300:        # 超過 5 分鐘沒更新就當沒有報價
+        return None, None
+    return bids[j], asks[j]
 
 
 def pct_rank(vals: dict[str, float], sid: str) -> float | None:
@@ -236,17 +271,28 @@ def pct_rank(vals: dict[str, float], sid: str) -> float | None:
     return 100 * sum(v < vals[sid] for v in xs) / len(xs)
 
 
+STAR_LABEL = {4: "★★★ 嚴格條件全過", 3: "★★☆ 過 3/4", 2: "★★ 過 2/4",
+              1: "★ 過 1/4", 0: "☆ 僅達寬門檻"}
+
+
 def build_card(sid: str, name: str, now: float, feat: dict, root: str, day: str) -> dict:
     bid, ask = fut_quote(root, day, now)
     lim = round(bid - tick_size(bid), 2) if bid else None
-    hits = [
-        f"大戶買∧散戶賣：30分 大戶{feat['big30']:+.0f}萬／散戶{feat['ret30']:+.0f}萬",
-        f"大戶買∧散戶賣：全日 大戶{feat['bigday']:+.0f}萬／散戶{feat['retday']:+.0f}萬",
-        f"成交額30分 第{feat['amt_pct']:.0f}百分位（門檻 前30%）",
-        f"共動夥伴內 當日漲幅第{feat['chg_cm']:.0f}百分位（{feat['n_cm']}檔夥伴）",
-        f"距當日高 {feat['dist_hi']:+.2f}%（不追高，門檻 ≤−1%）",
-    ]
-    risks = []
+    hits, risks = [], []
+    mark = lambda ok: "✓嚴" if ok else "·寬"   # noqa: E731
+    st = feat.get("strict", [False] * 4)
+    hits.append(f"{mark(st[0])} 散戶賣給大戶："
+                + ("30分＋全日都成立" if feat.get("ok30") and feat.get("okday")
+                   else ("僅 30分成立" if feat.get("ok30") else "僅 全日成立")))
+    hits.append(f"　　30分 大戶{feat['big30']:+.0f}萬／散戶{feat['ret30']:+.0f}萬"
+                f"｜全日 大戶{feat['bigday']:+.0f}萬／散戶{feat['retday']:+.0f}萬")
+    hits.append(f"{mark(st[1])} 成交額30分 第{feat['amt_pct']:.0f}百分位（寬≥前70% / 嚴≥前30%）")
+    hits.append(f"{mark(st[2])} 距當日高 {feat['dist_hi']:+.2f}%（寬≤−0.5% / 嚴≤−1%）")
+    if feat.get("chg_cm") is not None:
+        hits.append(f"{mark(st[3])} 共動夥伴內 當日漲幅第{feat['chg_cm']:.0f}百分位"
+                    f"（{feat['n_cm']}檔夥伴，嚴≤50）")
+    else:
+        hits.append("·寬 共動夥伴不足 2 檔，無法做族群內比較")
     if bid is None:
         risks.append("⚠ 抓不到期貨買賣價，掛價僅供參考")
     elif ask and bid:
@@ -254,9 +300,11 @@ def build_card(sid: str, name: str, now: float, feat: dict, root: str, day: str)
         if sp > 0.4:
             risks.append(f"⚠ 期貨價差 {sp:.2f}% 偏寬（中位 0.276%），吃對手價會很貴")
     risks.append("⚠ 門檻由 2026-09-29→10-02 四天反向工程而來，屬樣本內；這是提醒不是指令")
+    stars = feat.get("stars", 0)
     return {
         "day": day, "time": datetime.fromtimestamp(now).strftime("%H:%M:%S"),
         "symbol": f"{root}({name})", "uname": name, "side": "Buy",
+        "stars": stars, "tier": STAR_LABEL[stars],
         "action": "新倉買進", "price": lim if lim else round(feat["px"], 2),
         "price_note": (f"期貨買一 {bid} / 賣一 {ask} → 建議掛 買一下1檔 = {lim}"
                        if bid else "無期貨報價"),
@@ -363,11 +411,14 @@ def main() -> int:
                 continue
             a30, b30, r30 = tape.window(sid, now, 1800)
             _, bday, rday = tape.window(sid, now, None)      # 當日累計也要截在 now
-            if not (b30 > 0 and r30 < 0 and bday > 0 and rday < 0):
-                rej["散戶賣給大戶"] += 1; continue                                   # 散戶賣給大戶：兩尺度都要
+            # 寬門檻:30 分【或】全日 成立即可（嚴門檻要兩個都成立,留給評級）
+            ok30 = b30 > 0 and r30 < 0
+            okday = bday > 0 and rday < 0
+            if not (ok30 or okday):
+                rej["散戶賣給大戶(30分或全日)"] += 1; continue                                   # 散戶賣給大戶：兩尺度都要
             ap_ = pct_rank(amt30, sid)
             if ap_ is None or ap_ < AMT_PCT_MIN:
-                rej["成交額30分前30%"] += 1; continue
+                rej["成交額30分前70%"] += 1; continue
             if now_dt.hour in SKIP_HOURS:
                 rej["避開12-13點"] += 1; continue
             px, hi = tape.px_at(sid, now)
@@ -375,23 +426,28 @@ def main() -> int:
                 continue
             dist_hi = 100 * (px / hi - 1)
             if dist_hi > PULLBACK_MAX:
-                rej["距當日高≤−1%"] += 1; continue                                   # 不追高
+                rej["距當日高≤−0.5%"] += 1; continue                                   # 不追高
+            # 族群排名改成**評級用**,不再當硬門檻（算不出來就記 None,不淘汰）
             ps = [x for x in peers.get(sid, [])
                   if prev_close.get(x) and tape.px_at(x, now)[0]]
-            if len(ps) < 2:
-                rej["共動夥伴≥2檔"] += 1; continue
-            chg = {x: (tape.px_at(x, now)[0] or 0) / prev_close[x] for x in ps}
-            chg_cm = 100 * sum(v < chg[sid] for v in chg.values()) / len(chg)
-            if chg_cm > 50:
-                rej["族群漲幅最低一半"] += 1; continue                                   # 族群內挑漲幅低的
+            chg_cm = None
+            if len(ps) >= 2:
+                chg = {x: (tape.px_at(x, now)[0] or 0) / prev_close[x] for x in ps}
+                chg_cm = 100 * sum(v < chg[sid] for v in chg.values()) / len(chg)                                   # 族群內挑漲幅低的
             if sid in seen and (now - seen[sid]) < RECHECK_MIN * 60:
                 continue
             seen[sid] = now
             root = s2r.get(sid)
             if not root:
                 continue
+            # 評級：嚴門檻通過幾項 → ★★★ / ★★ / ★。他由上往下看,第一關等於做完了。
+            strict = [ok30 and okday, ap_ >= AMT_PCT_STRICT,
+                      dist_hi <= PULLBACK_STRICT,
+                      chg_cm is not None and chg_cm <= CHG_CM_STRICT]
+            stars = sum(strict)
             per = px * s2sh[sid] * rates.get(sid, 20.25) / 100
             c = build_card(sid, s2nm.get(sid, sid), now, {
+                "stars": stars, "strict": strict, "ok30": ok30, "okday": okday,
                 "big30": b30 / 1e4, "ret30": r30 / 1e4,
                 "bigday": bday / 1e4, "retday": rday / 1e4,
                 "amt_pct": ap_, "chg_cm": chg_cm, "n_cm": len(ps),
@@ -402,7 +458,7 @@ def main() -> int:
             c["intent_id"] = intent_id(c)
             with open(out, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(c, ensure_ascii=False) + "\n")
-            fired.append(f"{c['uname']} 掛 {c['price']}")
+            fired.append(f"{'★'*max(1,stars)}{c['uname']}@{c['price']}")
         if scan_times is not None:
             if fired:
                 print(f"[{hm}] ★ {len(fired)}: {'、'.join(fired)}", flush=True)
