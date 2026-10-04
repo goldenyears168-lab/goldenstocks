@@ -42,7 +42,12 @@ body{padding:10px 12px 40px}
 .ag th:first-child,.ag td:first-child{text-align:left}
 .ag td{padding:4px 7px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
 .ag tr:hover td{background:#161b22}
+/* 兩組語意刻意分開,不要混用：
+   .pos/.neg = **對錯／達標與否**（批准 vs 略過、條件命中、水位達標）—— 綠=好、紅=壞
+   .pnl-up/.pnl-dn = **損益**,台股慣例 **賺紅賠綠**,跟主儀表板的 .up/.dn 同色
+   直接把 .pos 改成紅色是錯的 —— 那會把「批准」「✓命中」一起翻掉。 */
 .ag .pos{color:#3fb950}.ag .neg{color:#ff7b72}.ag .dim{color:#484f58}
+.ag .pnl-up{color:#ff7b72}.ag .pnl-dn{color:#3fb950}
 .ag .kpi{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
 .ag .kpi div{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 11px;min-width:96px}
 .ag .kpi b{display:block;font-size:17px;line-height:1.3;font-variant-numeric:tabular-nums}
@@ -72,9 +77,10 @@ body{padding:10px 12px 40px}
   padding:4px 7px;font-size:12px;margin-top:2px;font-family:inherit}
 .ag .note:focus{outline:0;box-shadow:0 0 0 1px #388bfd}
 .ag .btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
-.ag button{background:#238636;color:#fff;border:1px solid #2ea043;border-radius:5px;
+/* 按鈕用藍不用綠:按鈕是「動作」不是「數值」,但台股語境綠色會聯想到賠錢 */
+.ag button{background:#1f6feb;color:#fff;border:1px solid #388bfd;border-radius:5px;
   padding:6px 16px;font-size:13px;cursor:pointer}
-.ag button:hover{background:#2ea043}
+.ag button:hover{background:#388bfd}
 .ag button.sk{background:#21262d;border-color:#30363d;color:#8b949e}
 .ag button.sk:hover{background:#30363d}
 .ag button:disabled{opacity:.45;cursor:default}
@@ -129,7 +135,13 @@ def _n(v: Any, d: int = 0, sign: bool = False) -> str:
 
 
 def _c(v: Any) -> str:
+    """**對錯／達標**用。綠=好、紅=壞。不要拿來標損益。"""
     return "" if v is None or v != v else ("pos" if v > 0 else ("neg" if v < 0 else "dim"))
+
+
+def _p(v: Any) -> str:
+    """**損益**用。台股慣例賺紅賠綠,跟主儀表板的 .up/.dn 一致。"""
+    return "" if v is None or v != v else ("pnl-up" if v > 0 else ("pnl-dn" if v < 0 else "dim"))
 
 
 def _esc(v: Any) -> str:
@@ -230,48 +242,101 @@ def render_pending_block(day: str) -> str:
 # ------------------------------------------------------------ 資金水位圖
 
 def _capital() -> str:
+    """資金三腿視覺化：上方「當下水平堆疊條」＋ 下方「歷史堆疊面積」。
+
+    為什麼換掉原本的三條折線（2026-10-04 jack：「比例都是 100%,有沒有更直覺的圖形」）：
+      · 三腿相加**恆等 100.00%**,但畫成三條獨立折線完全沒表達「這是組成」
+      · 三條互相交叉 **46 次**（持倉×掛單 14、持倉×現金 18、掛單×現金 14）—— 難讀
+      · 看不出「總共押了多少」,而那才是風控要看的
+
+    堆疊的可行性已驗：恆等 100%、**現金從未為負**（最低 21.0%）,不會破圖。
+    堆疊後「持倉層＋掛單層」的上緣**就是**持倉+掛單,可以直接跟 84.1% 風控上限比 —— 
+    那是折線圖做不到的。
+
+    配色刻意用中性色（藍／紫／灰）**不用紅綠** —— 水位不是損益,用紅綠會跟
+    台股慣例的「賺紅賠綠」打架。風控上限線用琥珀（警戒,不是損益）。
+    """
     rows = _j("capital_legs.json") or []
     if not rows:
         return "<div class='sub'>還沒有資金水位資料。</div>"
+    C_HOLD, C_PEND, C_CASH, C_LIMIT = "#1f6feb", "#8957e5", "#30363d", "#e3b341"
+    LIMIT = 84.1                      # 147 萬 ÷ 權益 174.9 萬
     days = sorted({r["day"] for r in rows})
-    W, H, PL, PT, PB = 1040, 250, 40, 12, 30
+    cur = rows[-1]
+    used = cur["持倉"] + cur["掛單"]
+
+    # ── 上層：當下水平堆疊條（盤中真正要看的那一眼）
+    def seg(w, color, label, val):
+        return (f"<div style='width:{w:.4f}%;background:{color};height:26px;position:relative;"
+                f"min-width:0;overflow:hidden' title='{label} {val:.1f}%'>"
+                f"<span style='position:absolute;left:5px;top:5px;font-size:11px;color:#fff;"
+                f"white-space:nowrap'>{label} {val:.1f}%</span></div>")
+    bar = (f"<div style='display:flex;border:1px solid #30363d;border-radius:5px;"
+           f"overflow:hidden;position:relative'>"
+           + seg(cur["持倉"], C_HOLD, "持倉", cur["持倉"])
+           + seg(cur["掛單"], C_PEND, "掛單", cur["掛單"])
+           + seg(cur["現金"], C_CASH, "現金", cur["現金"])
+           + f"<div style='position:absolute;left:{LIMIT}%;top:-3px;bottom:-3px;width:2px;"
+             f"background:{C_LIMIT}' title='風控上限 147 萬 = 權益的 {LIMIT}%'></div>"
+           + "</div>")
+
+    # ── 下層：歷史堆疊面積
+    W, H, PL, PT, PB = 1040, 230, 40, 10, 28
     n = len(rows)
-    xs = lambda i: PL + (W - PL - 10) * i / max(1, n - 1)   # noqa: E731
-    ys = lambda v: PT + (H - PT - PB) * (1 - max(0, min(100, v)) / 100)  # noqa: E731
-    ser = [("持倉保證金", "持倉", "#8fd19e"), ("未成交委託單", "掛單", "#8ab4f8"), ("現金", "現金", "#e3b341")]
-    lines = "".join(f"<polyline points='{' '.join(f'{xs(i):.1f},{ys(r[k]):.1f}' for i, r in enumerate(rows))}'"
-                    f" fill='none' stroke='{c}' stroke-width='1.7'/>" for _, k, c in ser)
-    grid = "".join(f"<line x1='{PL}' y1='{ys(v):.1f}' x2='{W-10}' y2='{ys(v):.1f}' stroke='#232b33'/>"
-                   f"<text x='{PL-5}' y='{ys(v)+3.5:.1f}' fill='#6b7682' font-size='10' "
+    xs = lambda i: PL + (W - PL - 10) * i / max(1, n - 1)        # noqa: E731
+    ys = lambda v: PT + (H - PT - PB) * (1 - max(0, min(100, v)) / 100)   # noqa: E731
+
+    def band(lo_fn, hi_fn, color, opacity=".85"):
+        up = " ".join(f"{xs(i):.1f},{ys(hi_fn(r)):.1f}" for i, r in enumerate(rows))
+        dn = " ".join(f"{xs(i):.1f},{ys(lo_fn(r)):.1f}" for i, r in reversed(list(enumerate(rows))))
+        return f"<polygon points='{up} {dn}' fill='{color}' opacity='{opacity}'/>"
+
+    areas = (band(lambda r: 0, lambda r: r["持倉"], C_HOLD)
+             + band(lambda r: r["持倉"], lambda r: r["持倉"] + r["掛單"], C_PEND)
+             + band(lambda r: r["持倉"] + r["掛單"], lambda r: 100, C_CASH, ".55"))
+    # 持倉+掛單 的上緣描粗 —— 它就是「總共押了多少」,是唯一要跟上限比的那條
+    edge = ("<polyline points='"
+            + " ".join(f"{xs(i):.1f},{ys(r['持倉'] + r['掛單']):.1f}" for i, r in enumerate(rows))
+            + "' fill='none' stroke='#e6edf3' stroke-width='1.6'/>")
+    grid = "".join(f"<line x1='{PL}' y1='{ys(v):.1f}' x2='{W-10}' y2='{ys(v):.1f}' "
+                   f"stroke='#30363d' stroke-width='.5' opacity='.6'/>"
+                   f"<text x='{PL-5}' y='{ys(v)+3.5:.1f}' fill='#8b949e' font-size='10' "
                    f"text-anchor='end'>{v}%</text>" for v in (0, 25, 50, 75, 100))
-    band = (f"<rect x='{PL}' y='{ys(50):.1f}' width='{W-PL-10}' height='{ys(16.7)-ys(50):.1f}' "
-            f"fill='#2b6cb0' opacity='.09'/><line x1='{PL}' y1='{ys(33.3):.1f}' x2='{W-10}' "
-            f"y2='{ys(33.3):.1f}' stroke='#2b6cb0' stroke-dasharray='4 3'/>")
+    lim = (f"<line x1='{PL}' y1='{ys(LIMIT):.1f}' x2='{W-10}' y2='{ys(LIMIT):.1f}' "
+           f"stroke='{C_LIMIT}' stroke-width='1.2' stroke-dasharray='5 3'/>"
+           f"<text x='{W-12}' y='{ys(LIMIT)-4:.1f}' fill='{C_LIMIT}' font-size='10' "
+           f"text-anchor='end'>風控上限 {LIMIT}%（147 萬）</text>")
     seps = labs = ""
     for d in days:
         idx = [k for k, r in enumerate(rows) if r["day"] == d]
         if d != days[0]:
-            seps += f"<line x1='{xs(idx[0]):.1f}' y1='{PT}' x2='{xs(idx[0]):.1f}' y2='{H-PB}' stroke='#39434d'/>"
-        labs += (f"<text x='{(xs(idx[0])+xs(idx[-1]))/2:.1f}' y='{H-PB+15}' fill='#8b97a4' "
+            seps += (f"<line x1='{xs(idx[0]):.1f}' y1='{PT}' x2='{xs(idx[0]):.1f}' "
+                     f"y2='{H-PB}' stroke='#0d1117' stroke-width='1.5'/>")
+        labs += (f"<text x='{(xs(idx[0])+xs(idx[-1]))/2:.1f}' y='{H-PB+15}' fill='#8b949e' "
                  f"font-size='10' text-anchor='middle'>{d[5:]}</text>")
-    med = lambda k, g: sorted(x[k] for x in g)[len(g) // 2]  # noqa: E731
-    tb = "".join(f"<tr><td>{d}</td><td>{med('持倉',[r for r in rows if r['day']==d]):.1f}%</td>"
-                 f"<td>{med('掛單',[r for r in rows if r['day']==d]):.1f}%</td>"
-                 f"<td>{med('現金',[r for r in rows if r['day']==d]):.1f}%</td>"
-                 f"<td>{max(r['持倉'] for r in rows if r['day']==d):.1f}%</td>"
-                 f"<td>{min(r['現金'] for r in rows if r['day']==d):.1f}%</td></tr>" for d in days)
-    lg = "".join(f"<span><i style='background:{c}'></i>{lab}</span>" for lab, _, c in ser)
-    return f"""<div class='kpi'>
- <div><b class='{_c(med('持倉',rows)-16.7)}'>{med('持倉',rows):.1f}%</b><span>持倉保證金 中位</span></div>
- <div><b>{med('掛單',rows):.1f}%</b><span>委託單保證金 中位</span></div>
- <div><b>{med('現金',rows):.1f}%</b><span>現金 中位</span></div>
- <div><b>{max(r['持倉']+r['掛單'] for r in rows):.1f}%</b><span>持倉+掛單 最高</span></div>
- <div><b>84.1%</b><span>風控上限 147萬</span></div></div>
-<div class='lg'>{lg}<span class='dim'>虛線=1/3 目標；藍帶=±50% 相對容忍（16.7–50%）</span></div>
-<svg viewBox='0 0 {W} {H}'>{grid}{band}{seps}{lines}{labs}</svg>
-<table><tr><th>日期</th><th>持倉中位</th><th>掛單中位</th><th>現金中位</th><th>持倉最高</th><th>現金最低</th></tr>{tb}</table>
-<div class='sub'>保證金用台灣期交所公告的<b>原始保證金率</b>（級距1/2/3 = 13.5/16.2/20.25%，另有 21.6–40.5%），
-不是固定 13.5%。平倉委託不佔保證金（平倉是釋放），只有新倉算進掛單腿。
+    lg = "".join(f"<span><i style='background:{c}'></i>{lab}</span>"
+                 for lab, c in (("持倉保證金", C_HOLD), ("未成交委託單", C_PEND),
+                                ("現金", C_CASH)))
+
+    med = lambda k, g: sorted(x[k] for x in g)[len(g) // 2]       # noqa: E731
+    tb = "".join(
+        f"<tr><td>{d}</td>"
+        f"<td>{med('持倉', [r for r in rows if r['day']==d]):.1f}%</td>"
+        f"<td>{med('掛單', [r for r in rows if r['day']==d]):.1f}%</td>"
+        f"<td>{med('現金', [r for r in rows if r['day']==d]):.1f}%</td>"
+        f"<td>{max(r['持倉']+r['掛單'] for r in rows if r['day']==d):.1f}%</td></tr>"
+        for d in days)
+    return f"""<div class='sub' style='margin-bottom:4px'>最後時點 <b>{_esc(cur['day'])} {_esc(cur['hm'])}</b>
+　持倉+掛單 <b>{used:.1f}%</b>（上限 {LIMIT}%，還有 {LIMIT-used:.1f}pp 空間）</div>
+{bar}
+<div class='lg' style='margin-top:6px'>{lg}
+ <span style='color:{C_LIMIT}'>▌風控上限 {LIMIT}%</span>
+ <span class='dim'>白線＝持倉+掛單（總共押了多少）</span></div>
+<svg viewBox='0 0 {W} {H}' style='margin-top:6px'>{grid}{areas}{edge}{lim}{seps}{labs}</svg>
+<table style='margin-top:8px'><tr><th>日期</th><th>持倉中位</th><th>掛單中位</th>
+<th>現金中位</th><th>持倉+掛單 最高</th></tr>{tb}</table>
+<div class='sub'>保證金用台灣期交所公告的<b>原始保證金率</b>（級距 1/2/3 = 13.5/16.2/20.25%，
+另有 21.6–40.5%），不是固定 13.5%。平倉委託不佔保證金（平倉是釋放），只有新倉算進掛單腿。
 <b>不變量：持倉腿從沒「偏高」過，只會偏低</b> —— 瓶頸是新倉成交率只有 48%。</div>"""
 
 
@@ -316,8 +381,8 @@ def render_agent_page(day: str) -> str:
         f"<td class='dim'>{x['entry_ts'][5:16]}</td><td>{_n(x['entry_px'],1)}</td>"
         f"<td class='dim'>{x['exit_ts'][5:16]}</td><td>{_n(x['exit_px'],1)}</td>"
         f"<td class='dim'>{x['rate%']}%</td><td>{_n(x['保證金'])}</td>"
-        f"<td class='{_c(x['net_pnl'])}'>{_n(x['net_pnl'],0,True)}</td>"
-        f"<td class='{_c(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
+        f"<td class='{_p(x['net_pnl'])}'>{_n(x['net_pnl'],0,True)}</td>"
+        f"<td class='{_p(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
         f"<td class='dim'>{_n(x['hold_min'],0)}</td></tr>"
         for x in sorted(f, key=lambda y: y["entry_ts"]))
     pnl = sum(x["net_pnl"] for x in f) if f else 0
@@ -343,10 +408,10 @@ def render_agent_page(day: str) -> str:
 {_capital()}
 
 <h2>③ 成交紀錄　<span class='t'>{len(f)} 趟（2026-09-29 起）</span></h2>
-<div class='kpi'><div><b class='{_c(pnl)}'>{_n(pnl,0,True)}</b><span>淨損益</span></div>
+<div class='kpi'><div><b class='{_p(pnl)}'>{_n(pnl,0,True)}</b><span>淨損益</span></div>
 <div><b>{100*wn/len(f) if f else 0:.1f}%</b><span>勝率 {wn}/{len(f)}</span></div>
 <div><b>{_n(mgs)}</b><span>累計動用保證金</span></div>
-<div><b class='{_c(pnl)}'>{100*pnl/mgs:+.2f}%</b><span>保證金報酬率</span></div></div>
+<div><b class='{_p(pnl)}'>{100*pnl/mgs:+.2f}%</b><span>保證金報酬率</span></div></div>
 <div class='sub'>「報酬÷保證金」才是真正的資金效率——每口保證金從 3 萬到 24 萬差 8 倍，
 用報酬率看會誤判哪一趟做得好。</div>
 <table><tr><th>標的</th><th>方向</th><th>口</th><th>進場</th><th>進場價</th><th>出場</th><th>出場價</th>
@@ -447,16 +512,24 @@ def render_paper_page(day: str = "") -> str:
         f"<td class='dim'>{_esc(x['進場'])}</td><td>{_n(x['entry'],1)}</td>"
         f"<td class='dim'>{_esc(x['出場'])}</td><td>{_n(x['exit'],1)}</td>"
         f"<td class='dim'>{_n(x['持有分'],0)}</td><td>{_n(x['margin'])}</td>"
-        f"<td class='{_c(x['淨損益'])}'>{_n(x['淨損益'],0,True)}</td>"
-        f"<td class='{_c(x['淨報酬%'])}'>{_n(x['淨報酬%'],2,True)}%</td>"
-        f"<td class='{_c(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
+        f"<td class='{_p(x['淨損益'])}'>{_n(x['淨損益'],0,True)}</td>"
+        f"<td class='{_p(x['淨報酬%'])}'>{_n(x['淨報酬%'],2,True)}%</td>"
+        f"<td class='{_p(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
         f"<td style='text-align:left' class='dim'>{_esc(x['why'])}</td>"
         f"<td style='text-align:left' class='dim'>{_esc(x['出場原因'])}</td></tr>"
         for x in sorted(tr, key=lambda y: y["進場"]))
 
+    PNL_KEYS = {"淨損益", "保證金報酬率%", "最大單筆虧損", "最大單筆獲利",
+                "日內淨損益", "跨日留倉淨損益"}
+
     def kpi(label, key, d_=0, sign=False, good=None):
         v = g(key)
-        cls = "" if good is None or v is None else ("pos" if (v > good) == (good >= 0) else "neg")
+        if key in PNL_KEYS:                       # 損益:台股慣例賺紅賠綠
+            cls = _p(v)
+        elif good is None or v is None:
+            cls = ""
+        else:                                     # 達標與否:綠=好
+            cls = "pos" if (v > good) == (good >= 0) else "neg"
         return f"<div><b class='{cls}'>{_n(v,d_,sign) if isinstance(v,(int,float)) else _esc(v)}</b><span>{label}</span></div>"
 
     return f"""<style>{CSS}</style><div class='ag'>
@@ -484,10 +557,10 @@ def render_paper_page(day: str = "") -> str:
 賺的就是隔夜漂移而不是規則 —— 而隔夜曝險完全不在規則的解釋與風控範圍內。</div>
 <table><tr><th>分類</th><th>筆數</th><th>淨損益</th><th>佔總損益%</th></tr>
 <tr><td>日內進出</td><td>{_n(g('日內筆數'))}</td>
- <td class='{_c(g('日內淨損益'))}'>{_n(g('日內淨損益'),0,True)}</td>
+ <td class='{_p(g('日內淨損益'))}'>{_n(g('日內淨損益'),0,True)}</td>
  <td class='dim'>—</td></tr>
 <tr><td><b>跨日留倉</b></td><td>{_n(g('跨日留倉筆數'))}</td>
- <td class='{_c(g('跨日留倉淨損益'))}'>{_n(g('跨日留倉淨損益'),0,True)}</td>
+ <td class='{_p(g('跨日留倉淨損益'))}'>{_n(g('跨日留倉淨損益'),0,True)}</td>
  <td class='neg'>{_n(g('跨日佔總損益%'),1)}%</td></tr></table>
 
 <h2>風險與資金</h2>
