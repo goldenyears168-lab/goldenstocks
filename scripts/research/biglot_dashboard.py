@@ -370,6 +370,17 @@ th[data-nosort]{cursor:default}
 th.g5{color:#e3b341} th.g30{color:#79c0ff} th.gd{color:#d2a8ff}
 th .sub{display:block;font-size:9px;font-weight:400;color:#8b949e;margin-top:1px}
 td.nm{position:sticky;left:0;background:#0d1117;z-index:1;text-align:left;font-weight:600;color:#e6edf3}
+/* 代理人訊號亮燈（2026-10-04）：jack「訊號來了我不一定剛好點進去看到」。
+   用 td.nm 的左側色條 —— 那個位置目前只有參考列(#30363d)與獨立檔(#7d6a1a)在用,
+   而那兩類都不在 23 檔交易戰場裡,所以不會打架。亮 20 分鐘後自動熄(跟冷卻對齊)。
+   星數越多越亮:3★藍 / 2★綠 / 1★琥珀 / 0★灰。 */
+td.nm.sig3{box-shadow:inset 4px 0 #1f6feb,0 0 0 1px #1f6feb inset}
+td.nm.sig2{box-shadow:inset 4px 0 #2ea043}
+td.nm.sig1{box-shadow:inset 4px 0 #e3b341}
+td.nm.sig0{box-shadow:inset 4px 0 #6e7681}
+td.nm .sigstar{color:#e3b341;font-size:10px;margin-right:2px;letter-spacing:-1px}
+@keyframes sigpulse{0%,100%{opacity:1}50%{opacity:.45}}
+td.nm.sig3 .sigstar{animation:sigpulse 1.6s ease-in-out infinite}
 th.stk{position:sticky;left:0;top:0;z-index:3}
 /* 凍結欄(2026-09-29 jack 交辦):現價/期貨買/期貨賣跟股票欄一起固定,橫向捲動不跟著跑。
    left 是動態的(每欄實際渲染寬度不同),交給 JS 量測後寫進 style.left,這裡只定 position/z-index/背景。 */
@@ -496,7 +507,8 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ {len(NAMES)}檔圖形總覽</a>
 <a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 歷史回放</a>
 <a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a>
-<a href="/agent" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#102a1c;border:1px solid #2f6b40;color:#8fd19e;text-decoration:none">🤖 操盤手代理人</a>
+<a href="/agent" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#102a1c;border:1px solid #2f6b40;color:#8fd19e;text-decoration:none">🤖 操盤手代理人<b id="agbadge" style="display:none;color:#e3b341"></b></a>
+<a href="#" id="sndtog" onclick="event.preventDefault();const v=localStorage.getItem('sigsound')==='1'?'0':'1';localStorage.setItem('sigsound',v);this.textContent=v==='1'?'🔔 提示音開':'🔕 提示音關';return false" style="font-size:11px;margin-left:6px;padding:1px 7px;border-radius:4px;background:#161b22;border:1px solid #30363d;color:#8b949e;text-decoration:none">🔕 提示音關</a>
 <a href="/paper" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#2d1f3d;border:1px solid #5a3f7a;color:#d2a8ff;text-decoration:none">🧪 紙上模擬</a>
 <a href="#" onclick="this.href='http://'+location.hostname+':8780/messages/'" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#12263f;border:1px solid #2f6feb;color:#79c0ff;text-decoration:none">📨 訊息</a></h3>
 <div id="agentbox" style="margin-bottom:8px"></div>
@@ -512,6 +524,74 @@ const R={REFRESH_SEC}000;
 function clk(){{const d=new Date();const p=n=>String(n).padStart(2,'0');
   document.getElementById('clk').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
 clk(); setInterval(clk,1000);   // 每秒跳動的即時時鐘(到秒)
+// ── 代理人訊號亮燈 ──────────────────────────────────────────────
+// 分三層解決「訊號來了我沒看到」:①主表名稱欄色條+★ ②分頁標題計數(背景分頁也看得見)
+// ③導航鍵徽章。⚠ 透過 Tailscale 的 http:// 不是安全環境,瀏覽器推播(Web Push)用不了,
+// 所以手機鎖屏時這三層都無效 —— 那需要外部推播服務,另案處理。
+window.__SIG = {{}};            // {{sid: 星數}}
+const __BASE_TITLE = document.title;
+let __sigSeen = new Set();
+// 提示音用 WebAudio 合成,不需要音檔、不需要外部請求。瀏覽器規定要先有一次使用者
+// 互動才能發聲,所以第一次點頁面任何地方時解鎖。整段包在 try 裡 —— 音效壞掉絕不能
+// 讓亮燈與主表的 JS 一起死。
+let __ac = null;
+document.addEventListener('click', ()=>{{ try{{ __ac = __ac || new (window.AudioContext||window.webkitAudioContext)(); }}catch(e){{}} }}, {{once:true}});
+function __beep(n){{
+  try{{
+    if(!__ac || localStorage.getItem('sigsound')!=='1') return;
+    for(let i=0;i<Math.min(3,n);i++){{
+      const o=__ac.createOscillator(), g=__ac.createGain();
+      o.frequency.value=880; o.connect(g); g.connect(__ac.destination);
+      const t0=__ac.currentTime+i*0.18;
+      g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(0.12,t0+0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+0.14);
+      o.start(t0); o.stop(t0+0.15);
+    }}
+  }}catch(e){{}}
+}}
+window.__applySig = __applySig;
+function __applySig(){{
+  const S = window.__SIG || {{}};
+  document.querySelectorAll('td.nm').forEach(td=>{{
+    td.classList.remove('sig0','sig1','sig2','sig3');
+    const s0 = td.querySelector('.sigstar'); if(s0) s0.remove();
+    // 代號從名稱欄的個股連結取（<a href='/stock?sid=6182'>）——
+    // 這樣就不用動 render_main.py 去加 data-sid（那檔另一個 session 正在改）。
+    const a = td.querySelector("a[href*='sid=']");
+    if(!a) return;
+    const m = a.getAttribute('href').match(/sid=([0-9A-Za-z]+)/);
+    if(!m) return;
+    const sid = m[1];
+    const st = S[sid];
+    if(st===undefined) return;
+    td.classList.add('sig'+Math.min(3,st));
+    const sp=document.createElement('span'); sp.className='sigstar';
+    sp.textContent='★'.repeat(Math.max(1,st));
+    sp.title='代理人訊號 '+st+'/4 嚴格條件 — 點上方「🤖 操盤手代理人」看理由';
+    td.insertBefore(sp, td.firstChild);
+  }});
+  const n = Object.keys(S).length;
+  document.title = n ? '('+n+') '+__BASE_TITLE : __BASE_TITLE;
+  const b = document.getElementById('agbadge');
+  if(b){{ b.textContent = n ? ' '+n : ''; b.style.display = n ? '' : 'none'; }}
+}}
+async function __sigTick(){{
+  try{{
+    const r = await fetch('/agentsig?_='+Date.now());
+    if(r.ok){{
+      const j = await r.json();
+      window.__SIG = j.sids || {{}};
+      const fresh = Object.keys(window.__SIG).filter(s=>!__sigSeen.has(s));
+      fresh.forEach(s=>__sigSeen.add(s));
+      if(fresh.length) __beep(fresh.length);
+      __applySig();
+    }}
+  }}catch(e){{}}
+  setTimeout(__sigTick, 15000);
+}}
+(function(){{const s=document.getElementById('sndtog');
+  if(s) s.textContent = localStorage.getItem('sigsound')==='1' ? '🔔 提示音開' : '🔕 提示音關';}})();
+__sigTick();
 // 代理人待批准區：獨立慢速輪詢(15s)。刻意跟主表的 tick() 分開——
 // 它壞掉/變慢都不能影響每秒更新的大戶表,而且正在編輯委託欄位時不可以被換掉。
 async function agtick(){{
@@ -534,7 +614,8 @@ async function tick(){{
     const ae=document.activeElement;
     if(window.__noteEditing || (ae && ae.classList && ae.classList.contains('ne'))){{setTimeout(tick,R);return;}}   // 正在編輯個股筆記:暫停換表,離開格子後恢復
     document.getElementById('app').innerHTML=t;   // 只換內容,不重載整頁,不閃爍
-    if(window.__applySort){{window.__applySort();}}   // 表格每秒被整包換掉,排序狀態要在換完後重套用(見下方排序 IIFE)
+    if(window.__applySort){{window.__applySort();}}
+    if(window.__applySig){{window.__applySig();}}   // 表格每秒被整包換掉,訊號亮燈要重套   // 表格每秒被整包換掉,排序狀態要在換完後重套用(見下方排序 IIFE)
     if(window.__applyFreeze){{window.__applyFreeze();}}   // 同理,凍結欄的 left 偏移也要在換完內容後重新量測套用
     const s=document.getElementById('txsrc'); if(s){{document.getElementById('txbody').innerHTML=s.innerHTML;}}   // 台指面板搬到右上(tip/line 元素保留)
     const ps=document.getElementById('pnlsrc'); if(ps){{document.getElementById('pnlbody').innerHTML=ps.innerHTML;}}   // 期貨損益面板同理搬到左上

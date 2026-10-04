@@ -62,6 +62,23 @@ class H(BaseHTTPRequestHandler):
                 body = render_paper_page().encode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 body = f"<div class='meta'>paper page error: {html_mod.escape(repr(exc))}</div>".encode()
+        elif path == "/agentsig":
+            # 主表亮燈用的輕端點(JSON)。刻意跟 /agentfrag 分開:這支每 15 秒被叫、
+            # 只回 {sid: 星數},不渲染 HTML,壞掉也只是燈不亮,不影響主表。
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            try:
+                from clone_agent.panels import active_signals
+                day = str(q.get("day", ""))[:10] or biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
+                body = json.dumps(active_signals(day), ensure_ascii=False).encode()
+            except Exception as exc:  # noqa: BLE001
+                body = json.dumps({"sids": {}, "n": 0, "err": repr(exc)}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         elif path == "/agentfrag":
             # 首頁最上方的精簡待批准區。獨立輪詢(比主表慢很多),壞掉不影響主表。
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}

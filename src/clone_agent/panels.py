@@ -516,3 +516,45 @@ def render_paper_page(day: str = "") -> str:
 <th>分鐘</th><th>保證金</th><th>淨損益</th><th>淨報酬%</th><th>÷保證金%</th>
 <th style='text-align:left'>進場理由</th><th style='text-align:left'>出場原因</th></tr>{rows}</table>
 </div>"""
+
+
+# ------------------------------------------------------------ 主表亮燈用的輕端點
+
+#: 訊號在主表上亮多久（分鐘）。跟監看程式的 20 分鐘冷卻對齊 —— 燈滅了就代表
+#: 那張卡已經過了冷卻窗,同一檔若條件還在會再跳一張新卡、燈再亮。
+SIGNAL_TTL_MIN = 20
+
+
+def active_signals(day: str, now_hms: str | None = None) -> dict:
+    """回傳 {sid: 最高星數} —— 只含「還在有效期內且尚未裁決」的訊號。
+
+    刻意做成獨立的輕端點（不是把資料塞進每秒刷新的主表 fragment）：
+      · 主表 fragment 每秒重算一次,塞進去等於每秒多做一次檔案 IO
+      · 亮燈是**前端**的事,後端只回狀態;主表被整包換掉後由 JS 重套,
+        跟既有的 __applySort / __applyFreeze 同一個模式
+    """
+    import datetime as _dt
+    cs = load_candidates(day)
+    if not cs:
+        return {"sids": {}, "n": 0, "ttl_min": SIGNAL_TTL_MIN}
+    ds = load_decisions(day)
+    now = now_hms or _dt.datetime.now().strftime("%H:%M:%S")
+    out: dict[str, int] = {}
+    for c in cs:
+        if c["intent_id"] in ds:          # 已裁決的不再亮
+            continue
+        t = str(c.get("time") or "")[:8]
+        if not t:
+            continue
+        try:
+            a = _dt.datetime.strptime(t, "%H:%M:%S")
+            b = _dt.datetime.strptime(now, "%H:%M:%S")
+        except ValueError:
+            continue
+        if not (0 <= (b - a).total_seconds() <= SIGNAL_TTL_MIN * 60):
+            continue
+        sid = str(c.get("symbol", "")).split("(")[0]
+        # symbol 欄是「期貨root(名稱)」,主表要的是證券代號 → 用 uname 反查更穩
+        key = str(c.get("sid") or c.get("uname") or sid)
+        out[key] = max(out.get(key, 0), int(c.get("stars") or 0))
+    return {"sids": out, "n": len(out), "ttl_min": SIGNAL_TTL_MIN}

@@ -303,7 +303,7 @@ def build_card(sid: str, name: str, now: float, feat: dict, root: str, day: str)
     stars = feat.get("stars", 0)
     return {
         "day": day, "time": datetime.fromtimestamp(now).strftime("%H:%M:%S"),
-        "symbol": f"{root}({name})", "uname": name, "side": "Buy",
+        "symbol": f"{root}({name})", "uname": name, "sid": sid, "side": "Buy",
         "stars": stars, "tier": STAR_LABEL[stars],
         "action": "新倉買進", "price": lim if lim else round(feat["px"], 2),
         "price_note": (f"期貨買一 {bid} / 賣一 {ask} → 建議掛 買一下1檔 = {lim}"
