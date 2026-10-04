@@ -498,6 +498,7 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a>
 <a href="/agent" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#102a1c;border:1px solid #2f6b40;color:#8fd19e;text-decoration:none">🤖 操盤手代理人</a>
 <a href="#" onclick="this.href='http://'+location.hostname+':8780/messages/'" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#12263f;border:1px solid #2f6feb;color:#79c0ff;text-decoration:none">📨 訊息</a></h3>
+<div id="agentbox" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
 <div id="notes" contenteditable="true" spellcheck="false">{{NOTES}}</div>
@@ -510,6 +511,21 @@ const R={REFRESH_SEC}000;
 function clk(){{const d=new Date();const p=n=>String(n).padStart(2,'0');
   document.getElementById('clk').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
 clk(); setInterval(clk,1000);   // 每秒跳動的即時時鐘(到秒)
+// 代理人待批准區：獨立慢速輪詢(15s)。刻意跟主表的 tick() 分開——
+// 它壞掉/變慢都不能影響每秒更新的大戶表,而且正在編輯委託欄位時不可以被換掉。
+async function agtick(){{
+  try{{
+    const box=document.getElementById('agentbox');
+    const ae=document.activeElement;
+    // 正在改價格/口數/理由就跳過這一輪,否則輸入到一半會被洗掉
+    if(box && !(ae && box.contains(ae))){{
+      const r=await fetch('/agentfrag?_='+Date.now());
+      if(r.ok) box.innerHTML=await r.text();
+    }}
+  }}catch(e){{}}
+  setTimeout(agtick,15000);
+}}
+agtick();
 async function tick(){{
   try{{
     const r=await fetch('/frag?_='+Date.now());

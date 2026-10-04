@@ -56,6 +56,15 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path == "/agentfrag":
+            # 首頁最上方的精簡待批准區。獨立輪詢(比主表慢很多),壞掉不影響主表。
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            try:
+                from clone_agent.panels import render_pending_block
+                day = str(q.get("day", ""))[:10] or biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
+                body = render_pending_block(day).encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                body = f"<div class='meta'>agent frag error: {html_mod.escape(repr(exc))}</div>".encode()
         elif path == "/agent":
             # 複製人操盤手代理人（階段 A）。lazy import:clone_agent 若壞掉只壞這一頁,
             # 不能讓儀表板起不來。該套件不 import 富邦 SDK,構造上無法送單。

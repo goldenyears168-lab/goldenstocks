@@ -22,56 +22,67 @@ from clone_agent.approval import (
 )
 
 CSS = """
-.ag{font:13px/1.55 -apple-system,"PingFang TC",sans-serif;color:#dfe6ee;max-width:1080px}
-.ag h2{font-size:14px;margin:22px 0 6px;color:#b8c4d0;border-bottom:1px solid #222a32;padding-bottom:4px}
-.ag .sub{color:#7f8c99;font-size:11px;margin:2px 0 8px}
-.ag .warn{background:#3a2a12;border:1px solid #7a5a20;color:#f0c674;padding:7px 10px;
-  border-radius:6px;font-size:12px;margin:8px 0 12px}
+/* 色票一律沿用 biglot 儀表板（GitHub dark）：
+   #0d1117 底 · #161b22 面板 · #30363d 框 · #e6edf3 字 · #8b949e 次要
+   #3fb950 綠(好) · #ff7b72 紅(壞) · #e3b341 琥珀(注意) · #79c0ff 連結 · #388bfd 焦點 */
+.ag{font:13px/1.55 -apple-system,"PingFang TC",sans-serif;color:#e6edf3;max-width:1080px}
+.ag h2{font-size:14px;margin:20px 0 6px;color:#e6edf3;border-bottom:1px solid #30363d;padding-bottom:4px}
+.ag .sub{color:#8b949e;font-size:11px;margin:2px 0 8px;line-height:1.7}
+.ag .warn{background:#161b22;border:1px solid #30363d;border-left:3px solid #e3b341;
+  color:#8b949e;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.7;margin:8px 0 12px}
+.ag .warn b{color:#e6edf3}
 .ag table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:6px}
-.ag th{background:#1a2027;color:#8b97a4;text-align:right;padding:5px 7px;font-weight:600;
-  border-bottom:1px solid #2b343d;white-space:nowrap}
+.ag th{background:#161b22;color:#8b949e;text-align:right;padding:5px 7px;font-weight:600;
+  border-bottom:1px solid #30363d;white-space:nowrap}
 .ag th:first-child,.ag td:first-child{text-align:left}
-.ag td{padding:4px 7px;border-bottom:1px solid #1b2228;text-align:right;white-space:nowrap}
-.ag tr:hover td{background:#161c22}
-.ag .pos{color:#8fd19e}.ag .neg{color:#e08a7a}.ag .dim{color:#6b7682}
-.ag .kpi{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}
-.ag .kpi div{background:#1a2027;border:1px solid #2b343d;border-radius:7px;padding:6px 11px;min-width:98px}
-.ag .kpi b{display:block;font-size:17px;line-height:1.3}
-.ag .kpi span{color:#7f8c99;font-size:10px}
-.ag .card{background:#1a2027;border:1px solid #2b343d;border-radius:8px;padding:10px 12px;margin-bottom:9px}
-.ag .card.done{opacity:.4}.ag .card.blk{border-left:3px solid #7a5a20;opacity:.72}
+.ag td{padding:4px 7px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
+.ag tr:hover td{background:#161b22}
+.ag .pos{color:#3fb950}.ag .neg{color:#ff7b72}.ag .dim{color:#484f58}
+.ag .kpi{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+.ag .kpi div{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 11px;min-width:96px}
+.ag .kpi b{display:block;font-size:17px;line-height:1.3;font-variant-numeric:tabular-nums}
+.ag .kpi span{color:#8b949e;font-size:10px}
+.ag .card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:9px 11px;margin-bottom:8px}
+.ag .card.done{opacity:.42}
+.ag .card.blk{border-left:3px solid #e3b341;opacity:.7}
 .ag .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
-.ag .nm{font-size:15px;font-weight:600}
-.ag .tag{font-size:10px;padding:1px 6px;border-radius:3px;background:#2b6cb0;color:#fff;vertical-align:2px}
-.ag .tag.c{background:#7a5a20}
-.ag .t{color:#7f8c99;font-size:11px}
-.ag .ed{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:6px;margin:8px 0}
-.ag .ed label{background:#141a20;border-radius:5px;padding:4px 8px;display:block}
-.ag .ed span{display:block;color:#7f8c99;font-size:10px;margin-bottom:1px}
-.ag .ed input{background:#0d1117;color:#dfe6ee;border:1px solid #30363d;border-radius:4px;
+.ag .nm{font-size:15px;font-weight:600;color:#e6edf3}
+.ag .tag{font-size:10px;padding:1px 6px;border-radius:3px;background:#1f6feb;color:#fff;vertical-align:2px}
+.ag .tag.c{background:#6b4a10;color:#e3b341}
+.ag .t{color:#8b949e;font-size:11px}
+.ag .ed{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:5px;margin:8px 0}
+.ag .ed label{background:#0d1117;border:1px solid #21262d;border-radius:5px;padding:4px 8px;display:block}
+.ag .ed span{display:block;color:#8b949e;font-size:10px;margin-bottom:1px}
+.ag .ed input{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;
   padding:3px 6px;font-size:14px;width:100%;font-variant-numeric:tabular-nums}
-.ag .ed input:focus{outline:0;box-shadow:0 0 0 1px #388bfd;background:#0d1117}
-.ag .ed b{font-size:15px;display:block;padding:3px 0}
-.ag .ed .chg input{border-color:#b58900;background:#1c1708}
+.ag .ed input:focus{outline:0;box-shadow:0 0 0 1px #388bfd}
+.ag .ed b{font-size:15px;display:block;padding:3px 0;font-variant-numeric:tabular-nums}
+.ag .ed .chg input{border-color:#e3b341;background:#1c1708}
 .ag ul{margin:6px 0 8px;padding-left:19px}
 .ag li{margin:1px 0}
-.ag li.hit::marker{content:"✓ "}.ag li.hit{color:#8fd19e}
-.ag li.bonus::marker{content:"+ "}.ag li.bonus{color:#8ab4f8}
-.ag li.risk::marker{content:"⚠ "}.ag li.risk{color:#f0c674}
-.ag .note{width:100%;background:#0d1117;color:#dfe6ee;border:1px solid #30363d;border-radius:4px;
+.ag li.hit::marker{content:"✓ "}.ag li.hit{color:#3fb950}
+.ag li.bonus::marker{content:"+ "}.ag li.bonus{color:#79c0ff}
+.ag li.risk::marker{content:"⚠ "}.ag li.risk{color:#e3b341}
+.ag .note{width:100%;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;
   padding:4px 7px;font-size:12px;margin-top:2px;font-family:inherit}
+.ag .note:focus{outline:0;box-shadow:0 0 0 1px #388bfd}
 .ag .btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
-.ag button{background:#2b6cb0;color:#fff;border:0;border-radius:5px;padding:7px 17px;
-  font-size:13px;cursor:pointer}
-.ag button.sk{background:#3a434d}.ag button:disabled{opacity:.45;cursor:default}
-.ag select{background:#222a32;color:#dfe6ee;border:1px solid #39434d;border-radius:5px;
-  padding:6px;font-size:12px}
-.ag .vd{font-size:12px;font-weight:600}.ag .vd.a{color:#8fd19e}.ag .vd.s{color:#e08a7a}
-.ag svg{background:#141a20;border:1px solid #2b343d;border-radius:7px;display:block;max-width:100%}
-.ag .lg{display:flex;gap:13px;font-size:11px;margin:5px 0 2px;flex-wrap:wrap}
+.ag button{background:#238636;color:#fff;border:1px solid #2ea043;border-radius:5px;
+  padding:6px 16px;font-size:13px;cursor:pointer}
+.ag button:hover{background:#2ea043}
+.ag button.sk{background:#21262d;border-color:#30363d;color:#8b949e}
+.ag button.sk:hover{background:#30363d}
+.ag button:disabled{opacity:.45;cursor:default}
+.ag select{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:5px;
+  padding:5px;font-size:12px}
+.ag .vd{font-size:12px;font-weight:600}.ag .vd.a{color:#3fb950}.ag .vd.s{color:#ff7b72}
+.ag svg{background:#0d1117;border:1px solid #30363d;border-radius:6px;display:block;max-width:100%}
+.ag .lg{display:flex;gap:13px;font-size:11px;margin:5px 0 2px;flex-wrap:wrap;color:#8b949e}
 .ag .lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-.ag details{margin:8px 0}.ag summary{cursor:pointer;color:#79c0ff;font-size:13px;padding:4px 0}
-.ag code{background:#141a20;padding:1px 5px;border-radius:3px;font-size:11px;color:#b8c4d0}
+.ag details{margin:8px 0}
+.ag summary{cursor:pointer;color:#8b949e;font-size:13px;font-weight:600;padding:4px 0}
+.ag code{background:#0d1117;border:1px solid #21262d;padding:1px 5px;border-radius:3px;
+  font-size:11px;color:#8b949e}
 """
 
 JS = """
@@ -151,7 +162,7 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
  <label><span>使用保證金（{rate*100:.2f}%）</span><b class='f-mg'>{_n(mg)}</b></label>
  <label><span>佔權益</span><b class='f-leg'>{100*mg/eq:.1f}%</b></label>
 </div>
-<div class='t f-warn' style='color:#f0c674'></div>
+<div class='t f-warn' style='color:#e3b341'></div>
 <div class='t'>{_esc(c.get('price_note'))}</div>
 <ul>{hits}{bon}{rk}</ul>
 <input class='note f-note' placeholder='理由／備註（可補你自己的判斷，會一起存進帳本）'>
@@ -168,6 +179,35 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
  {body}</div>"""
 
 
+def render_pending_block(day: str) -> str:
+    """儀表板首頁最上方的精簡待批准區（由 /agentfrag 輪詢換內容）。
+
+    沒有候選時只留一行細字,不佔版面 —— 盤中主表才是他真正在盯的東西。
+    有候選時直接展開成可編輯的完整卡片,**不需要點進任何連結**：他說會在數秒內
+    確認批准,任何需要切視窗或點連結的設計都做不到數秒。
+    """
+    cs = [c for c in load_candidates(day) if c.get("verdict") != "blocked"]
+    ds = load_decisions(day)
+    pend = [c for c in cs if c["intent_id"] not in ds]
+    if not pend:
+        done = len(cs) - len(pend)
+        return (f"<style>{CSS}</style><div class='ag'><div class='sub' style='margin:0'>"
+                f"🤖 代理人：{day} 無待批准委託"
+                f"{f'（已裁決 {done} 筆）' if done else ''}　"
+                f"<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a>"
+                f"</div></div>")
+    cards = "".join(_card(c, None) for c in pend)
+    return f"""<style>{CSS}</style><div class='ag'>
+<div class='hd' style='margin-bottom:6px'>
+ <span class='nm'>🤖 代理人待批准
+  <span class='tag' style='background:#9e6a03'>{len(pend)}</span></span>
+ <span class='t'>{day}　<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a></span></div>
+<div class='sub' style='margin:0 0 6px'>價格／口數／理由都可改 —— 代理人給建議,你改完再送。
+<b>此頁不會送出委託單</b>（<code>src/clone_agent/</code> 不 import 富邦 SDK）,按鈕只寫帳本。</div>
+{cards}
+<script>const AGDAY={json.dumps(day)};{JS}</script></div>"""
+
+
 # ------------------------------------------------------------ 資金水位圖
 
 def _capital() -> str:
@@ -179,7 +219,7 @@ def _capital() -> str:
     n = len(rows)
     xs = lambda i: PL + (W - PL - 10) * i / max(1, n - 1)   # noqa: E731
     ys = lambda v: PT + (H - PT - PB) * (1 - max(0, min(100, v)) / 100)  # noqa: E731
-    ser = [("持倉保證金", "持倉", "#8fd19e"), ("未成交委託單", "掛單", "#8ab4f8"), ("現金", "現金", "#f0c674")]
+    ser = [("持倉保證金", "持倉", "#8fd19e"), ("未成交委託單", "掛單", "#8ab4f8"), ("現金", "現金", "#e3b341")]
     lines = "".join(f"<polyline points='{' '.join(f'{xs(i):.1f},{ys(r[k]):.1f}' for i, r in enumerate(rows))}'"
                     f" fill='none' stroke='{c}' stroke-width='1.7'/>" for _, k, c in ser)
     grid = "".join(f"<line x1='{PL}' y1='{ys(v):.1f}' x2='{W-10}' y2='{ys(v):.1f}' stroke='#232b33'/>"
