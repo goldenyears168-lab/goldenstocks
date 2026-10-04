@@ -98,7 +98,9 @@ def story_tags(rows: list) -> dict:
         if sid in dsh and dsh[sid] >= TH["retail_arrive_pct"] and d is not None and d > 0 and big30 is not None:
             t.append("arrive_push" if big30 > 0 else "arrive_sell")
         # 急殺(拆大戶砸/有人接)
-        if sid in w5 and w5[sid] <= TH["crash_pct"] and w is not None and w < 0 and big5 is not None:
+        # big5==0(窗內沒有任何 ≥1000 萬成交)不能算「大戶砸」—— 2026-10-05 逐筆判讀 #03 合晶抓到
+        # 0 落進 else 分支被標成 crash_sell;沒大單就只是散戶自己殺,兩個標籤都不給
+        if sid in w5 and w5[sid] <= TH["crash_pct"] and w is not None and w < 0 and big5:
             t.append("crash_absorb" if big5 > 0 else "crash_sell")
         # 籌碼鎖定(必須配活動量)
         if sid in gross and gross[sid] <= TH["lock_gross_pct"] and bigday is not None and bigday > 0 \

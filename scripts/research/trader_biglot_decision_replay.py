@@ -36,8 +36,8 @@ RAW_DIR = Path.home() / "goldenstocks-data/cache/biglot_live_watch"
 def replay_day(day: str, want: set[str]) -> dict[str, dict]:
     """回放一天的逐筆，回傳 {sid: {ts[], amt[], big_net[], ret_net[], px[], px0}}。"""
     path = RAW_DIR / f"raw_{day}.jsonl"
-    if not path.exists():
-        return {}
+    if not path.exists() or path.stat().st_size == 0:
+        return {}   # 非交易日／收集器啟動失敗時可能留下 0 bytes 空檔
     lastvol: dict[str, float] = defaultdict(float)
     first_done: set[str] = set()
     last_bid: dict[str, float] = {}
@@ -45,8 +45,8 @@ def replay_day(day: str, want: set[str]) -> dict[str, dict]:
     last_px: dict[str, float] = {}
     last_seen: dict[str, float] = {}
     px0: dict[str, float] = {}
-    acc: dict[str, dict[str, list]] = {s: {"ts": [], "amt": [], "big": [], "ret": [], "px": []}
-                                       for s in want}
+    acc: dict[str, dict[str, list]] = {s: {"ts": [], "amt": [], "big": [], "ret": [], "rabs": [], "px": []}
+                                       for s in want}   # rabs=散戶成交額(不帶方向),算散買+散賣參與度用
     with open(path) as fh:
         for line in fh:
             if '"trades"' not in line:
@@ -102,12 +102,14 @@ def replay_day(day: str, want: set[str]) -> dict[str, dict]:
             A["amt"].append(amt)
             A["big"].append(sgn * amt if amt >= BIG_AMT else 0.0)
             A["ret"].append(sgn * amt if (dv == 1 and amt < RETAIL_CAP) else 0.0)
+            A["rabs"].append(amt if (dv == 1 and amt < RETAIL_CAP) else 0.0)
             A["px"].append(px)
     for sid, A in acc.items():
         A["px0"] = px0.get(sid)
         A["cum_amt"] = _cum(A["amt"])
         A["cum_big"] = _cum(A["big"])
         A["cum_ret"] = _cum(A["ret"])
+        A["cum_rabs"] = _cum(A["rabs"])
     return acc
 
 
