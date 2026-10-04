@@ -35,10 +35,32 @@ from trader_biglot_decision_replay import _cum, replay_day, window  # noqa: E402
 from trader_peer_group_choice import day_universe, load_subcat, ma20_and_prevclose  # noqa: E402
 
 P = Path.home() / "goldenstocks-data/data"
+COMOVE = Path.home() / "goldenstocks-data/cache/biglot_live_watch/comovement_broad.json"
 DAYS = ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]
 PARTIAL = {"2026-09-29"}          # 錄製缺口
 TICK_SEC = 60
 SCALES = {"5m": 300, "30m": 1800, "day": None}
+
+
+def comovement_peers(universe: set[str]) -> dict[str, list[str]]:
+    """每檔的「股價共動」夥伴（含自己）—— 取 A/B 級且在池內的。
+
+    為什麼不用 SUBCAT：SUBCAT 把 42 檔切成 31 個群、其中 **24 個只有 1 檔**,
+    只有 18 檔做得了族群內比較;而且它把真正連動的拆開 —— 旺宏/華邦電/南亞科/
+    晶豪科/力積電 互為 A/B 夥伴（c=0.48~0.76）卻被分成 5 個群,臻鼎-KY 跟 ABF
+    三檔是夥伴卻被歸在 PCB-軟板。改用共動後族群內比較覆蓋 26 檔,實測選股 alpha
+    一樣（+0.618 vs +0.610）但族群數從 6 變 11、標的從 13 變 18。
+
+    資料由 `sector_comovement_*.py` 產生,**需手動重跑更新**（>45 天會過期）。
+    分級規則見檔內 meta：A≥.60 且前後半年各≥.40;B≥.45 且各≥.25。
+    """
+    if not COMOVE.exists():
+        print(f"⚠ 找不到 {COMOVE}，共動欄位全為 NaN", file=sys.stderr)
+        return {}
+    S = json.loads(COMOVE.read_text(encoding="utf-8"))["stocks"]
+    return {s: [s] + [p["sid"] for p in (S.get(s, {}).get("partners") or [])
+                      if p.get("tier") in ("A", "B") and p["sid"] in universe]
+            for s in universe}
 
 
 def _ep(day: str, hms: str) -> float:
@@ -75,12 +97,17 @@ def main() -> int:
     subcat = load_subcat()
 
     ACC, REF = {}, {}
+    PEERS: dict[str, list[str]] = {}
     for d in args.days:
         uni = day_universe(d)
         a = {k: v for k, v in replay_day(d, uni).items() if v.get("ts")} if uni else {}
         if a:
             ACC[d], REF[d] = _prep(a), ma20_and_prevclose(set(a), d)
             print(f"{d}: 回放 {len(a)} 檔", file=sys.stderr)
+
+    PEERS.update(comovement_peers(set().union(*(set(a) for a in ACC.values())) if ACC else set()))
+    print(f"共動夥伴：{sum(1 for v in PEERS.values() if len(v)>=2)}/{len(PEERS)} 檔有池內 A/B 夥伴",
+          file=sys.stderr)
 
     # 每檔每日的「全日」累計總量,給兩日尺度用
     dayagg: dict[tuple[str, str], tuple[float, float, float]] = {}
@@ -147,6 +174,7 @@ def main() -> int:
                 if c in S:
                     S[c + "_pct"] = pd.to_numeric(S[c], errors="coerce").rank(pct=True) * 100
             ref = REF.get(day, {})
+            pxmap = dict(S["px"])
             for sid, r in S.iterrows():
                 A = acc[sid]
                 grp = subcat.get(sid)
@@ -157,6 +185,19 @@ def main() -> int:
                     bia = {x: S.loc[x, "px"] / ref[x][0] for x in peers}
                     chg_p = 100 * sum(v < chg[sid] for v in chg.values()) / len(chg)
                     bias_p = 100 * sum(v < bia[sid] for v in bia.values()) / len(bia)
+                # 共動夥伴內的相對位置（取代 SUBCAT 版,兩版都留著供對照）
+                cps = [x for x in PEERS.get(sid, []) if x in pxmap and x in ref]
+                chg_cm = bias_cm = None
+                if len(cps) >= 2:
+                    cc = {x: pxmap[x] / ref[x][1] for x in cps}
+                    bb = {x: pxmap[x] / ref[x][0] for x in cps}
+                    chg_cm = 100 * sum(v < cc[sid] for v in cc.values()) / len(cc)
+                    bias_cm = 100 * sum(v < bb[sid] for v in bb.values()) / len(bb)
+                # 盤中位置（實測：距當日高 ≤−2% 是唯一 4/4 日一致的追加條件,+0.833%;
+                # 反面「距當日高 ≥−1%」貼著高點追是 −0.216%）
+                j = bisect.bisect_right(A["ts"], t)
+                seg = A["px"][:j] or [r["px"]]
+                hi, lo, op = max(seg), min(seg), seg[0]
                 p_in, f30 = _fwd(A, t, 1800)
                 _, f60 = _fwd(A, t, 3600)
                 _, fcl = _fwd(A, t, None, close_t)
@@ -171,6 +212,12 @@ def main() -> int:
                              "partial_2d": (prev in PARTIAL) if prev else None,
                              **{k: r.get(k) for k in S.columns},
                              "chg_pct_grp": chg_p, "bias_pct_grp": bias_p,
+                             "chg_cm": chg_cm, "bias_cm": bias_cm, "n_cm": len(cps),
+                             "距當日高%": 100 * (r["px"] / hi - 1) if hi else None,
+                             "距當日低%": 100 * (r["px"] / lo - 1) if lo else None,
+                             "當日漲幅%": 100 * (r["px"] / op - 1) if op else None,
+                             "日內振幅%": 100 * (hi / lo - 1) if lo else None,
+                             "時段": int(str(datetime.fromtimestamp(t).strftime("%H"))),
                              "n_peers": len(peers), **agg,
                              "entry_px": p_in, "fwd30": f30, "fwd60": f60,
                              "fwd_close": fcl, "fwd_nextclose": fnx})
@@ -187,6 +234,7 @@ def main() -> int:
           f"fwd60 {df.fwd60.notna().mean():.1%} · 收盤 {df.fwd_close.notna().mean():.1%} · "
           f"隔日收盤 {df.fwd_nextclose.notna().mean():.1%}")
     print(f"兩日尺度可用率: {df.big_2d.notna().mean():.1%}（9/29 無前一日）")
+    print(f"族群內排名覆蓋率: 共動 {df.chg_cm.notna().mean():.1%} vs SUBCAT {df.chg_pct_grp.notna().mean():.1%}")
     return 0
 
 
