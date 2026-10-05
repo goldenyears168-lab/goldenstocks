@@ -11,21 +11,21 @@ jack 2026-10-04 定案：「妳先不要動富邦 API，避免明天資料沒有
 增量讀取（記住 byte offset）—— raw 檔一天會長到 ~120MB，不能每輪重讀。
 它掛掉不會影響任何收集器，因為它跟它們沒有共用資源。
 
-## 訊號（2026-10-04 sweep 定案，口徑全部照他的問卷）
-  · 戰場 **23 檔**（config/biglot_roles.json 推導），不是 42 檔
-  · **散戶賣給大戶**：大戶淨買>0 ∧ 散戶淨賣<0，**30分 與 全日 都要成立**
-    （相減會把「大戶大買但散戶也買」跟「大戶小買但散戶大賣」混成同一個數字）
-  · 成交額 30 分 前 30%（橫斷面排名用全部 42 檔算 —— 他畫面上就是這樣排的）
-  · **股價共動夥伴**內 當日漲幅最低一半（不用 SUBCAT：31 群裡 24 個只有 1 檔）
-  · 距當日高 ≤ −1%（不追高；實測貼著高點追是 −0.216%）
-  · 避開 12–13 點盤（該時段超額 −0.802%、四天日一致 0/4）
+## 訊號（規則 1.2.0 故事版；門檻 SSOT = config/clone_agent_rules.json）
+  · 戰場 **23 檔**（config/biglot_roles.json 推導）；09:30 起才出卡（09:30 前由人工判斷）
+  · ① 全日大戶主動買佔比（÷成交額）不在倒數 30%
+  · ② 自近 30 分鐘高點回檔 ≤ −0.5%
+  · ③ 30 分大戶佔比不在倒數 30%；④ 30 分散戶淨買佔比留由小到大 70%
+  · ⑤ 30 分成交額橫斷面排名 ≥30；避開 12–13 點
+  · 排名濾網在 20 分鐘冷卻之前；排名母體＝tape 內所有有成交的標的
+  · 「30 分中實單淨買佔比」只顯示在卡片、不過濾（診斷用）
 
 ## 建議掛價
 期貨**買一往下 1 檔**。他的實際習慣是掛低幾檔等回檔（掛價距中價 IQR 4.7 檔、
 新倉成交率 48%、中位等 6.4 分），不是吃對手價。期貨買賣價差中位 0.276%，
 吃對手價等於每趟先付掉它。
 
-⚠ 這些門檻是從 2026-09-29→10-02 四天反向工程來的，**樣本內**。
+⚠ 1.2.0 門檻在 2026-09-29→10-05 資料上設計與回測，**全為樣本內**；真樣本外 = 10/6 起。
 通知只是提醒你去看，不是進場指令。
 """
 from __future__ import annotations
@@ -67,18 +67,23 @@ GAP_SECONDS, GAP_JUMP_AMT = 90, 500_000_000
 # 代價是超額砍 55%,換來 8.7 倍的候選量與 2.2 倍的標的涵蓋。
 AMT_PCT_MIN = 30              # 寬：成交額 30 分 前 70%
 AMT_PCT_STRICT = 70           # 嚴：前 30%
-PULLBACK_MAX = -0.5           # 寬：距當日高 ≤ −0.5%
+PULLBACK_MAX = -0.5           # 寬：距參考高點(近 HI_WINDOW_MIN 分鐘高) ≤ −0.5%
 PULLBACK_STRICT = -1.0        # 嚴：≤ −1%
 CHG_CM_STRICT = 50            # 嚴：共動夥伴內當日漲幅最低一半
 SKIP_HOURS = (12, 13)
 RECHECK_MIN = 20              # 同一檔重複跳卡的冷卻（分鐘）
+SIGNAL_START = "09:30"        # 09:30 前人工判斷(全日≈30 分,「已布局」無資訊)
+HI_WINDOW_MIN = 30            # 回檔參考高點 = 近 30 分鐘高(30 分高 ≤ 當日高)
+RANK_KEEP_PCT = 70            # 佔比(÷成交金額)排名濾網:大戶佔比留前 70%、散戶佔比(淨買)留後 70%
 
 
 def tick_size(px: float) -> float:
-    for lim, t in ((10, .01), (50, .05), (100, .1), (500, .5), (1000, 1.)):
+    """個股期貨最小跳動(契約規格,不是現貨級距):<10:0.01、<50:0.05、<100:0.1、<500:0.5、≥500:1。
+    現貨 ≥1000 是 5 元,期貨沒有那一級 —— 舊版誤用現貨表,1000 元以上標的建議價低了 4 元。"""
+    for lim, t in ((10, .01), (50, .05), (100, .1), (500, .5)):
         if px < lim:
             return t
-    return 5.
+    return 1.
 
 
 def core_universe() -> set[str]:
@@ -117,6 +122,7 @@ class Tape:
         self._lastpx: dict[str, float] = {}
         self._lastseen: dict[str, float] = {}
         self._pxev: dict[str, list] = defaultdict(list)   # (t, px) 供重放時還原當下價
+        self._cum: dict[str, tuple] = {}                  # sid -> (ts, Σ成交額, Σ大戶, Σ散戶, Σ淨主動額)
 
     def poll(self) -> int:
         if not self.path.exists():
@@ -173,6 +179,12 @@ class Tape:
                 big = sgn * amt if amt >= BIG_AMT else 0.0
                 ret = sgn * amt if (dv == 1 and amt < RETAIL_CAP) else 0.0
                 self.ev[sid].append((t, amt, big, ret))
+                c = self._cum.get(sid)
+                if c is None:
+                    c = self._cum[sid] = ([], [0.0], [0.0], [0.0], [0.0])
+                c[0].append(t)
+                for arr, v in zip(c[1:], (amt, big, ret, sgn * amt)):
+                    arr.append(arr[-1] + v)
                 self.day_amt[sid] += amt; self.day_big[sid] += big; self.day_ret[sid] += ret
                 self.px[sid] = px
                 self.hi[sid] = max(self.hi.get(sid, px), px)
@@ -180,58 +192,46 @@ class Tape:
                 n += 1
         return n
 
-    def window(self, sid: str, now: float, sec: float | None):
-        """`sec=None` 代表當日累計。
+    def flow(self, sid: str, now: float, sec: float | None):
+        """(成交額, 大戶淨, 散戶淨, 全部淨主動額) —— `sec=None` 代表當日累計。
 
-        ★ 必須同時擋掉 `t > now` 的**未來**事件。live 跑的時候檔案裡本來就只有過去,
-        但歷史重放（--asof）時 deque 裡有整天的資料,不擋就是前視偏誤 —— 驗證會
-        變成作弊。這個 bug 在第一版就有,靠重放對不上數字才抓到。
+        ★ 必須擋掉 `t > now` 的**未來**事件。live 時檔案裡本來就只有過去,但歷史重放
+        （--asof／--scan）時整天資料都在,不擋就是前視偏誤。用累計陣列二分查,O(log n)。
         """
-        lo = -1e18 if sec is None else now - sec
-        amt = big = ret = 0.0
-        for t, a, bg, rt in reversed(self.ev[sid]):
-            if t > now:
-                continue
-            if t < lo:
-                break
-            amt += a; big += bg; ret += rt
-        return amt, big, ret
+        c = self._cum.get(sid)
+        if not c:
+            return 0.0, 0.0, 0.0, 0.0
+        j = bisect.bisect_right(c[0], now)
+        i = 0 if sec is None else min(bisect.bisect_left(c[0], now - sec), j)
+        return tuple(a[j] - a[i] for a in c[1:])
 
-    def px_at(self, sid: str, now: float):
-        """(最後成交價, 當日最高) —— 同樣只看 <= now。"""
+    def px_at(self, sid: str, now: float, win: float | None = None):
+        """(最後成交價, 參考高點) —— 只看 <= now。`win` 秒=只取近 win 秒內的高點;None=當日高。"""
         last = hi = None
-        for t, *_ in ():                              # 佔位,下面用 _pxev
-            pass
+        lo = -1e18 if win is None else now - win
         for t, px in self._pxev.get(sid, ()):
             if t > now:
                 break
             last = px
-            hi = px if hi is None else max(hi, px)
+            if t >= lo:
+                hi = px if hi is None else max(hi, px)
+        if hi is None:
+            hi = last
         return last, hi
 
 
-_FUT_CACHE: dict[tuple[str, str], tuple[float, list, list, list]] = {}
+_FUT_CACHE: dict[tuple[str, str], tuple[float, list, list, list, list]] = {}
 
 
-def fut_quote(root: str, day: str, now: float):
-    """期貨買一／賣一 **在 now 當下**的值。只讀檔,不連富邦。
-
-    三個坑都處理了：
-      · 不能只取檔尾最後一筆 —— 重放時那是收盤報價（前視）;要用時間索引取 ≤ now。
-      · `stale=True` 的快照要丟（買賣簿逾時沒更新,價格是凍的）。
-      · bp[0]/ap[0] 偶爾回 0.0 搭配巨量,bp[1]/ap[1] 才是真最優價
-        （見 [[watchlist-books-zero-price-quirk]]）—— 一律過濾 price>0。
-
-    檔案會持續長大,所以快取記錄上次讀到的 byte offset,每次只讀新增的部分。
-    """
+def _fut_series(root: str, day: str):
     key = (root, day)
     for cand in (root.lower(), root.lower() + "f"):
         path = CACHE / f"{cand}_books" / f"{cand}_books_{day}.jsonl"
         if path.exists() and path.stat().st_size > 100:
             break
     else:
-        return None, None
-    off, ts, bids, asks = _FUT_CACHE.get(key, (0.0, [], [], []))
+        return None
+    off, ts, bids, asks, lad = _FUT_CACHE.get(key, (0.0, [], [], [], []))
     if path.stat().st_size > off:
         with open(path) as fh:
             fh.seek(int(off))
@@ -247,7 +247,8 @@ def fut_quote(root: str, day: str, now: float):
                     continue
                 if r.get("stale") or r.get("session") != "day":
                     continue
-                bb = [x for x in (r.get("bids") or []) if float(x.get("price") or 0) > 0]
+                bb = sorted(((float(x["price"]), float(x.get("size") or 0)) for x in (r.get("bids") or [])
+                             if float(x.get("price") or 0) > 0), reverse=True)
                 aa = [x for x in (r.get("asks") or []) if float(x.get("price") or 0) > 0]
                 if not bb or not aa:
                     continue
@@ -255,14 +256,31 @@ def fut_quote(root: str, day: str, now: float):
                     t = datetime.fromisoformat(r["ts"]).timestamp()
                 except Exception:  # noqa: BLE001
                     continue
-                ts.append(t); bids.append(float(bb[0]["price"])); asks.append(float(aa[0]["price"]))
-        _FUT_CACHE[key] = (off, ts, bids, asks)
-    if not ts:
-        return None, None
+                ts.append(t); bids.append(bb[0][0]); asks.append(min(float(x["price"]) for x in aa)); lad.append(bb[:5])
+        _FUT_CACHE[key] = (off, ts, bids, asks, lad)
+    return ts, bids, asks, lad
+
+
+def fut_quote(root: str, day: str, now: float, ladder: bool = False):
+    """期貨買一／賣一 **在 now 當下**的值。只讀檔,不連富邦。`ladder=True` 時多回傳買方前 5 檔 [(價,口)…]。
+
+    三個坑都處理了：
+      · 不能只取檔尾最後一筆 —— 重放時那是收盤報價（前視）;要用時間索引取 ≤ now。
+      · `stale=True` 的快照要丟（買賣簿逾時沒更新,價格是凍的）。
+      · bp[0]/ap[0] 偶爾回 0.0 搭配巨量,bp[1]/ap[1] 才是真最優價
+        （見 [[watchlist-books-zero-price-quirk]]）—— 一律過濾 price>0。
+
+    檔案會持續長大,所以快取記錄上次讀到的 byte offset,每次只讀新增的部分。
+    """
+    ser = _fut_series(root, day)
+    miss = (None, None, []) if ladder else (None, None)
+    if ser is None or not ser[0]:
+        return miss
+    ts, bids, asks, lad = ser
     j = bisect.bisect_right(ts, now) - 1
     if j < 0 or now - ts[j] > 300:        # 超過 5 分鐘沒更新就當沒有報價
-        return None, None
-    return bids[j], asks[j]
+        return miss
+    return (bids[j], asks[j], lad[j]) if ladder else (bids[j], asks[j])
 
 
 def pct_rank(vals: dict[str, float], sid: str) -> float | None:
@@ -274,23 +292,38 @@ def pct_rank(vals: dict[str, float], sid: str) -> float | None:
     return 100 * sum(v < vals[sid] for v in xs) / len(xs)
 
 
+def frac_rank(vals: dict[str, float | None], sid: str, larger: bool = True) -> float | None:
+    """儀表板「留前/後 N%」的排名分數:(嚴格排在前面者 + 平手/2) ÷ 母體。越小越前面;≤ N% 才留。
+    larger=True 以數值大者為前(大戶佔比);False 以數值小者為前(散戶佔比,淨賣越多越前)。"""
+    xs = [v for v in vals.values() if v is not None]
+    x = vals.get(sid)
+    if len(xs) < 5 or x is None:
+        return None
+    ahead = sum(1 for v in xs if (v > x if larger else v < x))
+    tie = sum(1 for v in xs if v == x)
+    return (ahead + tie / 2) / len(xs)
+
+
 STAR_LABEL = {4: "★★★ 嚴格條件全過", 3: "★★☆ 過 3/4", 2: "★★ 過 2/4",
               1: "★ 過 1/4", 0: "☆ 僅達寬門檻"}
 
 
 def build_card(sid: str, name: str, now: float, feat: dict, root: str, day: str) -> dict:
-    bid, ask = fut_quote(root, day, now)
+    bid, ask, ladder = fut_quote(root, day, now, ladder=True)
     lim = round(bid - tick_size(bid), 2) if bid else None
     hits, risks = [], []
     mark = lambda ok: "✓嚴" if ok else "·寬"   # noqa: E731
     st = feat.get("strict", [False] * 4)
-    hits.append(f"{mark(st[0])} 散戶賣給大戶："
-                + ("30分＋全日都成立" if feat.get("ok30") and feat.get("okday")
-                   else ("僅 30分成立" if feat.get("ok30") else "僅 全日成立")))
-    hits.append(f"　　30分 大戶{feat['big30']:+.0f}萬／散戶{feat['ret30']:+.0f}萬"
-                f"｜全日 大戶{feat['bigday']:+.0f}萬／散戶{feat['retday']:+.0f}萬")
-    hits.append(f"{mark(st[1])} 成交額30分 第{feat['amt_pct']:.0f}百分位（寬≥前70% / 嚴≥前30%）")
-    hits.append(f"{mark(st[2])} 距當日高 {feat['dist_hi']:+.2f}%（寬≤−0.5% / 嚴≤−1%）")
+    fl = feat["flow"]
+    hits.append(f"{mark(st[0])} 30分 大戶−散戶佔比 {fl['diff30'][0]:+.1f}%（排前 {100 * fl['diff30'][1]:.0f}%，嚴須前 70%）")
+    hits.append(f"　　全日大戶佔比 {fl['big_day'][0]:+.1f}%（排前 {100 * fl['big_day'][1]:.0f}%，須前 70%）"
+                f"｜30分大戶佔比 {fl['big30'][0]:+.1f}%（排前 {100 * fl['big30'][1]:.0f}%，須前 70%）")
+    hits.append(f"　　30分散戶佔比 {fl['ret30'][0]:+.1f}%（淨買由小到大第 {100 * fl['ret30'][1]:.0f} 百分位，須 ≤70）"
+                f"｜30分 大戶{feat['big30']:+.0f}萬／散戶{feat['ret30']:+.0f}萬｜全日 大戶{feat['bigday']:+.0f}萬／散戶{feat['retday']:+.0f}萬")
+    if "mid30" in fl:
+        hits.append(f"　　（只看不濾）30分中實單(500–1000萬等)淨買佔比 {fl['mid30'][0]:+.1f}%（排前 {100 * fl['mid30'][1]:.0f}%）")
+    hits.append(f"{mark(st[1])} 成交額30分 第{feat['amt_pct']:.0f}百分位（寬≥{AMT_PCT_MIN} / 嚴≥{AMT_PCT_STRICT}）")
+    hits.append(f"{mark(st[2])} 距近{HI_WINDOW_MIN}分高 {feat['dist_hi']:+.2f}%（寬≤−0.5% / 嚴≤−1%）")
     if feat.get("chg_cm") is not None:
         hits.append(f"{mark(st[3])} 共動夥伴內 當日漲幅第{feat['chg_cm']:.0f}百分位"
                     f"（{feat['n_cm']}檔夥伴，嚴≤50）")
@@ -316,6 +349,8 @@ def build_card(sid: str, name: str, now: float, feat: dict, root: str, day: str)
         "margin": round((lim or feat["px"]) * feat["shares"] * feat["mrate"]),
         "leg_note": f"每口保證金率 {feat['mrate']*100:.2f}%",
         "hits": hits, "bonus": [], "risks": risks, "verdict": "ok",
+        "bid_ladder": [[p, z] for p, z in ladder], "dist_refs": feat.get("dist_refs"),
+        "flow": feat["flow"], "pool_n": feat.get("pool_n"),   # [佔比%, 排名分數] 供事後稽核
     }
 
 
@@ -330,6 +365,12 @@ def main() -> int:
                     help="歷史日全掃：讀一次檔後,把當天每分鐘都跑一遍（驗訊號量用）")
     ap.add_argument("--no-rules", action="store_true",
                     help="研究用：不套凍結名單與價格帶,保留全部代理人訊號（歷史重掃要用）")
+    ap.add_argument("--hi-win", type=int, default=HI_WINDOW_MIN,
+                    help="研究用：回檔參考高點取近 N 分鐘(0=當日高;預設=凍結規則 HI_WINDOW_MIN)")
+    ap.add_argument("--no-rank-filter", action="store_true",
+                    help="研究用：佔比排名濾網只記錄不淘汰(逐分鐘全記,事後再套濾網/做對照)")
+    ap.add_argument("--recheck-min", type=float, default=RECHECK_MIN,
+                    help="研究用：同檔冷卻分鐘(0=逐分鐘全記,事後再重放冷卻政策)")
     ap.add_argument("--asof", default=None,
                     help="歷史日重放用的時點 HH:MM（讓視窗算在那個當下,而不是現在）")
     args = ap.parse_args()
@@ -421,30 +462,54 @@ def main() -> int:
             now_dt = datetime.fromisoformat(f"{day}T{args.asof}:00")
             hm = args.asof
         now = now_dt.timestamp()
-        amt30 = {s: tape.window(s, now, 1800)[0] for s in tape.ev}
+        fl30 = {s: tape.flow(s, now, 1800) for s in tape.ev}
+        fld = {s: tape.flow(s, now, None) for s in tape.ev}
+        amt30 = {s: v[0] for s, v in fl30.items()}
+        share = lambda x, a: (x / a) if a > 0 else None   # noqa: E731
+        pools = {
+            "big_day": {s: share(v[1], v[0]) for s, v in fld.items()},
+            "big30": {s: share(v[1], v[0]) for s, v in fl30.items()},
+            "ret30": {s: share(v[2], v[0]) for s, v in fl30.items()},
+            "mid30": {s: share(v[3] - v[1] - v[2], v[0]) for s, v in fl30.items()},
+        }
+        pools["diff30"] = {s: (None if pools["big30"][s] is None or pools["ret30"][s] is None
+                               else pools["big30"][s] - pools["ret30"][s]) for s in fl30}
         fired = []
         rej = defaultdict(int)          # 逐條件淘汰計數,沒訊號時才知道卡在哪
-        for sid in core:
+        if hm < SIGNAL_START:
+            rej[f"{SIGNAL_START}前人工判斷"] += len(core)
+        for sid in (core if hm >= SIGNAL_START else ()):
             if sid not in tape.ev or not tape.ev[sid]:
                 continue
-            a30, b30, r30 = tape.window(sid, now, 1800)
-            _, bday, rday = tape.window(sid, now, None)      # 當日累計也要截在 now
-            # 寬門檻:30 分【或】全日 成立即可（嚴門檻要兩個都成立,留給評級）
-            ok30 = b30 > 0 and r30 < 0
+            a30, b30, r30, _ = fl30[sid]
+            _, bday, rday, _ = fld[sid]
+            ok30 = b30 > 0 and r30 < 0          # 僅供診斷:舊「散戶賣給大戶」符號判斷(1.2.0 起不再是門檻)
             okday = bday > 0 and rday < 0
-            if not (ok30 or okday):
-                rej["散戶賣給大戶(30分或全日)"] += 1; continue                                   # 散戶賣給大戶：兩尺度都要
             ap_ = pct_rank(amt30, sid)
             if ap_ is None or ap_ < AMT_PCT_MIN:
                 rej["成交額30分前70%"] += 1; continue
             if now_dt.hour in SKIP_HOURS:
                 rej["避開12-13點"] += 1; continue
-            px, hi = tape.px_at(sid, now)
+            px, hi = tape.px_at(sid, now, args.hi_win * 60 if args.hi_win else None)
             if not px or not hi:
                 continue
             dist_hi = 100 * (px / hi - 1)
+            dist_refs = {k: round(100 * (px / tape.px_at(sid, now, w)[1] - 1), 3)
+                         for k, w in (("day", None), ("60", 3600), ("30", 1800))}
             if dist_hi > PULLBACK_MAX:
-                rej["距當日高≤−0.5%"] += 1; continue                                   # 不追高
+                rej[f"距近{args.hi_win}分高≤−0.5%"] += 1; continue                       # 不追高
+            fr = {"big_day": frac_rank(pools["big_day"], sid), "big30": frac_rank(pools["big30"], sid),
+                  "ret30": frac_rank(pools["ret30"], sid, larger=False), "diff30": frac_rank(pools["diff30"], sid),
+                  "mid30": frac_rank(pools["mid30"], sid)}
+            keep = RANK_KEEP_PCT / 100 + 1e-12
+            bad = [nm for k, nm in (("big_day", "全日大戶佔比"), ("big30", "30分大戶佔比"), ("ret30", "30分散戶佔比"))
+                   if fr[k] is None or fr[k] > keep]
+            if bad and not args.no_rank_filter:
+                for nm in bad:
+                    rej[f"{nm}排名(留{RANK_KEEP_PCT}%)"] += 1
+                continue                                                               # 先濾再冷卻:被濾掉不啟動冷卻
+            if any(v is None for v in fr.values()):
+                continue
             # 族群排名改成**評級用**,不再當硬門檻（算不出來就記 None,不淘汰）
             ps = [x for x in peers.get(sid, [])
                   if prev_close.get(x) and tape.px_at(x, now)[0]]
@@ -452,14 +517,14 @@ def main() -> int:
             if len(ps) >= 2:
                 chg = {x: (tape.px_at(x, now)[0] or 0) / prev_close[x] for x in ps}
                 chg_cm = 100 * sum(v < chg[sid] for v in chg.values()) / len(chg)                                   # 族群內挑漲幅低的
-            if sid in seen and (now - seen[sid]) < RECHECK_MIN * 60:
+            if sid in seen and (now - seen[sid]) < args.recheck_min * 60:
                 continue
             seen[sid] = now
             root = s2r.get(sid)
             if not root:
                 continue
             # 評級：嚴門檻通過幾項 → ★★★ / ★★ / ★。他由上往下看,第一關等於做完了。
-            strict = [ok30 and okday, ap_ >= AMT_PCT_STRICT,
+            strict = [fr["diff30"] <= keep, ap_ >= AMT_PCT_STRICT,
                       dist_hi <= PULLBACK_STRICT,
                       chg_cm is not None and chg_cm <= CHG_CM_STRICT]
             stars = sum(strict)
@@ -469,7 +534,9 @@ def main() -> int:
                 "big30": b30 / 1e4, "ret30": r30 / 1e4,
                 "bigday": bday / 1e4, "retday": rday / 1e4,
                 "amt_pct": ap_, "chg_cm": chg_cm, "n_cm": len(ps),
-                "dist_hi": dist_hi, "px": px, "shares": s2sh[sid],
+                "flow": {k: [round(100 * pools[k][sid], 3), round(fr[k], 4)] for k in fr},
+                "pool_n": sum(1 for v in pools["big30"].values() if v is not None),
+                "dist_hi": dist_hi, "dist_refs": dist_refs, "px": px, "shares": s2sh[sid],
                 "mrate": rates.get(sid, 20.25) / 100,
                 "lot_cap": max(1, int((1_748_587 / 3) // per)) if per else 1,
             }, root, day)

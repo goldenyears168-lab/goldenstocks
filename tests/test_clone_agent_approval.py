@@ -141,6 +141,37 @@ class CloneApprovalTest(unittest.TestCase):
         html = render_agent_page(self.day)
         self.assertIn("被規則擋下", html)
 
+    def test_pending_fragment_is_inert_html_without_script(self):
+        """/agentfrag 是 innerHTML 注入,內含 <script> 不會執行(首頁按鈕點不動的根因)。
+        片段必須不含 <script>、不含 inline onclick,按鈕靠 data-act + 外部 /agentjs 的事件委派。"""
+        from clone_agent.panels import render_pending_block
+        html = render_pending_block(self.day)
+        self.assertNotIn("<script", html)
+        self.assertNotIn("onclick", html)
+        self.assertNotIn("oninput", html)
+        self.assertEqual(html.count("data-act='approve'"), 2)
+        self.assertEqual(html.count("data-act='skip'"), 2)
+        for i in self.ids:
+            self.assertIn(f"data-iid='{i}'", html)
+        self.assertIn(f"data-day='{self.day}'", html)
+
+    def test_agent_js_reads_day_from_dom_and_posts_decide(self):
+        from clone_agent.panels import JS
+        self.assertIn("dataset.day", JS)
+        self.assertIn("/agentdecide", JS)
+        self.assertNotIn("AGDAY", JS)
+
+    def test_dashboard_shell_loads_agentjs_and_route_exists(self):
+        root = Path(__file__).resolve().parents[1] / "scripts" / "research"
+        self.assertIn('<script src="/agentjs"></script>', (root / "biglot_dashboard.py").read_text(encoding="utf-8"))
+        self.assertIn('path == "/agentjs"', (root / "biglot" / "http_server.py").read_text(encoding="utf-8"))
+
+    def test_agent_page_has_single_script_and_data_day(self):
+        from clone_agent.panels import render_agent_page
+        html = render_agent_page(self.day)
+        self.assertIn(f"data-day='{self.day}'", html)
+        self.assertNotIn("onclick", html)
+
 
 if __name__ == "__main__":
     unittest.main()

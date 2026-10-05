@@ -175,6 +175,7 @@ def cluster_ci(tr, col="net", n_boot=4000, seed=7):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", default=None)
+    ap.add_argument("--prefix", default="cab_", help="逐日 CSV 前綴(1.2.0 故事版用 cabnew_;延遲/收盤敏感度為 {前綴}lag30_ 等)")
     a = ap.parse_args()
     R = load_rules()
     mode = a.mode or R["order"]["queue_model"]
@@ -182,7 +183,7 @@ def main():
     fee = R["cost"]["fee_per_lot_per_side"]
     pol = R["order"]["policy"]
     members = universe_sids(R)
-    raw = load_csvs("cab_")
+    raw = load_csvs(a.prefix)
     inl = raw[raw.sid.astype(str).isin(members)].copy()
     print(f"{label(R)}  全部代理人訊號 {len(raw)} 筆 → 名單內 {len(inl)} 筆;依日", inl.groupby('day').size().to_dict())
 
@@ -276,11 +277,11 @@ def main():
     add("名單改用逐筆價格帶(in_univ)", raw[raw.in_univ], mode, cap, fee, policy=pol)
     add("不套名單：225 筆全送", raw, mode, cap, fee, policy=pol)
     for lag in (30, 60):
-        d_ = load_csvs(f"cab_lag{lag}_")
+        d_ = load_csvs(f"{a.prefix}lag{lag}_")
         if len(d_):
             d_ = d_[d_.sid.astype(str).isin(members)]
             add(f"人工批准延遲 {lag} 秒", d_, mode, cap, fee, policy=pol)
-    c_ = load_csvs("cab_close1325_")
+    c_ = load_csvs(f"{a.prefix}close1325_")
     if len(c_):
         c_ = c_[c_.sid.astype(str).isin(members)]
         add("13:25 強制平倉/停止排隊(PRD)", c_, mode, cap, fee, policy=pol, close=13 * 3600 + 25 * 60)

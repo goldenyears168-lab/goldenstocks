@@ -34,7 +34,7 @@ def net(r, mode, kind, fee):
 
 def run(df, mode, cap, ttl_min, policy, one_per_stock):
     items, skipped = [], []
-    for r in df.sort_values("time").itertuples():
+    for r in df.sort_values("time", kind="stable").itertuples():
         t0 = sec(r.time) + int(getattr(r, "lag", 5))
         f = getattr(r, f"{mode}_fill")
         tf = sec(f) if isinstance(f, str) else None

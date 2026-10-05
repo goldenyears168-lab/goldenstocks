@@ -97,29 +97,41 @@ body{padding:10px 12px 40px}
 """
 
 JS = """
+(function(){
+if(window.__agInit) return; window.__agInit=true;
 function mg(el){
   const c=el.closest('.card'), p=+c.querySelector('.f-px').value, l=+c.querySelector('.f-lot').value;
-  const sh=+c.dataset.sh, rt=+c.dataset.rate, eq=+c.dataset.eq;
+  const sh=+c.dataset.sh, rt=+c.dataset.rate, eq=+c.dataset.eq, cap=+c.dataset.cap;
   const m=p*sh*rt*l;
   c.querySelector('.f-mg').textContent=isFinite(m)?Math.round(m).toLocaleString():'—';
   c.querySelector('.f-leg').textContent=isFinite(m)?(100*m/eq).toFixed(1)+'%':'—';
-  const cap=+c.dataset.cap;
   c.querySelector('.f-lot').parentElement.classList.toggle('chg', l!==+c.dataset.lot0);
   c.querySelector('.f-px').parentElement.classList.toggle('chg', p!==+c.dataset.px0);
-  const w=c.querySelector('.f-warn');
-  w.textContent = l>cap ? ('⚠ 超過價格帶上限 '+cap+' 口') : '';
+  c.querySelector('.f-warn').textContent = l>cap ? ('⚠ 超過價格帶上限 '+cap+' 口') : '';
 }
-async function agdec(iid,d,el){
-  const c=el.closest('.card'); c.querySelectorAll('button').forEach(x=>x.disabled=true);
-  const sel=c.querySelector('select.f-sr');
-  const r=await fetch('/agentdecide',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({day:AGDAY,intent_id:iid,decision:d,
-      skip_reason:d==='skip'&&sel?sel.value:'',
-      edited:{price:+c.querySelector('.f-px').value,lot:+c.querySelector('.f-lot').value,
-              note:c.querySelector('.f-note').value}})});
-  if(r.ok){location.reload();}
-  else{const t=await r.text();alert('寫入失敗: '+t);c.querySelectorAll('button').forEach(x=>x.disabled=false);}
+async function agdec(btn){
+  const c=btn.closest('.card'), root=btn.closest('.ag');
+  const bs=c.querySelectorAll('button'); bs.forEach(x=>x.disabled=true);
+  const d=btn.dataset.act, sel=c.querySelector('select.f-sr');
+  try{
+    const r=await fetch('/agentdecide',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({day:root.dataset.day,intent_id:c.dataset.iid,decision:d,
+        skip_reason:d==='skip'&&sel?sel.value:'',
+        edited:{price:+c.querySelector('.f-px').value,lot:+c.querySelector('.f-lot').value,
+                note:c.querySelector('.f-note').value}})});
+    if(!r.ok) throw new Error(r.status+' '+await r.text());
+    if(window.__agRefresh) await window.__agRefresh(true); else location.reload();
+  }catch(e){alert('寫入失敗: '+e.message); bs.forEach(x=>x.disabled=false);}
 }
+document.addEventListener('click',function(e){
+  const b=e.target.closest('button[data-act]');
+  if(b && b.closest('.ag')) agdec(b);
+});
+document.addEventListener('input',function(e){
+  const t=e.target;
+  if(t.matches&&t.matches('.ag .f-px,.ag .f-lot')) mg(t);
+});
+})();
 """
 
 
@@ -179,8 +191,8 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
         opts = "".join(f"<option>{_esc(r)}</option>" for r in SKIP_REASONS)
         body = f"""<div class='ed'>
  <label><span>倉別·方向</span><b>{_esc(c.get('action'))}</b></label>
- <label><span>委託價格（可改）</span><input class='f-px' type='number' step='any' value='{px}' oninput='mg(this)'></label>
- <label><span>口數（可改，上限 {cap}）</span><input class='f-lot' type='number' min='1' max='20' value='{lot}' oninput='mg(this)'></label>
+ <label><span>委託價格（可改）</span><input class='f-px' type='number' step='any' value='{px}'></label>
+ <label><span>口數（可改，上限 {cap}）</span><input class='f-lot' type='number' min='1' max='20' value='{lot}'></label>
  <label><span>使用保證金（{rate*100:.2f}%）</span><b class='f-mg'>{_n(mg)}</b></label>
  <label><span>佔權益</span><b class='f-leg'>{100*mg/eq:.1f}%</b></label>
 </div>
@@ -188,11 +200,11 @@ def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
 <div class='t'>{_esc(c.get('price_note'))}</div>
 <ul>{hits}{bon}{rk}</ul>
 <input class='note f-note' placeholder='理由／備註（可補你自己的判斷，會一起存進帳本）'>
-<div class='btns'><button onclick="agdec('{iid}','approve',this)">批准（記錄）</button>
+<div class='btns'><button data-act='approve'>批准（記錄）</button>
 <select class='f-sr'>{opts}</select>
-<button class='sk' onclick="agdec('{iid}','skip',this)">略過</button></div>"""
+<button class='sk' data-act='skip'>略過</button></div>"""
 
-    return f"""<div class='card{' done' if dec else ''}{' blk' if blk else ''}'
+    return f"""<div class='card{' done' if dec else ''}{' blk' if blk else ''}' data-iid='{iid}'
  data-sh='{sh}' data-rate='{rate}' data-eq='{eq}' data-cap='{cap}' data-px0='{px}' data-lot0='{lot}'>
  <div class='hd'><span class='nm'>{_esc(c.get('uname'))}
   <span class='t'>{_esc(c.get('symbol'))}</span>
@@ -228,7 +240,7 @@ def render_pending_block(day: str) -> str:
     # 排序＝幫他做完第一關：★ 多的在最上面,同星級再按時間。
     pend.sort(key=lambda c: (-(c.get("stars") or 0), c.get("time", "")))
     cards = "".join(_card(c, None) for c in pend)
-    return f"""<style>{FRAG_CSS}</style><div class='ag'>
+    return f"""<style>{FRAG_CSS}</style><div class='ag' data-day='{day}'>
 <div class='hd' style='margin-bottom:6px'>
  <span class='nm'>🤖 代理人待批准
   <span class='tag' style='background:#9e6a03'>{len(pend)}</span></span>
@@ -236,7 +248,7 @@ def render_pending_block(day: str) -> str:
 <div class='sub' style='margin:0 0 6px'>價格／口數／理由都可改 —— 代理人給建議,你改完再送。
 <b>此頁不會送出委託單</b>（<code>src/clone_agent/</code> 不 import 富邦 SDK）,按鈕只寫帳本。</div>
 {cards}
-<script>const AGDAY={json.dumps(day)};{JS}</script></div>"""
+</div>"""
 
 
 # ------------------------------------------------------------ 資金水位圖
@@ -389,7 +401,7 @@ def render_agent_page(day: str) -> str:
     mgs = sum(x["保證金"] for x in f) if f else 1
     wn = sum(1 for x in f if x["win"])
 
-    return f"""<style>{CSS}</style><div class='ag'>
+    return f"""<style>{CSS}</style><div class='ag' data-day='{day}'>
 <div class='hd'><h2 style='border:0;margin:4px 0'>🤖 操盤手代理人 · 階段 A</h2>
 <span class='t'>資料日
 <select onchange="location.href='/agent?day='+this.value">{sel}</select></span></div>
@@ -425,7 +437,7 @@ def render_agent_page(day: str) -> str:
 
 <div class='sub'>機器人規則、回測研究與「最常見故事」→ <a href='/agentrules'>代理人規則頁</a>（下方 ⑤ 是依人類下單習慣整理的舊規格）</div>
 <details><summary>⑤ 量化規格（點開）</summary>{_spec()}</details>
-<script>const AGDAY={json.dumps(day)};{JS}</script></div>"""
+<script>{JS}</script></div>"""
 
 
 def _spec() -> str:
@@ -533,7 +545,7 @@ def render_paper_page(day: str = "") -> str:
             cls = "pos" if (v > good) == (good >= 0) else "neg"
         return f"<div><b class='{cls}'>{_n(v,d_,sign) if isinstance(v,(int,float)) else _esc(v)}</b><span>{label}</span></div>"
 
-    return f"""<style>{CSS}</style><div class='ag'>
+    return f"""<style>{CSS}</style><div class='ag' data-day='{day}'>
 <h2>🧪 紙上模擬 · 全自動（零人工審核）</h2>
 <div class='sub'>2026-09-29 → 10-02 · 掃全宇宙 42 檔 × 每分鐘 · 完全照 PRD 規則執行,
 沒有任何人工批改。<b>進場價一律用訊號分鐘結束後第 1 秒之後的第一筆成交價</b>

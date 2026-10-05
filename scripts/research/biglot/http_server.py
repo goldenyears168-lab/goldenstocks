@@ -6,9 +6,9 @@ main()` 的一行呼叫——這正是 docs/biglot-refactor-roadmap.md 從一開
 「原檔案降級成薄殼」最終型態。
 
 依賴一律 `import biglot_dashboard` + 屬性存取（`PAGE`/`NAMES`/`TZ`/`datetime`/`ST`/
-`HOLDS`/`SHELL`/`NOTES_PATH`/`REFRESH_SEC`/`PORT`），已搬移的函式/常數
+`SHELL`/`NOTES_PATH`/`REFRESH_SEC`/`PORT`），已搬移的函式/常數
 （`render_history`/`render_help`/`GRID_SHELL`/`render_grid_frag`/`render_day`/
-`render_stock_frag`/`render_stock`/`_load_notes`/`_save_stock_note`/`_hold_toggle`/
+`render_stock_frag`/`render_stock`/`_load_notes`/`_save_stock_note`/
 `_in_market`/`ingest`/`render`/`snapshot_day`/`_paper_settle`/`_oos_update_at_close`/
 `_refresh_vol_risk_if_needed`）直接從各自現在的模組 import。
 
@@ -31,7 +31,7 @@ from biglot.day_views import render_history, render_day, snapshot_day
 from biglot.timeline_snap import render_timeline_page, render_timeline_frag, save_timeline_slot_if_due
 from biglot.stock_meta import render_help
 from biglot.render_views import GRID_SHELL, render_grid_frag, render_stock_frag, render_stock
-from biglot.user_state import _load_notes, _save_stock_note, _hold_toggle, _oos_update_at_close
+from biglot.user_state import _load_notes, _save_stock_note, _oos_update_at_close
 from biglot.utils import _in_market
 from biglot.ingest import ingest
 from biglot.render_main import render
@@ -77,6 +77,18 @@ class H(BaseHTTPRequestHandler):
                 body = json.dumps({"sids": {}, "n": 0, "err": repr(exc)}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        elif path == "/agentjs":
+            # 待批准區的前端邏輯。必須是外部腳本:/agentfrag 的片段是 innerHTML 注入,
+            # 其中的 <script> 不會執行(2026-10-05 首頁按鈕點不動的根因)。
+            from clone_agent.panels import JS
+            body = JS.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -153,17 +165,6 @@ class H(BaseHTTPRequestHandler):
                     raise ValueError("unknown sid")
                 t = _save_stock_note(sid, str(q.get("txt", "")))
                 body, code = json.dumps({"ok": True, "t": t}).encode(), 200
-            except Exception as exc:  # noqa: BLE001
-                body, code = f"err {exc!r}".encode(), 500
-        elif path == "/hold":
-            try:
-                n = int(self.headers.get("Content-Length") or 0)
-                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:1000])
-                sid = str(q.get("sid", ""))[:8]; act = str(q.get("action", ""))
-                if sid not in biglot_dashboard.NAMES or act not in ("open", "close"):
-                    raise ValueError("bad sid/action")
-                _hold_toggle(sid, act, biglot_dashboard.ST.last_px.get(sid))
-                body, code = json.dumps({"ok": True, "holds": list(biglot_dashboard.HOLDS)}).encode(), 200
             except Exception as exc:  # noqa: BLE001
                 body, code = f"err {exc!r}".encode(), 500
         elif path == "/agentdecide":
