@@ -43,6 +43,9 @@ from pathlib import Path
 sys.path.insert(0, "src")
 sys.path.insert(0, "scripts/research")
 
+from clone_agent.rules_version import label as rules_label  # noqa: E402
+from clone_agent.rules_version import load_rules, universe_sids  # noqa: E402
+
 DATA = Path.home() / "goldenstocks-data"
 RAW_DIR = DATA / "cache/biglot_live_watch"
 CACHE = DATA / "cache"
@@ -325,6 +328,8 @@ def main() -> int:
     ap.add_argument("--day", default=None)
     ap.add_argument("--scan", action="store_true",
                     help="歷史日全掃：讀一次檔後,把當天每分鐘都跑一遍（驗訊號量用）")
+    ap.add_argument("--no-rules", action="store_true",
+                    help="研究用：不套凍結名單與價格帶,保留全部代理人訊號（歷史重掃要用）")
     ap.add_argument("--asof", default=None,
                     help="歷史日重放用的時點 HH:MM（讓視窗算在那個當下,而不是現在）")
     args = ap.parse_args()
@@ -332,7 +337,12 @@ def main() -> int:
     from clone_agent.approval import intent_id
 
     day = args.day or datetime.now().strftime("%Y-%m-%d")
+    rules = load_rules()
+    rules_tag = rules_label(rules)
+    band_lo, band_hi = rules["universe"]["price_band"]
     core = core_universe()
+    if not args.no_rules:
+        core &= universe_sids(rules)
     cal = json.loads(CALIB.read_text(encoding="utf-8"))
     full_uni = {str(r["sid"]) for r in cal["universe"]}
     peers = comove_peers(full_uni)
@@ -367,7 +377,8 @@ def main() -> int:
         seen = {}
         prev_close = {k: v[1] for k, v in ma20_and_prevclose(full_uni, day).items()}
         print(f"── 換日 {day} · 昨收 {len(prev_close)} 檔 ──", flush=True)
-    print(f"訊號監看啟動 · {day} · 戰場 {len(core)} 檔 · 每 {args.interval}s 一輪 · "
+    print(f"訊號監看啟動 · {day} · 規則 {rules_tag}{'（--no-rules：未套名單/價格帶）' if args.no_rules else ''}"
+          f" · 名單 {len(core)} 檔 · 價格帶 {band_lo}–{band_hi} · 每 {args.interval}s 一輪 · "
           f"候選寫到 {out}\n⚠ 本程式不連富邦,只讀 {tape.path.name} 與期貨五檔快取", flush=True)
 
     scan_times = None
@@ -462,6 +473,9 @@ def main() -> int:
                 "mrate": rates.get(sid, 20.25) / 100,
                 "lot_cap": max(1, int((1_748_587 / 3) // per)) if per else 1,
             }, root, day)
+            if not args.no_rules and not (band_lo <= c["price"] <= band_hi):
+                continue                                   # 價格帶：與回測 in_univ 同口徑,用卡片掛價；冷卻已啟動
+            c["rules"] = rules_tag
             c["intent_id"] = intent_id(c)
             with open(out, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(c, ensure_ascii=False) + "\n")

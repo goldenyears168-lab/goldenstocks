@@ -1,0 +1,140 @@
+{
+ "id": "CA-R1",
+ "version": "1.0.0",
+ "frozen_on": "2026-10-02",
+ "backtest_window_start": "2026-09-29",
+ "status": "in-sample 規則;樣本外僅 2026-10-05 一天",
+ "universe": {
+  "battlefield_n": 23,
+  "rank_pool_n": 42,
+  "price_band": [
+   350,
+   2000
+  ],
+  "require_group": true,
+  "list_frozen_on": "2026-10-02",
+  "list_basis": "期貨 10/2 收盤價落在價格帶內 ∧ 有 SUBCAT 族群",
+  "members": [
+   {
+    "sid": "2327",
+    "name": "國巨*",
+    "group": "被動-MLCC",
+    "fut_px_1002": 633.0
+   },
+   {
+    "sid": "2408",
+    "name": "南亞科",
+    "group": "DRAM記憶體",
+    "fut_px_1002": 530.0
+   },
+   {
+    "sid": "2455",
+    "name": "全新",
+    "group": "砷化鎵-磊晶",
+    "fut_px_1002": 585.0
+   },
+   {
+    "sid": "2492",
+    "name": "華新科",
+    "group": "被動-MLCC",
+    "fut_px_1002": 363.5
+   },
+   {
+    "sid": "3037",
+    "name": "欣興",
+    "group": "ABF載板",
+    "fut_px_1002": 1304.0
+   },
+   {
+    "sid": "3105",
+    "name": "穩懋",
+    "group": "砷化鎵-PA",
+    "fut_px_1002": 596.0
+   },
+   {
+    "sid": "3189",
+    "name": "景碩",
+    "group": "ABF載板",
+    "fut_px_1002": 1055.0
+   },
+   {
+    "sid": "3324",
+    "name": "雙鴻",
+    "group": "散熱",
+    "fut_px_1002": 1515.0
+   },
+   {
+    "sid": "3532",
+    "name": "台勝科",
+    "group": "矽晶圓",
+    "fut_px_1002": 472.0
+   },
+   {
+    "sid": "6213",
+    "name": "聯茂",
+    "group": "CCL銅箔基板",
+    "fut_px_1002": 689.0
+   },
+   {
+    "sid": "6274",
+    "name": "台燿",
+    "group": "CCL銅箔基板",
+    "fut_px_1002": 1630.0
+   },
+   {
+    "sid": "6488",
+    "name": "環球晶",
+    "group": "矽晶圓",
+    "fut_px_1002": 1190.0
+   },
+   {
+    "sid": "8046",
+    "name": "南電",
+    "group": "ABF載板",
+    "fut_px_1002": 1472.0
+   }
+  ]
+ },
+ "signal": {
+  "big_amt": 10000000,
+  "retail_cap": 5000000,
+  "amt_pct_min": 30,
+  "amt_pct_strict": 70,
+  "pullback_max": -0.5,
+  "pullback_strict": -1.0,
+  "chg_cm_strict": 50,
+  "skip_hours": [
+   12,
+   13
+  ],
+  "recheck_min": 20
+ },
+ "entry": {
+  "style": "被動限價",
+  "price": "期貨買一再下1檔",
+  "lots": 1,
+  "shares_per_lot": 2000
+ },
+ "order": {
+  "policy": "fcfs",
+  "one_per_stock": false,
+  "queue_model": "qpro",
+  "submit_lag_s": 5,
+  "ttl": "收盤前一直掛"
+ },
+ "capital": {
+  "margin_cap": 1470000,
+  "equity": 1748587,
+  "pending_new_orders_consume_margin": true
+ },
+ "exit": {
+  "hold_min": 60,
+  "price": "最後成交價",
+  "session_end": "13:45"
+ },
+ "cost": {
+  "fee_per_lot_per_side": 176,
+  "fee_basis": "牌價(議價未確認)",
+  "futures_tax_rate_per_side": 2e-05
+ }
+}

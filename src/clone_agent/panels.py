@@ -423,6 +423,7 @@ def render_agent_page(day: str) -> str:
 <th style='text-align:left'>略過原因</th><th style='text-align:left'>我改了什麼</th></tr>
 {arb or "<tr><td colspan=8 class='dim'>還沒有裁決紀錄</td></tr>"}</table>
 
+<div class='sub'>機器人規則、回測研究與「最常見故事」→ <a href='/agentrules'>代理人規則頁</a>（下方 ⑤ 是依人類下單習慣整理的舊規格）</div>
 <details><summary>⑤ 量化規格（點開）</summary>{_spec()}</details>
 <script>const AGDAY={json.dumps(day)};{JS}</script></div>"""
 

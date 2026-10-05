@@ -101,6 +101,12 @@ class H(BaseHTTPRequestHandler):
                 body = render_agent_page(day).encode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 body = f"<div class='meta'>agent page error: {html_mod.escape(repr(exc))}</div>".encode()
+        elif path == "/agentrules":
+            try:
+                from clone_agent.rules_page import render_rules_page
+                body = render_rules_page().encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                body = f"<div class='meta'>agent rules page error: {html_mod.escape(repr(exc))}</div>".encode()
         elif path == "/disposal":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_disposal(str(q.get("tab", "all"))[:10]).encode("utf-8")
