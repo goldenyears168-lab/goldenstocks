@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """用 trader_signal_watch 的歷史全掃(--scan)重算某天代理人的訊號,寫到暫存目錄,不碰 clone_agent 的正式候選檔。
 
-用法: PYTHONPATH=src .venv/bin/python scripts/research/clone_agent_scan_history.py 2026-09-29 [--out-dir DIR] [--hi-win 分鐘] [--recheck-min 分鐘] [--no-rank-filter] [--signal-start HH:MM(研究用:覆蓋 09:30)]
+用法: PYTHONPATH=src .venv/bin/python scripts/research/clone_agent_scan_history.py 2026-09-29 [--out-dir DIR] [--hi-win 分鐘] [--recheck-min 分鐘] [--no-rank-filter] [--signal-start HH:MM(研究用:覆蓋 09:30)] [--flow-trace] [--end HH:MM]
 """
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ for flag in ("--hi-win", "--recheck-min"):
         extra += [flag, sys.argv[sys.argv.index(flag) + 1]]
 if "--no-rank-filter" in sys.argv:
     extra.append("--no-rank-filter")
+if "--flow-trace" in sys.argv:     # 研究用:②⑤與避開12-13點全放寬,逐分鐘記錄每檔的流量排名(供撤單條件重放)
+    w.PULLBACK_MAX, w.AMT_PCT_MIN, w.SKIP_HOURS = 1e9, -1, ()
+if "--end" in sys.argv:
+    extra += ["--end", sys.argv[sys.argv.index("--end") + 1]]
 if "--signal-start" in sys.argv:
     w.SIGNAL_START = sys.argv[sys.argv.index("--signal-start") + 1]
 sys.argv = ["trader_signal_watch", "--day", day, "--scan", "--no-rules", *extra]
