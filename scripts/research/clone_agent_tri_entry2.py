@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """研究用:H0 與現行 ★4 的逐筆紀錄,比較兩種進場(買一賣一價差≤1檔才下單,不套保證金/價格帶):
-E1=一律吃賣一立即成交;E2=限價掛「當下成交價」(夾在買一~賣一之間):外盤=吃賣一立即成交、內盤=在買一排隊(qpro/qcons/qopt),收盤13:30前一直掛。
+E1=一律吃賣一立即成交;E2=限價掛「當下成交價」(夾在買一~賣一之間):外盤=吃賣一立即成交、內盤=在買一排隊(qpro/qcons/qopt),最多掛 TTL 秒(預設300=5分鐘,逾時撤單不成交)。
 報酬率=持有60/90分(自成交起,上限13:30,未滿者剔除)的買一/最後成交出場。成本=手續費2×176+期貨稅2e-5/邊。
 用法: PYTHONPATH=src .venv/bin/python scripts/research/clone_agent_tri_entry2.py IS|HOLD
 """
@@ -21,6 +21,7 @@ import clone_agent_wide5m_backtest as m  # noqa: E402
 from clone_agent.rules_version import load_rules, universe_sids  # noqa: E402
 
 FEE, TAX, LAG, CLOSE = 176.0, 2e-5, 5, "13:30:00"
+TTL = 300
 HOLDS = (60, 90)
 QM = ("qpro", "qcons", "qopt")
 
@@ -81,7 +82,7 @@ def main():
             close_t = bt.epoch(d, CLOSE)
             fills = {"E1": (t0, ask)}
             for mode in QM:
-                tf, px, *_ = bt.simulate_queue(tr, bk, L, t0, mode, close_t)
+                tf, px, *_ = bt.simulate_queue(tr, bk, L, t0, mode, min(close_t, t0 + TTL))
                 fills[f"E2{mode}"] = (tf, px)
             rec["status"] = "ok"
             for nm, (tf, px0) in fills.items():
@@ -106,8 +107,8 @@ def main():
                         rec[f"{nm}_bps{h}_{kind}"] = 1e4 * (px / px0 - 1)
                         rec[f"{nm}_netbps{h}_{kind}"] = 1e4 * (gross - cost) / (px0 * c["shares"])
     df = pd.DataFrame(rows)
-    df.to_csv(th.OUT / "entry2_trades.csv", index=False)
-    print(f"{th.MODE} 寫出 {th.OUT / 'entry2_trades.csv'} 共{len(df)}列")
+    df.to_csv(th.OUT / "entry2_ttl5_trades.csv", index=False)
+    print(f"{th.MODE} 寫出 {th.OUT / 'entry2_ttl5_trades.csv'} 共{len(df)}列")
 
 
 if __name__ == "__main__":
