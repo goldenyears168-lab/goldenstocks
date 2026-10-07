@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PINNED = {"1.0.0": "b05ddc2aa2", "1.0.1": "1dcca3dcf3", "1.2.0": "84f1165745"}   # 版本號 → 規則指紋；改參數就要新增一列並升 version
+PINNED = {"1.0.0": "b05ddc2aa2", "1.0.1": "1dcca3dcf3", "1.2.0": "84f1165745", "1.2.1": "d753d168d7", "1.2.2": "779ae1a540"}   # 版本號 → 規則指紋；改參數就要新增一列並升 version
 
 
 class CloneRulesTest(unittest.TestCase):

@@ -131,35 +131,30 @@ class CloneApprovalTest(unittest.TestCase):
         from clone_agent.panels import render_agent_page
         html = render_agent_page(self.day)
         self.assertIn("操盤手代理人", html)
-        for f in ("f-px", "f-lot", "f-note"):      # 價格/口數/理由必須是可編輯欄位
-            self.assertIn(f, html)
         self.assertIn("不會送出任何委託單", html)
 
-    def test_blocked_candidates_have_no_submit_buttons(self):
-        """被規則擋下的候選仍要顯示（供覆盤），但排在後面且標記出來。"""
-        from clone_agent.panels import render_agent_page
-        html = render_agent_page(self.day)
-        self.assertIn("被規則擋下", html)
+    def test_no_pending_card_ui(self):
+        """2026-10-06 起移除待批准卡片與批准/略過按鈕：頁面與片段都不得再出現。"""
+        from clone_agent.panels import JS, render_agent_page, render_pending_block
+        for html in (render_agent_page(self.day), render_pending_block(self.day)):
+            for tok in ("data-act", "f-px", "f-lot", "f-note", "data-iid", "待批准", "批准紀錄"):
+                self.assertNotIn(tok, html)
+        for tok in ("/agentdecide", "agdec", "data-act"):
+            self.assertNotIn(tok, JS)
+        self.assertIn("/agentorderswitch", JS)       # 關閉自動送單開關仍在
 
     def test_pending_fragment_is_inert_html_without_script(self):
-        """/agentfrag 是 innerHTML 注入,內含 <script> 不會執行(首頁按鈕點不動的根因)。
-        片段必須不含 <script>、不含 inline onclick,按鈕靠 data-act + 外部 /agentjs 的事件委派。"""
+        """/agentfrag 是 innerHTML 注入,內含 <script> 不會執行;按鈕靠 data-sw + 外部 /agentjs 事件委派。"""
         from clone_agent.panels import render_pending_block
         html = render_pending_block(self.day)
         self.assertNotIn("<script", html)
         self.assertNotIn("onclick", html)
-        self.assertNotIn("oninput", html)
-        self.assertEqual(html.count("data-act='approve'"), 2)
-        self.assertEqual(html.count("data-act='skip'"), 2)
-        for i in self.ids:
-            self.assertIn(f"data-iid='{i}'", html)
         self.assertIn(f"data-day='{self.day}'", html)
 
-    def test_agent_js_reads_day_from_dom_and_posts_decide(self):
-        from clone_agent.panels import JS
-        self.assertIn("dataset.day", JS)
-        self.assertIn("/agentdecide", JS)
-        self.assertNotIn("AGDAY", JS)
+    def test_decide_route_removed(self):
+        root = Path(__file__).resolve().parents[1] / "scripts" / "research" / "biglot"
+        self.assertNotIn("/agentdecide", (root / "http_server.py").read_text(encoding="utf-8"))
+        self.assertIn("/agentorderswitch", (root / "http_server.py").read_text(encoding="utf-8"))
 
     def test_dashboard_shell_loads_agentjs_and_route_exists(self):
         root = Path(__file__).resolve().parents[1] / "scripts" / "research"

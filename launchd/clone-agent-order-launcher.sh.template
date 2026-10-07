@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# 複製人代理人 Order · 獨立下單層（KeepAlive 常駐 worker）
+# 預設演練(ORDER_CLONE_AGENT_DRY_RUN=1,不登入券商、不送單);實彈只由 .env 設 ORDER_CLONE_AGENT_DRY_RUN=0。
+# 儀表板的「自動送單」開關是 data/order/clone_agent_switch.json,與本 launcher 無關。
+
+set -euo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+APP_SUPPORT="{{APP_SUPPORT}}"
+
+mkdir -p "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs/intraday" "${APP_SUPPORT}"
+mkdir -p "${HOME}/Library/Logs/com.jackm4.goldenstocks"
+
+export TZ="${TZ:-Asia/Taipei}"
+export ROOT="${ROOT}"
+export PYTHONPATH="${ROOT}/src"
+
+WORKER_PY="${ROOT}/scripts/order/run_clone_agent_worker.py"
+
+# 反重跑:鎖裡存 PID,用 kill -0 判定存活(不用時間老化,理由同 tmf-channel launcher)
+LOCKDIR="${APP_SUPPORT}/clone-agent-order.lockdir"
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+  holder="$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")"
+  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+    echo "skip: clone-agent-order worker already holding lock (pid=${holder}, alive)"
+    exit 0
+  fi
+  echo "reclaiming stale lock (holder=${holder:-unknown} not alive)"
+  rm -rf "${LOCKDIR}"
+  if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+    echo "skip: clone-agent-order worker lock race lost"
+    exit 0
+  fi
+fi
+echo "$$" > "${LOCKDIR}/pid"
+trap 'rm -rf "${LOCKDIR}" 2>/dev/null || true' EXIT
+
+for stale in $(pgrep -f "${WORKER_PY}" 2>/dev/null || true); do
+  [[ "${stale}" == "$$" ]] && continue
+  echo "reaping stale clone-agent worker pid=${stale}"
+  kill -TERM "${stale}" 2>/dev/null || true
+done
+sleep 2
+for stale in $(pgrep -f "${WORKER_PY}" 2>/dev/null || true); do
+  [[ "${stale}" == "$$" ]] && continue
+  echo "stale clone-agent worker pid=${stale} ignored SIGTERM → SIGKILL"
+  kill -KILL "${stale}" 2>/dev/null || true
+done
+
+LOG_PREFIX="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs/intraday/clone_agent_order"
+ROTATING_TEE="${ROOT}/scripts/launchd/rotating_tee.py"
+_tick_log() { printf '%s_%s.log' "${LOG_PREFIX}" "$(date '+%Y%m%d')"; }
+
+_load_env_file() {
+  local path="$1"
+  local label="$2"
+  if [[ ! -r "${path}" ]]; then
+    return 0
+  fi
+  set +e
+  set -a
+  # shellcheck disable=SC1090
+  source "${path}" 2>/dev/null
+  local rc=$?
+  set +a
+  set -e
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "WARN: cannot source ${label} (${path}) rc=${rc} · continue with defaults"
+  fi
+}
+
+_load_env_file "${APP_SUPPORT}/order.env" "order.env"
+_load_env_file "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/.env" "project .env"
+
+export ORDER_CLONE_AGENT_DRY_RUN="${ORDER_CLONE_AGENT_DRY_RUN:-1}"
+
+PYTHON="${ROOT}/.venv-fubon/bin/python"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing .venv-fubon python: ${PYTHON}"
+  exit 1
+fi
+
+echo "=== launchd clone-agent-order WORKER start $(date '+%Y-%m-%d %H:%M:%S') dry=${ORDER_CLONE_AGENT_DRY_RUN} ===" | tee -a "$(_tick_log)"
+
+set +e
+"${PYTHON}" "${WORKER_PY}" 2>&1 | "${PYTHON}" "${ROTATING_TEE}" "${LOG_PREFIX}"
+EXIT=${PIPESTATUS[0]}
+set -e
+
+echo "=== launchd clone-agent-order WORKER end exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ===" | tee -a "$(_tick_log)"
+exit "${EXIT}"

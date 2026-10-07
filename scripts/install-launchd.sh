@@ -26,13 +26,15 @@ LABELS=(
   com.jackm4.goldenstocks.leading-dip-poll
   com.jackm4.goldenstocks.songshan-copytrade-poll
   com.jackm4.goldenstocks.tmf-channel-poll
+  com.jackm4.goldenstocks.clone-agent-order
+  com.jackm4.goldenstocks.clone-agent-supervisor
+  com.jackm4.goldenstocks.biglot-dashboard
   com.jackm4.goldenstocks.tmf-sim-server
   com.jackm4.goldenstocks.expert-pool-staged-gate
   com.jackm4.goldenstocks.nightly-expert-digest
   com.jackm4.goldenstocks.chip-daily-brief
   com.jackm4.goldenstocks.chip-loud-accum-track
   com.jackm4.goldenstocks.second-disp-expert-pool-watch
-  com.jackm4.goldenstocks.songshan-follow-watch
   com.jackm4.goldenstocks.tape-bars-backfill
   com.jackm4.goldenstocks.expert-pool-chart-digest
   com.jackm4.goldenstocks.holdings-branch-sell-monitor
@@ -56,13 +58,15 @@ TEMPLATES=(
   com.jackm4.goldenstocks.leading-dip-poll.plist.template
   com.jackm4.goldenstocks.songshan-copytrade-poll.plist.template
   com.jackm4.goldenstocks.tmf-channel-poll.plist.template
+  com.jackm4.goldenstocks.clone-agent-order.plist.template
+  com.jackm4.goldenstocks.clone-agent-supervisor.plist.template
+  com.jackm4.goldenstocks.biglot-dashboard.plist.template
   com.jackm4.goldenstocks.tmf-sim-server.plist.template
   com.jackm4.goldenstocks.expert-pool-staged-gate.plist.template
   com.jackm4.goldenstocks.nightly-expert-digest.plist.template
   com.jackm4.goldenstocks.chip-daily-brief.plist.template
   com.jackm4.goldenstocks.chip-loud-accum-track.plist.template
   com.jackm4.goldenstocks.second-disp-expert-pool-watch.plist.template
-  com.jackm4.goldenstocks.songshan-follow-watch.plist.template
   com.jackm4.goldenstocks.tape-bars-backfill.plist.template
   com.jackm4.goldenstocks.expert-pool-chart-digest.plist.template
   com.jackm4.goldenstocks.holdings-branch-sell-monitor.plist.template
@@ -99,8 +103,6 @@ usage() {
     chip-daily-brief       週一至五 21:00（籌碼 v4 偏多/偏空名單 + 今日回顧 + 提醒 · 唯讀 · 不下單
                            休市日自行靜默跳過；開關 .env RUN_CHIP_DAILY_BRIEF）
     second-disp-expert-pool-watch  週一至五 20:35（處置股專家池跟單 · T0濾網 · 不下單）
-    songshan-follow-watch      週一至五 21:00（9217 凱基松山跟單 PIT 留痕 · observe only ·
-                               預設不寄信〔20:00 digest 已寄同內容〕· 不下單）
     tape-bars-backfill         週一至五 22:30（分點 tape 活躍標的的 stock_daily_bars 補檔 ·
                                預算制 250 檔/輪 · 補完附覆蓋率斷言 · 不下單）
     expert-pool-chart-digest   週一至五 20:05（專家池達標 HTML 圖文 · 無達標不寄 · 不下單）
@@ -123,7 +125,9 @@ usage() {
     intraday-exit-gate（結構停損閘門 · 已退回 Research）·
     evening-holdings · digests · vcp-funnel-specs · minervini-sepa-basket ·
     mutual-fund-disclosure-watch · rrg-mono-intraday-watch · weekly-deep ·
-    c18acc-extension-overlay
+    c18acc-extension-overlay ·
+    songshan-follow-watch（2026-09-24 退役 · 36檔高波動 HTML dashboard 整合決策 ·
+                          研究本身已 rejected 見 config/research.yaml · python 保留）
 
   log：盤中 ${PROJECT_ROOT}/logs/intraday/
 
@@ -248,6 +252,11 @@ RETIRED_LABELS=(
   com.goldenstocks.mini
   # 2026-08-04 退役（C18acc 策略不再採用 · src/order/c18acc_* python 保留）
   com.jackm4.goldenstocks.rrg-c18acc-poll
+  # 2026-09-24 退役（36檔高波動 HTML dashboard 整合決策：松山跟單研究本身已 rejected
+  # 見 memory「松山跟單袖現況」/ config/research.yaml，繼續留痕已無研究價值 ·
+  # python 保留；plist/launcher template 暫留在 launchd/ 原地未搬去備份目錄
+  # （agent 寫不到 goldenstocks-data/ 外部路徑），已不被此陣列引用、無害）
+  com.jackm4.goldenstocks.songshan-follow-watch
 )
 
 uninstall_retired_agents() {
@@ -420,6 +429,9 @@ render_template() {
       -e "s|{{LEADING_DIP_LAUNCHER}}|${LEADING_DIP_LAUNCHER}|g" \
       -e "s|{{SONGSHAN_COPYTRADE_LAUNCHER}}|${SONGSHAN_COPYTRADE_LAUNCHER}|g" \
       -e "s|{{TMF_CHANNEL_LAUNCHER}}|${TMF_CHANNEL_LAUNCHER}|g" \
+      -e "s|{{CLONE_AGENT_ORDER_LAUNCHER}}|${CLONE_AGENT_ORDER_LAUNCHER}|g" \
+      -e "s|{{CLONE_AGENT_SUPERVISOR_LAUNCHER}}|${CLONE_AGENT_SUPERVISOR_LAUNCHER}|g" \
+      -e "s|{{BIGLOT_DASHBOARD_LAUNCHER}}|${BIGLOT_DASHBOARD_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_LAUNCHER}}|${MOMENTUM_ROTATION_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_WATCH_LAUNCHER}}|${MOMENTUM_ROTATION_WATCH_LAUNCHER}|g" \
       -e "s|{{EP_STAGED_GATE_LAUNCHER}}|${EP_STAGED_GATE_LAUNCHER}|g" \
@@ -427,7 +439,6 @@ render_template() {
       -e "s|{{CHIP_DAILY_BRIEF_LAUNCHER}}|${CHIP_DAILY_BRIEF_LAUNCHER}|g" \
       -e "s|{{CHIP_LOUD_ACCUM_TRACK_LAUNCHER}}|${CHIP_LOUD_ACCUM_TRACK_LAUNCHER}|g" \
       -e "s|{{SECOND_DISP_EXPERT_LAUNCHER}}|${SECOND_DISP_EXPERT_LAUNCHER}|g" \
-      -e "s|{{SONGSHAN_FOLLOW_WATCH_LAUNCHER}}|${SONGSHAN_FOLLOW_WATCH_LAUNCHER}|g" \
       -e "s|{{TAPE_BARS_BACKFILL_LAUNCHER}}|${TAPE_BARS_BACKFILL_LAUNCHER}|g" \
       -e "s|{{EXPERT_POOL_CHART_LAUNCHER}}|${EXPERT_POOL_CHART_LAUNCHER}|g" \
       -e "s|{{HOLDINGS_BRANCH_SELL_LAUNCHER}}|${HOLDINGS_BRANCH_SELL_LAUNCHER}|g" \
@@ -546,6 +557,48 @@ install_tmf_channel_launcher() {
   chmod +x "${TMF_CHANNEL_LAUNCHER}"
 }
 
+install_clone_agent_order_launcher() {
+  local src="${LAUNCHD_SRC}/clone-agent-order-launcher.sh.template"
+  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
+  CLONE_AGENT_ORDER_LAUNCHER="${app_support}/clone-agent-order.sh"
+  if [[ ! -f "${src}" ]]; then
+    echo "✗ 缺少 ${src}" >&2
+    exit 1
+  fi
+  mkdir -p "${app_support}"
+  APP_SUPPORT="${app_support}"
+  render_template "${src}" "${CLONE_AGENT_ORDER_LAUNCHER}"
+  chmod +x "${CLONE_AGENT_ORDER_LAUNCHER}"
+}
+
+install_clone_agent_supervisor_launcher() {
+  local src="${LAUNCHD_SRC}/clone-agent-supervisor-launcher.sh.template"
+  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
+  CLONE_AGENT_SUPERVISOR_LAUNCHER="${app_support}/clone-agent-supervisor.sh"
+  if [[ ! -f "${src}" ]]; then
+    echo "✗ 缺少 ${src}" >&2
+    exit 1
+  fi
+  mkdir -p "${app_support}"
+  APP_SUPPORT="${app_support}"
+  render_template "${src}" "${CLONE_AGENT_SUPERVISOR_LAUNCHER}"
+  chmod +x "${CLONE_AGENT_SUPERVISOR_LAUNCHER}"
+}
+
+install_biglot_dashboard_launcher() {
+  local src="${LAUNCHD_SRC}/biglot-dashboard-launcher.sh.template"
+  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
+  BIGLOT_DASHBOARD_LAUNCHER="${app_support}/biglot-dashboard.sh"
+  if [[ ! -f "${src}" ]]; then
+    echo "✗ 缺少 ${src}" >&2
+    exit 1
+  fi
+  mkdir -p "${app_support}"
+  APP_SUPPORT="${app_support}"
+  render_template "${src}" "${BIGLOT_DASHBOARD_LAUNCHER}"
+  chmod +x "${BIGLOT_DASHBOARD_LAUNCHER}"
+}
+
 install_momentum_rotation_launcher() {
   local src="${LAUNCHD_SRC}/momentum-rotation-poll-launcher.sh.template"
   local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
@@ -638,19 +691,6 @@ install_second_disp_expert_launcher() {
   mkdir -p "${app_support}"
   render_template "${src}" "${SECOND_DISP_EXPERT_LAUNCHER}"
   chmod +x "${SECOND_DISP_EXPERT_LAUNCHER}"
-}
-
-install_songshan_follow_watch_launcher() {
-  local src="${LAUNCHD_SRC}/songshan-follow-watch-launcher.sh.template"
-  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
-  SONGSHAN_FOLLOW_WATCH_LAUNCHER="${app_support}/songshan-follow-watch.sh"
-  if [[ ! -f "${src}" ]]; then
-    echo "✗ 缺少 ${src}" >&2
-    exit 1
-  fi
-  mkdir -p "${app_support}"
-  render_template "${src}" "${SONGSHAN_FOLLOW_WATCH_LAUNCHER}"
-  chmod +x "${SONGSHAN_FOLLOW_WATCH_LAUNCHER}"
 }
 
 install_tape_bars_backfill_launcher() {
@@ -1028,6 +1068,9 @@ install_agents() {
   LEADING_DIP_LAUNCHER=""
   SONGSHAN_COPYTRADE_LAUNCHER=""
   TMF_CHANNEL_LAUNCHER=""
+  CLONE_AGENT_ORDER_LAUNCHER=""
+  CLONE_AGENT_SUPERVISOR_LAUNCHER=""
+  BIGLOT_DASHBOARD_LAUNCHER=""
   MOMENTUM_ROTATION_LAUNCHER=""
   MOMENTUM_ROTATION_WATCH_LAUNCHER=""
   EP_STAGED_GATE_LAUNCHER=""
@@ -1035,7 +1078,6 @@ install_agents() {
   CHIP_DAILY_BRIEF_LAUNCHER=""
   CHIP_LOUD_ACCUM_TRACK_LAUNCHER=""
   SECOND_DISP_EXPERT_LAUNCHER=""
-  SONGSHAN_FOLLOW_WATCH_LAUNCHER=""
   TAPE_BARS_BACKFILL_LAUNCHER=""
   EXPERT_POOL_CHART_LAUNCHER=""
   HOLDINGS_BRANCH_SELL_LAUNCHER=""
@@ -1066,6 +1108,9 @@ install_agents() {
   install_leading_dip_launcher
   install_songshan_copytrade_launcher
   install_tmf_channel_launcher
+  install_clone_agent_order_launcher
+  install_clone_agent_supervisor_launcher
+  install_biglot_dashboard_launcher
   install_futopt_fill_listener_launcher
   install_futopt_books_collect_launcher
   install_momentum_rotation_launcher
@@ -1075,7 +1120,6 @@ install_agents() {
   install_chip_daily_brief_launcher
   install_chip_loud_accum_track_launcher
   install_second_disp_expert_launcher
-  install_songshan_follow_watch_launcher
   install_tape_bars_backfill_launcher
   install_expert_pool_chart_launcher
   install_holdings_branch_sell_launcher

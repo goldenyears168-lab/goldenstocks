@@ -8,8 +8,8 @@
 我原本把「架構乾淨」排在「他用得到」前面，那是錯的優先順序。安全邊界仍在
 ——本套件不 import 富邦 SDK、不 import `src/order/`，由測試掃描釘住。
 
-委託卡的價格／口數／理由是**可編輯**的：代理人給建議，人改完再送。他改了什麼比
-他按了什麼更有價值 —— 改動量就是「規則離他的腦袋還差多遠」的量尺。
+2026-10-06 起頁面不再有待批准卡片與批准／略過按鈕：實單由下單層自動送出，
+能擋單的只有「關閉自動送單」與 AI 監督員撤單。
 """
 from __future__ import annotations
 
@@ -17,9 +17,8 @@ import html
 import json
 from typing import Any
 
-from clone_agent.approval import (
-    SKIP_REASONS, _data_dir, load_candidates, load_decisions,
-)
+from clone_agent.approval import _data_dir, load_candidates, load_decisions
+from clone_agent.order_switch import read_heartbeat, read_ledger_display, read_switch
 
 CSS = """
 /* ★ body/html 必須自己設底色：/agent 與 /paper 回的是沒有 <html><body> 包裹的片段,
@@ -99,37 +98,20 @@ body{padding:10px 12px 40px}
 JS = """
 (function(){
 if(window.__agInit) return; window.__agInit=true;
-function mg(el){
-  const c=el.closest('.card'), p=+c.querySelector('.f-px').value, l=+c.querySelector('.f-lot').value;
-  const sh=+c.dataset.sh, rt=+c.dataset.rate, eq=+c.dataset.eq, cap=+c.dataset.cap;
-  const m=p*sh*rt*l;
-  c.querySelector('.f-mg').textContent=isFinite(m)?Math.round(m).toLocaleString():'—';
-  c.querySelector('.f-leg').textContent=isFinite(m)?(100*m/eq).toFixed(1)+'%':'—';
-  c.querySelector('.f-lot').parentElement.classList.toggle('chg', l!==+c.dataset.lot0);
-  c.querySelector('.f-px').parentElement.classList.toggle('chg', p!==+c.dataset.px0);
-  c.querySelector('.f-warn').textContent = l>cap ? ('⚠ 超過價格帶上限 '+cap+' 口') : '';
-}
-async function agdec(btn){
-  const c=btn.closest('.card'), root=btn.closest('.ag');
-  const bs=c.querySelectorAll('button'); bs.forEach(x=>x.disabled=true);
-  const d=btn.dataset.act, sel=c.querySelector('select.f-sr');
+async function ordsw(btn){
+  const want=btn.dataset.sw==='on';
+  if(want && btn.dataset.mode==='live' && !confirm('開啟後,新卡片會用真實帳戶自動送出限價買單。確定開啟?')) return;
+  btn.disabled=true;
   try{
-    const r=await fetch('/agentdecide',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({day:root.dataset.day,intent_id:c.dataset.iid,decision:d,
-        skip_reason:d==='skip'&&sel?sel.value:'',
-        edited:{price:+c.querySelector('.f-px').value,lot:+c.querySelector('.f-lot').value,
-                note:c.querySelector('.f-note').value}})});
+    const r=await fetch('/agentorderswitch',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:want})});
     if(!r.ok) throw new Error(r.status+' '+await r.text());
     if(window.__agRefresh) await window.__agRefresh(true); else location.reload();
-  }catch(e){alert('寫入失敗: '+e.message); bs.forEach(x=>x.disabled=false);}
+  }catch(e){alert('切換失敗: '+e.message); btn.disabled=false;}
 }
 document.addEventListener('click',function(e){
-  const b=e.target.closest('button[data-act]');
-  if(b && b.closest('.ag')) agdec(b);
-});
-document.addEventListener('input',function(e){
-  const t=e.target;
-  if(t.matches&&t.matches('.ag .f-px,.ag .f-lot')) mg(t);
+  const sw=e.target.closest('button[data-sw]');
+  if(sw) ordsw(sw);
 });
 })();
 """
@@ -160,94 +142,154 @@ def _esc(v: Any) -> str:
     return html.escape(str(v if v is not None else ""))
 
 
-# ------------------------------------------------------------ 待批准卡
-
-def _card(c: dict[str, Any], dec: dict[str, Any] | None) -> str:
-    iid = c["intent_id"]
-    blk = c.get("verdict") == "blocked"
-    px, lot = c.get("price") or 0, c.get("lot", 1) or 1
-    sh, rate = c.get("shares", 2000), c.get("rate", 0.2025)
-    eq, cap = c.get("equity", 1_748_587), c.get("lot_cap", 1)
-    mg = px * sh * rate * lot
-    st = c.get("stars")
-    star_cls = {4: "background:#1f6feb", 3: "background:#2d7d46",
-                2: "background:#6b4a10;color:#e3b341",
-                1: "background:#30363d;color:#8b949e",
-                0: "background:#21262d;color:#484f58"}.get(st, "background:#30363d")
-    hits = "".join(f"<li class='hit'>{_esc(x)}</li>" for x in c.get("hits", []))
-    bon = "".join(f"<li class='bonus'>{_esc(x)}</li>" for x in c.get("bonus", []))
-    rk = "".join(f"<li class='risk'>{_esc(x)}</li>" for x in c.get("risks", []))
-
-    if dec:
-        e = dec.get("edited") or {}
-        chg = "．".join(f"{k} 改成 {v}" for k, v in e.items() if k != "note")
-        note = e.get("note", "")
-        lab = "已批准" if dec["decision"] == "approve" else f"已略過（{dec.get('skip_reason') or '未填'}）"
-        extra = (f"<span class='t'>{_esc(chg)}</span>" if chg else "") + \
-                (f"<span class='t'>備註：{_esc(note)}</span>" if note else "")
-        body = (f"<div class='btns'><span class='vd {'a' if dec['decision']=='approve' else 's'}'>"
-                f"{_esc(lab)}</span>{extra}<span class='t'>{_esc(dec.get('decided_at',''))[:19]}</span></div>")
-    else:
-        opts = "".join(f"<option>{_esc(r)}</option>" for r in SKIP_REASONS)
-        body = f"""<div class='ed'>
- <label><span>倉別·方向</span><b>{_esc(c.get('action'))}</b></label>
- <label><span>委託價格（可改）</span><input class='f-px' type='number' step='any' value='{px}'></label>
- <label><span>口數（可改，上限 {cap}）</span><input class='f-lot' type='number' min='1' max='20' value='{lot}'></label>
- <label><span>使用保證金（{rate*100:.2f}%）</span><b class='f-mg'>{_n(mg)}</b></label>
- <label><span>佔權益</span><b class='f-leg'>{100*mg/eq:.1f}%</b></label>
-</div>
-<div class='t f-warn' style='color:#e3b341'></div>
-<div class='t'>{_esc(c.get('price_note'))}</div>
-<ul>{hits}{bon}{rk}</ul>
-<input class='note f-note' placeholder='理由／備註（可補你自己的判斷，會一起存進帳本）'>
-<div class='btns'><button data-act='approve'>批准（記錄）</button>
-<select class='f-sr'>{opts}</select>
-<button class='sk' data-act='skip'>略過</button></div>"""
-
-    return f"""<div class='card{' done' if dec else ''}{' blk' if blk else ''}' data-iid='{iid}'
- data-sh='{sh}' data-rate='{rate}' data-eq='{eq}' data-cap='{cap}' data-px0='{px}' data-lot0='{lot}'>
- <div class='hd'><span class='nm'>{_esc(c.get('uname'))}
-  <span class='t'>{_esc(c.get('symbol'))}</span>
-  <span class='tag{' c' if blk else ''}'>{_esc(c.get('action'))}</span>
-  {f"<span class='tag' style='{star_cls}'>{_esc(c.get('tier'))}</span>" if st is not None else ""}</span>
-  <span class='t'>{_esc(c.get('time'))}</span></div>
- {body}</div>"""
-
-
 #: 首頁 agentbox 是嵌在主儀表板裡的片段,主頁已有 body 樣式,這裡不可重設 body
 #: （重設會把主表的邊距一起改掉）。只有獨立頁 /agent /paper 才需要 body 底色。
 FRAG_CSS = CSS.split("/* 色票", 1)[1]
 FRAG_CSS = "/* 色票" + FRAG_CSS
 
 
-def render_pending_block(day: str) -> str:
-    """儀表板首頁最上方的精簡待批准區（由 /agentfrag 輪詢換內容）。
+def render_ai_view(day: str | None = None) -> str:
+    """AI 監督員(影子階段)看法:只讀 data/agent/clone_agent_view.json,沒有按鈕、沒有任何寫入。"""
+    from datetime import datetime
+    from clone_agent.agent_supervisor import read_view
+    v = read_view()
+    if not v:
+        return "<div class='sub' style='margin:0 0 6px;color:#8b949e'>🧠 AI 監督員:尚無看法(影子階段,09:50 起每 10 分鐘巡檢)</div>"
+    age = None
+    try:
+        age = (datetime.now() - datetime.fromisoformat(v["updated_at"])).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        pass
+    stale = age is not None and age > 1500 and "09:50" <= datetime.now().strftime("%H:%M") <= "13:40"
+    head = (f"🧠 AI 監督員 <b style='color:#e3b341'>{'撤單已授權·出場影子' if v.get('stage') == 'cancel' else '影子'}</b>　{_esc(str(v.get('updated_at'))[11:19])}"
+            f"　{_esc({'patrol': '巡檢', 'post_send': '送單後複核', 'eod': '收盤檢討'}.get(v.get('kind'), v.get('kind')))}"
+            + (" <b style='color:#ff7b72'>（超過 25 分鐘沒更新）</b>" if stale else "")
+            + ("" if v.get("ok") else f" <b style='color:#ff7b72'>（本輪無輸出:{_esc(v.get('error'))}）</b>")
+            + f"　<span style='color:#8b949e'>延遲 {v.get('latency_sec')}s／不執行任何動作,只記錄</span>")
+    col = {"hold": "#8b949e", "keep": "#8b949e", "cancel": "#e3b341", "exit": "#ff7b72", "no_data": "#8b949e"}
+    items = "".join(
+        f"<div>・<b>{_esc(i.get('name') or i.get('sid'))}</b> {'持倉' if i.get('kind') == 'position' else '委託'}"
+        + (f" {i['pnl_bps']:+.0f}bps" if isinstance(i.get("pnl_bps"), (int, float)) else "")
+        + f" <b style='color:{col.get(i.get('verdict'), '#8b949e')}'>{_esc(i.get('verdict'))}</b>"
+        + (f"（信心 {i['confidence']:.2f}）" if isinstance(i.get("confidence"), (int, float)) else "")
+        + (f" 觸發 {_esc('/'.join(i['triggers_met']))}" if i.get("triggers_met") else "")
+        + f" <span class='t'>{_esc(i.get('reason'))}</span></div>" for i in v.get("items") or [])
+    acts = "".join(f"<div style='color:#e3b341'>{_act_label(a)}:{_esc(a.get('type'))} {_esc(a.get('sid'))} {_esc(a.get('trigger_id'))}"
+                   f"（護欄:{_esc(a.get('guard'))}）{_esc(a.get('reason'))}</div>" for a in v.get("shadow_actions") or [])
+    mk = (v.get("market") or {}).get("view")
+    return (f"<div class='sub' style='margin:0 0 6px;border:1px solid #30363d;border-radius:5px;padding:6px 8px'>{head}"
+            f"<div style='margin-top:4px'>{_esc(v.get('summary'))}</div>"
+            + (f"<div class='t' style='margin-top:2px'>盤面：{_esc(mk)}</div>" if mk else "")
+            + items + acts
+            + (f"<div class='t' style='margin-top:2px'>下輪看:{_esc('；'.join(v.get('next_watch') or []))}</div>" if v.get("next_watch") else "")
+            + _ai_history(day)
+            + "</div>")
 
-    沒有候選時只留一行細字,不佔版面 —— 盤中主表才是他真正在盯的東西。
-    有候選時直接展開成可編輯的完整卡片,**不需要點進任何連結**：他說會在數秒內
-    確認批准,任何需要切視窗或點連結的設計都做不到數秒。
+
+def _act_label(a: dict[str, Any]) -> str:
+    ex = str(a.get("executed") or "")
+    if ex.startswith("cancel_requested"):
+        return "<b style='color:#f85149'>已請求撤單</b>"
+    return f"影子提案{'(未送出:' + _esc(ex) + ')' if ex else ''}"
+
+
+def _ai_history(day: str | None) -> str:
+    from datetime import datetime
+    from clone_agent.agent_supervisor import read_journal
+    recs = read_journal(day or datetime.now().strftime("%Y-%m-%d"))
+    if not recs:
+        return ""
+    kind_t = {"patrol": "巡檢", "post_send": "送單後複核", "eod": "收盤檢討"}
+    rows = []
+    for r in reversed(recs[-40:]):
+        rv, meta = r.get("review") or {}, r.get("meta") or {}
+        acts = r.get("shadow_actions") or []
+        head = (f"{_esc(str(r.get('ts'))[11:19])} {_esc(kind_t.get(r.get('kind'), r.get('kind')))}"
+                + ("" if not meta.get("is_error") else " <b style='color:#ff7b72'>無輸出</b>")
+                + (f" <b style='color:#e3b341'>提案×{len(acts)}</b>" if acts else ""))
+        body = (f"<div>{_esc(rv.get('summary') or '(無摘要)')}</div>"
+                + (f"<div class='t'>盤面：{_esc((rv.get('market') or {}).get('view'))}</div>" if (rv.get("market") or {}).get("view") else "")
+                + "".join(f"<div style='color:#e3b341'>{_act_label(a)}:{_esc(a.get('type'))} {_esc(a.get('sid'))} {_esc(a.get('trigger_id'))} {_esc(a.get('reason'))}</div>" for a in acts)
+                + (f"<div class='t'>下輪看:{_esc('；'.join(rv.get('next_watch') or []))}</div>" if rv.get("next_watch") else ""))
+        rows.append(f"<details style='margin-top:3px'><summary style='cursor:pointer'>{head}</summary>"
+                    f"<div style='margin:2px 0 4px 14px'>{body}</div></details>")
+    return (f"<details style='margin-top:6px'><summary style='cursor:pointer;color:#79c0ff'>今日 AI 紀錄（{len(recs)} 輪，點開看每輪寫了什麼）</summary>"
+            + "".join(rows) + "</details>")
+
+
+def _order_window() -> str:
+    """實單視窗文字：優先讀下單層心跳（來自 ORDER_CLONE_AGENT_START/END），舊心跳沒有就退回下單層預設。"""
+    w = read_heartbeat().get("window")
+    if isinstance(w, list) and len(w) == 2:
+        return f"{w[0]}–{w[1]}"
+    return "10:00–12:00"
+
+
+def render_order_strip(day: str) -> str:
+    """實單層狀態列:只讀 order_switch 的三個 JSON,不碰券商。按鈕只改開關檔。"""
+    from datetime import datetime
+    sw, hb, led = read_switch(), read_heartbeat(), read_ledger_display(day)
+    ents = list((led.get("entries") or {}).values())
+    cap = float(hb.get("margin_cap") or 1_470_000)
+    mode = hb.get("mode") or "?"
+    age = None
+    try:
+        age = (datetime.now().astimezone() - datetime.fromisoformat(hb["ts"])).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        pass
+    alive = age is not None and age < 90
+    if not alive:
+        life = "<span style='color:#ff7b72'>● 下單層未運行</span>"
+    else:
+        life = "<span style='color:#3fb950'>● 運行中</span>"
+    mode_t = {"live": "<b style='color:#ff7b72'>實單</b>", "dry": "<b style='color:#e3b341'>演練(不送單)</b>"}.get(mode, "?")
+    n = lambda *st: sum(1 for e in ents if e.get("status") in st)    # noqa: E731
+    held = sum(float(e.get("margin") or 0) for e in ents if e.get("status") in ("working", "partial", "unknown_submit", "filled", "dry_run"))
+    bk = led.get("broker") or {}
+    if bk:
+        bk_t = (f"<div class='sub' style='margin-top:4px'>券商核對 {_esc(str(bk.get('at') or '')[11:19])}：持倉 {len(bk.get('positions') or [])} 檔"
+                f"／未了結委託 {len(bk.get('open_orders') or [])} 筆"
+                f"／可用保證金 {(float(bk['available_margin'])/1e4 if bk.get('available_margin') is not None else float('nan')):,.0f} 萬"
+                + ("" if bk.get("orders_ok") and bk.get("positions_ok") else " <b style='color:#ff7b72'>（查詢失敗:暫不送新單）</b>")
+                + "</div>")
+    else:
+        bk_t = ""
+    halted = led.get("halted")
+    if sw["state"] == "corrupt":
+        sw_t = "<b style='color:#ff7b72'>開關檔損毀 → 已視為關閉</b>"
+    else:
+        sw_t = "<b style='color:#3fb950'>自動送單：開</b>" if sw["enabled"] else "<b style='color:#ff7b72'>自動送單：關</b>"
+    btn = (f"<button data-sw='off' data-mode='{mode}' style='margin-left:8px'>關閉自動送單</button>" if sw["enabled"] else
+           f"<button data-sw='on' data-mode='{mode}' style='margin-left:8px'>開啟自動送單</button>")
+    import time as _t
+    cd = float(led.get("cooldown_until") or 0)
+    cool_t = (f"<div style='color:#e3b341;margin-top:4px'>⏸ 券商回額度不足,暫停送單至 {datetime.fromtimestamp(cd).strftime('%H:%M:%S')}："
+              f"{_esc(led.get('cooldown_reason'))}</div>" if cd > _t.time() else "")
+    halt_t = (f"<div style='color:#ff7b72;margin-top:4px'>⛔ 今日已停單：{_esc(halted.get('reason'))}（{_esc(halted.get('at'))}）</div>"
+              if halted else "")
+    return (f"<div class='sub' style='margin:0 0 6px;border:1px solid #30363d;border-radius:5px;padding:6px 8px'>"
+            f"{life}　模式 {mode_t}　{sw_t}{btn}<br>"
+            f"今日 送出 {n('working', 'partial', 'filled', 'closed', 'cancelled', 'failed', 'unknown_submit', 'dry_run')}"
+            f"（掛單中 {n('working', 'partial')}／持倉 {n('filled')}／已平倉 {n('closed')}／撤單 {n('cancelled')}／失敗 {n('failed')}／狀態不明 {n('unknown_submit')}）"
+            f"　略過 {n('skipped')}　佔用保證金 {held/1e4:,.0f} 萬／上限 {cap/1e4:,.0f} 萬"
+            f"　<span style='color:#8b949e'>出場手動；僅 ★4（嚴格條件全過）自動送單、掛買一；AI 監督員可請求撤單（每日 ≤5 次）；可在此關閉自動送單後到券商 App 撤單</span>"
+            f"{bk_t}{halt_t}{cool_t}</div>")
+
+
+def render_pending_block(day: str) -> str:
+    """儀表板首頁最上方的代理人區塊（由 /agentfrag 輪詢換內容）：下單層狀態列＋AI 監督員檢視。
+
+    沿用舊函式名以免動到 http_server 的路由；已沒有待批准卡片。
     """
-    cs = [c for c in load_candidates(day) if c.get("verdict") != "blocked"]
-    ds = load_decisions(day)
-    pend = [c for c in cs if c["intent_id"] not in ds]
-    if not pend:
-        done = len(cs) - len(pend)
-        return (f"<style>{FRAG_CSS}</style><div class='ag'><div class='sub' style='margin:0'>"
-                f"🤖 代理人：{day} 無待批准委託"
-                f"{f'（已裁決 {done} 筆）' if done else ''}　"
-                f"<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a>"
-                f"</div></div>")
-    # 排序＝幫他做完第一關：★ 多的在最上面,同星級再按時間。
-    pend.sort(key=lambda c: (-(c.get("stars") or 0), c.get("time", "")))
-    cards = "".join(_card(c, None) for c in pend)
+    n_ok = sum(1 for c in load_candidates(day) if c.get("verdict") != "blocked")
     return f"""<style>{FRAG_CSS}</style><div class='ag' data-day='{day}'>
 <div class='hd' style='margin-bottom:6px'>
- <span class='nm'>🤖 代理人待批准
-  <span class='tag' style='background:#9e6a03'>{len(pend)}</span></span>
- <span class='t'>{day}　<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a></span></div>
-<div class='sub' style='margin:0 0 6px'>價格／口數／理由都可改 —— 代理人給建議,你改完再送。
-<b>此頁不會送出委託單</b>（<code>src/clone_agent/</code> 不 import 富邦 SDK）,按鈕只寫帳本。</div>
-{cards}
+ <span class='nm'>🤖 操盤手代理人 · 自動送單
+  <span class='tag' style='background:#1f6feb'>{n_ok}</span></span>
+ <span class='t'>{day}　規則通過 {n_ok} 張　<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a></span></div>
+{render_order_strip(day)}{render_ai_view(day)}
+<div class='sub' style='margin:0 0 6px'>規則通過的卡片由獨立下單層在 {_order_window()} 自動送出，不需批准；能擋單的只有「關閉自動送單」與 AI 監督員撤單。
+此頁不會送出委託單（<code>src/clone_agent/</code> 不 import 富邦 SDK）,按鈕只寫開關檔。</div>
 </div>"""
 
 
@@ -356,34 +398,9 @@ def _capital() -> str:
 
 def render_agent_page(day: str) -> str:
     cs = load_candidates(day)
-    ds = load_decisions(day)
     okc = [c for c in cs if c.get("verdict") != "blocked"]
-    pend = [c for c in okc if c["intent_id"] not in ds]
-    cards = "".join(_card(c, ds.get(c["intent_id"]))
-                    for c in sorted(cs, key=lambda x: (x.get("verdict") == "blocked", x.get("time", ""))))
     days = sorted({p.name[11:21] for p in _data_dir().glob("candidates_*.jsonl")})
     sel = "".join(f"<option{' selected' if d == day else ''}>{d}</option>" for d in days)
-
-    # 批准紀錄（全期）
-    ar, tot, apr = [], 0, 0
-    for d in days:
-        m = {c["intent_id"]: c for c in load_candidates(d)}
-        for iid, de in load_decisions(d).items():
-            c = m.get(iid, {})
-            a = de["decision"] == "approve"
-            tot += 1; apr += a
-            e = de.get("edited") or {}
-            ar.append((d, c.get("time", ""), c.get("uname", "?"), c.get("action", ""),
-                       e.get("price", c.get("price")), e.get("lot", c.get("lot")),
-                       a, de.get("skip_reason", ""),
-                       "．".join(f"{k}→{v}" for k, v in e.items() if k != "note") or
-                       (e.get("note", "") and "有備註") or ""))
-    ar.sort()
-    arb = "".join(f"<tr><td>{r[0][5:]} {_esc(r[1])}</td><td>{_esc(r[2])}</td><td>{_esc(r[3])}</td>"
-                  f"<td>{_n(r[4],1)}</td><td>{_n(r[5])}</td>"
-                  f"<td class='{'pos' if r[6] else 'neg'}'>{'批准' if r[6] else '略過'}</td>"
-                  f"<td style='text-align:left'>{_esc(r[7])}</td>"
-                  f"<td style='text-align:left' class='dim'>{_esc(r[8])}</td></tr>" for r in ar)
 
     # 成交紀錄
     f = _j("fills.json") or []
@@ -402,19 +419,17 @@ def render_agent_page(day: str) -> str:
     wn = sum(1 for x in f if x["win"])
 
     return f"""<style>{CSS}</style><div class='ag' data-day='{day}'>
-<div class='hd'><h2 style='border:0;margin:4px 0'>🤖 操盤手代理人 · 階段 A</h2>
+<div class='hd'><h2 style='border:0;margin:4px 0'>🤖 操盤手代理人 · 自動送單中（出場手動）</h2>
 <span class='t'>資料日
 <select onchange="location.href='/agent?day='+this.value">{sel}</select></span></div>
 
 <div class='warn'>這個頁面<b>不會送出任何委託單</b>。<code>src/clone_agent/</code> 沒有 import 富邦 SDK，
-構造上無法下單（有測試掃描釘住）。按「批准」只是把你的裁決＋你改過的價格口數寫進帳本，
-供 A→C 升級的同意率統計。真正接上送單要等 PRD §8 下單層完成、四層鎖打開。</div>
+構造上無法下單（有測試掃描釘住）。<b>實單由獨立下單層（<code>src/order/clone_agent_*</code>）自動送出</b>：
+規則通過的新倉買進卡，在 {_order_window()} 內直接用卡片價與口數送單，<b>不需要你批准</b>，本頁也沒有批准／略過按鈕。
+要停止送單請用下方「關閉自動送單」。AI 監督員另可依 C1–C3 觸發條件請求撤單（每日 ≤5 次，下單層再驗證）。</div>
+{render_order_strip(day)}{render_ai_view(day)}
 
-<h2>① 待批准 · {day}　<span class='t'>規則通過 {len(okc)} 筆（{len(pend)} 筆待裁決）·
-被規則擋下 {len(cs)-len(okc)} 筆（排在後面供覆盤）</span></h2>
-<div class='sub'>價格、口數、理由都可以改 —— 代理人給建議，你改完再送。
-改動會一起存進帳本：<b>你改了什麼，比你按了什麼更有價值</b>，那是規則離你腦袋還差多遠的量尺。</div>
-{cards or "<div class='sub'>這一天沒有候選。</div>"}
+<h2>① 今日出卡 · {day}　<span class='t'>規則通過 {len(okc)} 張 · 被規則擋下 {len(cs)-len(okc)} 張；實單結果見上方下單層狀態與③成交紀錄</span></h2>
 
 <h2>② 資金水位 · 三腿消長</h2>
 {_capital()}
@@ -429,14 +444,8 @@ def render_agent_page(day: str) -> str:
 <table><tr><th>標的</th><th>方向</th><th>口</th><th>進場</th><th>進場價</th><th>出場</th><th>出場價</th>
 <th>保證金率</th><th>保證金</th><th>淨損益</th><th>÷保證金%</th><th>分鐘</th></tr>{fb}</table>
 
-<h2>④ 批准紀錄　<span class='t'>已裁決 {tot} · 批准 {apr} ·
-同意率 {f'{100*apr/tot:.1f}%' if tot else '—'}（升級門檻：連續 20 日 ≥80%）</span></h2>
-<table><tr><th>時間</th><th>標的</th><th>倉別</th><th>價格</th><th>口</th><th>裁決</th>
-<th style='text-align:left'>略過原因</th><th style='text-align:left'>我改了什麼</th></tr>
-{arb or "<tr><td colspan=8 class='dim'>還沒有裁決紀錄</td></tr>"}</table>
-
-<div class='sub'>機器人規則、回測研究與「最常見故事」→ <a href='/agentrules'>代理人規則頁</a>（下方 ⑤ 是依人類下單習慣整理的舊規格）</div>
-<details><summary>⑤ 量化規格（點開）</summary>{_spec()}</details>
+<div class='sub'>機器人規則、回測研究與「最常見故事」→ <a href='/agentrules'>代理人規則頁</a>（下方 ④ 是依人類下單習慣整理的舊規格）</div>
+<details><summary>④ 量化規格（點開）</summary>{_spec()}</details>
 <script>{JS}</script></div>"""
 
 
@@ -449,7 +458,7 @@ def _spec() -> str:
     return f"""<div class='sub'>研究窗 <b>{g('研究窗')}</b>。數字全來自四天逐單重放。
 完整規格與否證清單在 <code>docs/trader-clone-agent-prd.md</code>。</div>
 <h2>進場</h2><table>{T([
- ("H1 時間窗", "09:00–13:40（四天 100% 落在此窗）"),
+ ("H1 時間窗", "研究口徑 09:00–13:40（四天 100% 落在此窗）；<b>實單視窗為 {_order_window()}</b>"),
  ("H2 方向", "只做多；條件反向只出平倉卡"),
  ("H3 契約", "大型（2000 股）—— 小型費率是大型的 10.6 倍"),
  ("H4 低量門檻", f"5 分成交額 ≥ {_n(g('低量門檻萬'))} 萬（擋掉 {g('低量門檻擋掉%')}%、只放棄 {g('低量門檻放棄獲利%')}% 獲利）"),
@@ -465,13 +474,13 @@ def _spec() -> str:
  ("五檔成交率", "委買一 88% / 二 33% / 三 0% / 四 50% / 五 0% / 簿外 47%"),
  ("出場 賣出平倉", f"掛對手價上方 +4 檔。n={g('出場_賣出平倉_n')}、平均 +{g('出場_賣出平倉_平均檔')} 檔、<b>最差 +0.0 無負值</b>"),
  ("出場 回補空單", f"吃對手價。平均 {g('出場_回補_平均檔')} 檔、3 筆中 2 筆負"),
- ("出場護欄", "不能用距離（任何距離門檻都讓總帳變差）；用方向反轉放棄排隊 ＋ 13:25 強制平倉"),
+ ("出場護欄", "不能用距離（任何距離門檻都讓總帳變差）；用方向反轉放棄排隊 ＋ 13:25 強制平倉（<b>以上為回測假設；實單層沒有強制平倉，出場手動、AI 出場僅影子</b>）"),
 ])}</table>
 <h2>風控 —— 用保證金不用檔數</h2><table>{T([
  ("保證金率", " / ".join(f"{k} {v}%" for k, v in mrs.items() if k != "其他") + f"；另有 {mrs.get('其他')}"),
  ("每口範圍", f"{(g('每口保證金範圍') or {}).get('最低')} ～ {(g('每口保證金範圍') or {}).get('最高')} → 差 8 倍，所以檔數是無效的風控單位"),
  ("三分法", "持倉目標 35–50%（下限 20%）／掛單上限 35%／現金硬下限 20%"),
- ("硬閘", f"持倉+掛單 ≤ {_n(g('風控上限'))}（權益的 84.1%）—— 四天有 4 筆委託踩線被靜默退單"),
+ ("硬閘", f"持倉+掛單 ≤ {_n(g('風控上限'))}（研究口徑：權益的 84.1%）—— 四天有 4 筆委託踩線被靜默退單。<b>實單現行：固定 147 萬上限＋全帳戶資力證明閘（券商持倉含手動倉×原始保證金率＋掛單＋新單 ≤ 147 萬）</b>"),
  ("價格帶口數", "400–600 元 4 檔各 1 口／600–900 元 3 檔／900–1200 元 2 檔／&gt;1200 元 1 檔"),
  ("最大浮動虧損", "做多 30分 2.2 檔／60分 2.8／收盤 3.5（最壞 −2.08%）；做空 7.6 檔"),
  ("標準差地板", f"σ={g('單筆報酬標準差%')}%、族群內 ρ={g('族群內殘差相關')} → 地板 σ√ρ={g('變異數地板%')}%。10 筆同族群只降 17%"),
@@ -486,7 +495,7 @@ def _spec() -> str:
 <li class='risk'>「伺服器代工」族群（殘差相關 0.075 ≈ 全市場基準）</li>
 <li class='risk'>傳統均線多空排列當濾網（控分數後 R² 增量 &lt;0.7pp）</li>
 <li class='risk'>固定 % 門檻定義盤中事件（49% 事件擠在開盤 15 分）</li></ul>
-<h2>階段 A → C 升級門檻</h2><ol>
+<h2>階段 A → C 升級門檻（原設計；<b>實際系統已越過階段 A：下單層已自動送單</b>，以下僅作同意率驗收參考）</h2><ol>
 <li>連續 <b>20 個交易日</b>，代理人建議與你裁決的同意率 <b>≥80%</b></li>
 <li>不同意的逐筆覆盤完畢，原因回寫規則或標記「人類判斷優先」</li>
 <li>影子帳淨值差距 ≤0.5%，無單筆 &gt;−3% 的失控單</li>

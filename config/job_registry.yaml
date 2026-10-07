@@ -64,13 +64,41 @@ jobs:
     schedule: "KeepAlive worker · interval≈20s in-window · day 08:45-13:45 + night 15:00-05:00"
     description: "TMF Final v1.4.0 PV16 normal/dhwv block（O-anchor）· tmf_channel.causal_engine · session-reuse worker · .env 四鎖"
 
-  - label: momentum-rotation-poll
+  - label: clone-agent-order
     category: order
     order_capable: true
     status: enabled
+    enabled_since: "2026-10-06"
+    schedule: "KeepAlive worker · interval≈2s in-window · weekdays 08:55-13:35"
+    description: "複製人代理人(CA-R1)獨立下單層 · 讀 data/candidates 卡片 → 買一−1檔限價新倉買進(只送新倉、出場手動) · src/order/clone_agent_order.py。預設演練(ORDER_CLONE_AGENT_DRY_RUN=1,不登入券商);實彈只由 .env 設 ORDER_CLONE_AGENT_DRY_RUN=0 且 ORDER_MASTER_ENABLED=1。儀表板 /agent 的「自動送單」按鈕=data/order/clone_agent_switch.json(預設開、檔案損毀=關);保證金上限 147 萬、單日 15 筆、連 3 次失敗或額度類錯誤即停單。與 src/clone_agent/ 只透過 JSON 檔互動、互不 import"
+
+  - label: clone-agent-supervisor
+    category: agent
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-10-06"
+    schedule: "KeepAlive 常駐 · weekdays 09:50-13:40 每10分巡檢 + 新送單即時複審 + 13:40 收盤檢討"
+    description: "複製人 AI 監督員 shadow 階段(stage 1)· scripts/agent/clone_agent_supervisor.py + src/clone_agent/agent_supervisor.py · 大腦=headless claude -p(無工具)、小腦=Python 觸發器+guard · 只寫 data/agent/ 的 journal/view/state 供儀表板顯示與事後評分;無券商、無撤單、無出場程式路徑;stage≠shadow 時拒絕啟動。config/clone_agent_supervisor.yaml + config/clone_agent_supervisor_prompt.md 為 SSOT"
+
+  - label: biglot-dashboard
+    category: serve
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-10-07"
+    schedule: "KeepAlive 常駐（RunAtLoad · 停電/重開機/crash 自動回來 · ThrottleInterval 30s）"
+    description: "biglot HTML 儀表板 :8771（Tailscale 唯一通的 port；clone-agent 的 /agent 頁與 supervisor 的 /frag 輪詢也掛在這）· scripts/research/biglot_dashboard.py · 唯讀、不下單、不佔富邦 ws。bind 約需 15~60 秒。2026-10-07 停電後發現原本是手動 nohup 啟動、重開機不會回來，改由 launchd 管；launcher 不用 exec/tee pipe，讓 launchd 直接看到 python 退出碼。改 http_server.py／biglot_dashboard.py 後重啟用 launchctl kickstart -k gui/$(id -u)/com.jackm4.goldenstocks.biglot-dashboard，不要再另起 nohup（會 Address already in use）。"
+
+  - label: momentum-rotation-poll
+    category: order
+    order_capable: true
+    status: disabled
     enabled_since: "2026-08-12"
+    disabled_since: "2026-10-03"
     schedule: "KeepAlive worker · interval≈1s in-window（2026-08-13 20s→5s→1s，使用者要求；⚠️12檔trades()請求量隨之提高，rate limit風險見下）· weekdays 08:44-13:41"
     description: >
+      🛑 2026-10-03 使用者要求停用：launchctl bootout + disable（plist 保留於 ~/Library/LaunchAgents，
+      重開機不復活），孤兒 worker 程序已 SIGTERM。停用動機＝8/13 之後再無實彈、騰出一條富邦 ws 連線
+      （為日後重啟 tmf-channel-poll 預留額度）。恢復需使用者明確指示。以下為停用前紀錄：
       ⚠️ 2026-08-13 11:04起 ORDER_MOMENTUM_ROTATION_AUTO_SUBMIT改回0（dry-run）
       ——使用者live當天發現4筆交易全虧、追查後發現回測本身的fill-price假設有問題
       （用「訊號當下實際tick價」重跑backtest，勝率從86.9%掉到40.2%、日均從+22.8%

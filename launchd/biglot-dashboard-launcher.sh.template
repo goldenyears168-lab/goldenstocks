@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# biglot HTML 儀表板(:8771 · Tailscale 唯一通的 port)· KeepAlive 常駐 · 唯讀 · 不碰券商、不送單
+# 腳本 = scripts/research/biglot_dashboard.py(自帶 HTTP,bind 約需 15~60 秒)
+# 2026-10-07 前一直是手動 nohup 啟動,停電重開機後不會回來,故改 launchd 管。
+
+set -euo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+APP_SUPPORT="{{APP_SUPPORT}}"
+DATA_DIR="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}"
+
+mkdir -p "${DATA_DIR}/logs" "${APP_SUPPORT}" "${HOME}/Library/Logs/com.jackm4.goldenstocks"
+
+export TZ="${TZ:-Asia/Taipei}"
+export GOLDENSTOCKS_DATA_DIR="${DATA_DIR}"
+export PYTHONPATH="${ROOT}/src:${ROOT}/scripts/research"
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+cd "${ROOT}"
+
+LOCKDIR="${APP_SUPPORT}/biglot-dashboard.lockdir"
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+  holder="$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")"
+  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+    echo "skip: biglot-dashboard already holding lock (pid=${holder}, alive)"
+    exit 0
+  fi
+  echo "reclaiming stale lock (holder=${holder:-unknown} not alive)"
+  rm -rf "${LOCKDIR}"
+  mkdir "${LOCKDIR}" 2>/dev/null || { echo "skip: lock race lost"; exit 0; }
+fi
+echo "$$" > "${LOCKDIR}/pid"
+trap 'rm -rf "${LOCKDIR}" 2>/dev/null || true' EXIT
+
+PYTHON="${ROOT}/.venv/bin/python"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing python: ${PYTHON}"
+  exit 1
+fi
+
+LOG="${DATA_DIR}/logs/biglot_dashboard.log"
+echo "=== launchd biglot-dashboard start $(date '+%Y-%m-%d %H:%M:%S') ===" >> "${LOG}"
+
+# 不用 exec / tee pipe:讓 launchd 直接看到 python 的退出碼,KeepAlive 才會重拉
+set +e
+"${PYTHON}" -u "${ROOT}/scripts/research/biglot_dashboard.py" >> "${LOG}" 2>&1
+EXIT=$?
+set -e
+
+echo "=== launchd biglot-dashboard end exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ===" >> "${LOG}"
+exit "${EXIT}"

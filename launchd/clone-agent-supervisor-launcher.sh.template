@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# 複製人 AI 監督員(shadow 階段)· KeepAlive 常駐 · 不碰券商、不送單、不撤單
+# 大腦 = headless `claude -p`(無工具);小腦 = scripts/agent/clone_agent_supervisor.py
+# 非交易時段腳本自己 sleep;stage 非 shadow 時腳本拒絕啟動。
+
+set -euo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+APP_SUPPORT="{{APP_SUPPORT}}"
+DATA_DIR="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}"
+
+mkdir -p "${DATA_DIR}/logs/intraday" "${APP_SUPPORT}" "${HOME}/Library/Logs/com.jackm4.goldenstocks"
+
+export TZ="${TZ:-Asia/Taipei}"
+export ROOT="${ROOT}"
+export PYTHONPATH="${ROOT}/src"
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+SCRIPT_PY="${ROOT}/scripts/agent/clone_agent_supervisor.py"
+# trader_signal_watch 讀相對路徑 config/,cwd 必須是 repo 根
+cd "${ROOT}"
+
+LOCKDIR="${APP_SUPPORT}/clone-agent-supervisor.lockdir"
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+  holder="$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")"
+  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+    echo "skip: clone-agent-supervisor already holding lock (pid=${holder}, alive)"
+    exit 0
+  fi
+  echo "reclaiming stale lock (holder=${holder:-unknown} not alive)"
+  rm -rf "${LOCKDIR}"
+  mkdir "${LOCKDIR}" 2>/dev/null || { echo "skip: lock race lost"; exit 0; }
+fi
+echo "$$" > "${LOCKDIR}/pid"
+trap 'rm -rf "${LOCKDIR}" 2>/dev/null || true' EXIT
+
+# headless claude 憑證:沿用 mini-schedule 的做法(無檔=用已存憑證,不算失敗)
+if [[ -r "${DATA_DIR}/.env.schedule" ]]; then
+  # shellcheck disable=SC1091
+  source "${DATA_DIR}/.env.schedule"
+fi
+
+PYTHON="${ROOT}/.venv/bin/python"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing python: ${PYTHON}"
+  exit 1
+fi
+
+LOG="${DATA_DIR}/logs/intraday/clone_agent_supervisor_$(date '+%Y%m%d').log"
+echo "=== launchd clone-agent-supervisor start $(date '+%Y-%m-%d %H:%M:%S') ===" | tee -a "${LOG}"
+
+set +e
+"${PYTHON}" -u "${SCRIPT_PY}" 2>&1 | tee -a "${LOG}"
+EXIT=${PIPESTATUS[0]}
+set -e
+
+echo "=== launchd clone-agent-supervisor end exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ===" | tee -a "${LOG}"
+exit "${EXIT}"

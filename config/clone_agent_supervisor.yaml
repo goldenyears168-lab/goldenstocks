@@ -1,0 +1,36 @@
+# 複製人代理人「監督員」(AI 判斷層)設定 · SSOT。小腦(Python)讀這份算觸發條件值、AI(大腦)只看值做判斷。
+# 階段:shadow=只寫看法不執行 → cancel=開放撤單 → exit=開放出場。目前實作 shadow / cancel;AI 本身沒有券商 API,只能寫請求檔。
+stage: cancel   # 2026-10-06 使用者授權:AI 的撤單提案(過護欄)經下單層驗證後真的撤;出場仍只記錄
+
+schedule:
+  patrol_first: "09:50"      # 每 patrol_min 分鐘巡檢一次(也含空手時的盤面看法)
+  patrol_last: "13:30"
+  patrol_min: 10
+  eod_at: "13:40"            # 收盤檢討
+  post_send_poll_sec: 15     # 輪詢帳本:偵測到新送出的委託就立刻複核
+  post_send_timeout_sec: 90  # 影子期用來實測 LLM 延遲(卡片 120 秒過期,未來撤單複核須 ≤60s)
+
+llm:
+  model: sonnet
+  timeout_sec: 150
+  effort: low                # 2026-10-06 重放13:12逾時包:預設 89~161s(輸出5~10k token)、low 34~45s(~2.6k);逾時=不動作、不重試
+  max_budget_usd: 0.5        # 單次上限(實測約 $0.004–0.05)
+
+# 預先登記的觸發條件。★ Z/L/X/Y 為暫定值,待 scripts/research/clone_agent_exit_backtest.py 的回測結果覆蓋;
+# 回測無證據 → 出場權限不開放,這些值只用來在影子期記錄「如果有權限會怎麼做」。
+triggers:
+  mirror_keep_pct: 70        # 做空鏡像:①③④ 排名濾網沿用做多的 70%,方向相反
+  mirror_dist_lo_pct: 0.5    # 做空鏡像②:距近30分低 ≥ +0.5%(做多是距近30分高 ≤ −0.5%)
+  mirror_amt_pct_min: 30     # ⑤ 同做多
+  e1_price_below_entry_bps: 30   # E1: 流量鏡像(③④)成立 ∧ 現價低於進場價 ≥ Z bps          [暫定·回測無證據,見 t2_t3_report.txt]
+  e3_loss_bps: 80                # E3: 未實現虧損 ≥ L bps(風控,僅記錄)                      [暫定·回測無證據,見 t2_t3_report.txt]
+  c1_min_age_min: 10             # C1: 掛單 ≥10 分 ∧ 30分大戶淨額由正轉負
+  c2_stale_min: 3                # C2: 資訊性事件:漲停鎖死/近 N 分鐘無成交
+  c3_basket_10m_bps: -30         # C3: 大盤籃子 10 分 ≤ Y bps ∧ 該檔 10 分弱於籃子            [暫定·回測無證據,見 t2_t3_report.txt]
+  limit_up_pct: 9.5
+
+limits:                          # cancel 階段由小腦/下單層強制(max_cancels_per_day);其餘待出場階段
+  max_cancels_per_day: 5
+  max_exits_per_day: 3
+  per_sid_cooldown_min: 30
+  max_lot_per_exit: 1
