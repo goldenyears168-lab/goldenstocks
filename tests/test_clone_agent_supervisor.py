@@ -44,12 +44,12 @@ class TriggerTest(unittest.TestCase):
         flow_off = feat(px=px, rank={"big_day": 0.6, "big30": 0.1, "ret30": 0.1})
         self.assertFalse(sv.eval_exit_triggers(flow_off, 100.0, CFG)["E1"]["met"])
 
-    def test_e3_and_no_entry_px(self):
-        L = CFG["triggers"]["e3_loss_bps"]
-        self.assertTrue(sv.eval_exit_triggers(feat(px=100 * (1 - (L + 1) / 1e4)), 100.0, CFG)["E3"]["met"])
+    def test_no_entry_px_and_no_e3(self):
         r = sv.eval_exit_triggers(feat(), None, CFG)
         self.assertIsNone(r["pnl_bps"])
-        self.assertFalse(r["E1"]["met"] or r["E3"]["met"])
+        self.assertFalse(r["E1"]["met"])
+        self.assertNotIn("E3", r)
+        self.assertNotIn("e3_loss_bps", CFG["triggers"])
 
     def test_cancel_triggers(self):
         t = sv.eval_cancel_triggers(feat(big30_wan=-10), {"big30_wan": 50}, 12, 0, 0, CFG)
@@ -63,8 +63,9 @@ class TriggerTest(unittest.TestCase):
 
 class GuardTest(unittest.TestCase):
     pack = {"data_age_sec": 10,
-            "positions": [{"sid": "2330", "ours": True, "manual_hold": False, "triggers": {"E1": {"met": True}, "E3": {"met": False}}},
-                          {"sid": "2303", "ours": True, "manual_hold": True, "triggers": {"E1": {"met": True}}}],
+            "positions": [{"sid": "2330", "ours": True, "manual_hold": False, "triggers": {"E1": {"met": True}, "E2": {"met": False}}},
+                          {"sid": "2303", "ours": True, "manual_hold": True, "triggers": {"E1": {"met": True}}},
+                          {"sid": "8358", "ours": False, "manual_hold": False, "triggers": {"E2": {"met": True}}}],
             "orders": [{"sid": "3324", "order_no": "A1", "ours": True, "triggers": {"C3": {"met": True}, "C1": {"met": False}}}]}
     ev = ["f1", "f2"]
 
@@ -73,9 +74,11 @@ class GuardTest(unittest.TestCase):
 
     def test_exit_ok_and_rejects(self):
         self.assertIsNone(self.g({"type": "exit", "target": "2330", "trigger_id": "E1", "evidence": self.ev}))
+        self.assertEqual(self.g({"type": "exit", "target": "2330", "trigger_id": "E2", "evidence": self.ev}), "trigger_not_met")
         self.assertEqual(self.g({"type": "exit", "target": "2330", "trigger_id": "E3", "evidence": self.ev}), "trigger_not_met")
         self.assertEqual(self.g({"type": "exit", "target": "2330", "trigger_id": "E1", "evidence": ["a"]}), "evidence<2")
-        self.assertEqual(self.g({"type": "exit", "target": "2303", "trigger_id": "E1", "evidence": self.ev}), "not_ours_or_manual_hold")
+        self.assertEqual(self.g({"type": "exit", "target": "2303", "trigger_id": "E1", "evidence": self.ev}), "manual_hold")
+        self.assertIsNone(self.g({"type": "exit", "target": "8358", "trigger_id": "E2", "evidence": self.ev}))
         self.assertEqual(self.g({"type": "exit", "target": "9999", "trigger_id": "E1", "evidence": self.ev}), "target_not_in_positions")
         self.assertEqual(self.g({"type": "exit", "target": "2330", "evidence": self.ev}), "trigger_not_met")
 

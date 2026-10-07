@@ -23,7 +23,6 @@ triggers:
   mirror_dist_lo_pct: 0.5    # 做空鏡像②:距近30分低 ≥ +0.5%(做多是距近30分高 ≤ −0.5%)
   mirror_amt_pct_min: 30     # ⑤ 同做多
   e1_price_below_entry_bps: 30   # E1: 流量鏡像(③④)成立 ∧ 現價低於進場價 ≥ Z bps          [暫定·回測無證據,見 t2_t3_report.txt]
-  e3_loss_bps: 80                # E3: 未實現虧損 ≥ L bps(風控,僅記錄)                      [暫定·回測無證據,見 t2_t3_report.txt]
   c1_min_age_min: 10             # C1: 掛單 ≥10 分 ∧ 30分大戶淨額由正轉負
   c2_stale_min: 3                # C2: 資訊性事件:漲停鎖死/近 N 分鐘無成交
   c3_basket_10m_bps: -30         # C3: 大盤籃子 10 分 ≤ Y bps ∧ 該檔 10 分弱於籃子            [暫定·回測無證據,見 t2_t3_report.txt]

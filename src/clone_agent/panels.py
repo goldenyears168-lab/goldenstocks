@@ -182,8 +182,30 @@ def render_ai_view(day: str | None = None) -> str:
             + (f"<div class='t' style='margin-top:2px'>盤面：{_esc(mk)}</div>" if mk else "")
             + items + acts
             + (f"<div class='t' style='margin-top:2px'>下輪看:{_esc('；'.join(v.get('next_watch') or []))}</div>" if v.get("next_watch") else "")
+            + _ai_basis(day)
             + _ai_history(day)
             + "</div>")
+
+
+def _ai_basis(day: str | None) -> str:
+    """AI 最近一輪實際讀到的內容:觸發規則文字 + 完整狀態包(與 journal 的 pack 欄位同一份)。"""
+    import json
+    from datetime import datetime
+    from clone_agent.agent_supervisor import read_journal
+    recs = [r for r in read_journal(day or datetime.now().strftime("%Y-%m-%d")) if r.get("pack")]
+    if not recs:
+        return ""
+    pk = recs[-1]["pack"]
+    rules: dict[str, str] = {}
+    for it in (pk.get("positions") or []) + (pk.get("orders") or []):
+        for k, v in (it.get("triggers") or {}).items():
+            if isinstance(v, dict) and v.get("rule"):
+                rules.setdefault(k, v["rule"])
+    rule_html = "".join(f"<div><b>{_esc(k)}</b> {_esc(v)}</div>" for k, v in sorted(rules.items()))
+    raw = json.dumps(pk, ensure_ascii=False, indent=1)
+    return (f"<details style='margin-top:6px'><summary style='cursor:pointer;color:#79c0ff'>AI 判斷依據（{_esc(str(pk.get('now'))[11:19])} 那輪讀到的原文）</summary>"
+            f"<div class='t' style='margin:2px 0 4px 14px'>{rule_html or '(該輪無觸發規則)'}</div>"
+            f"<pre class='t' style='white-space:pre-wrap;max-height:360px;overflow:auto;margin:2px 0 4px 14px'>{_esc(raw)}</pre></details>")
 
 
 def _act_label(a: dict[str, Any]) -> str:

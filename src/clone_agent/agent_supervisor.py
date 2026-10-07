@@ -73,17 +73,15 @@ def pnl_bps(px: float | None, entry_px: float | None) -> float | None:
 
 
 def eval_exit_triggers(feat: dict[str, Any], entry_px: float | None, cfg: dict[str, Any]) -> dict[str, Any]:
-    """持倉的 E1/E2/E3。E 系列對「做多持倉」才有意義(反向=對持有部位不利)。"""
+    """持倉的 E1/E2。E 系列對「做多持倉」才有意義(反向=對持有部位不利)。"""
     t = cfg["triggers"]
     pnl = pnl_bps(feat.get("px"), entry_px)
     ms = mirror_short(feat, cfg)
     e1 = bool(ms["flow_met"] and pnl is not None and pnl <= -t["e1_price_below_entry_bps"])
-    e3 = bool(pnl is not None and pnl <= -t["e3_loss_bps"])
     return {
         "pnl_bps": pnl,
         "E1": {"met": e1, "rule": f"流量鏡像(③④)成立 ∧ 現價低於進場價 ≥{t['e1_price_below_entry_bps']}bps", "flow_mirror": ms["flow_met"], "pnl_bps": pnl},
         "E2": {"met": ms["all_met"], "rule": "做空鏡像規則五條全成立(做多篩選欄位反向)", "conds": ms["conds"], "values": ms["values"]},
-        "E3": {"met": e3, "rule": f"未實現虧損 ≥{t['e3_loss_bps']}bps(風控)", "pnl_bps": pnl},
         "price_only_mirror": ms["price_only_met"],
     }
 
@@ -200,8 +198,8 @@ def guard_action(action: dict[str, Any], pack: dict[str, Any], review: dict[str,
         pos = next((p for p in pack.get("positions", []) if p["sid"] == target), None)
         if not pos:
             return "target_not_in_positions"
-        if not pos.get("ours") or pos.get("manual_hold"):
-            return "not_ours_or_manual_hold"
+        if pos.get("manual_hold"):
+            return "manual_hold"
         if not tid or not (pos.get("triggers", {}).get(tid) or {}).get("met"):
             return "trigger_not_met"
         return None
