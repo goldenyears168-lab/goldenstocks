@@ -502,15 +502,9 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 </style></head><body>
 <h3>大戶-散戶 {len(NAMES) - len(REF_POOL) - len(INDEP)}檔核心即時儀表板<span style="font-size:11px;color:#8b949e;margin-left:6px">＋{len(INDEP)}檔獨立標注＋{len(REF_SIDS)}檔參考列(不進排名/標籤/淨分)</span>
 <span id="clk" style="font-size:14px;color:#e3b341;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
-<a href="/history" style="font-size:11px;margin-left:8px;color:#79c0ff">歷史分頁</a>
-<a href="/help" style="font-size:11px;margin-left:8px;color:#79c0ff">📖 欄位說明</a>
-<a href="/grid" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">▦ {len(NAMES)}檔圖形總覽</a>
-<a href="/timeline" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">⏱ 歷史回放</a>
-<a href="/disposal" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#3d1c1c;border:1px solid #6b2b2b;color:#ffa657;text-decoration:none">{_DISPOSAL_BADGE}</a>
-<a href="/agent" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#102a1c;border:1px solid #2f6b40;color:#8fd19e;text-decoration:none">🤖 操盤手代理人<b id="agbadge" style="display:none;color:#e3b341"></b></a>
 <a href="#" id="sndtog" onclick="event.preventDefault();const v=localStorage.getItem('sigsound')==='1'?'0':'1';localStorage.setItem('sigsound',v);this.textContent=v==='1'?'🔔 提示音開':'🔕 提示音關';return false" style="font-size:11px;margin-left:6px;padding:1px 7px;border-radius:4px;background:#161b22;border:1px solid #30363d;color:#8b949e;text-decoration:none">🔕 提示音關</a>
-<a href="/paper" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#2d1f3d;border:1px solid #5a3f7a;color:#d2a8ff;text-decoration:none">🧪 紙上模擬</a>
-<a href="#" onclick="this.href='http://'+location.hostname+':8780/messages/'" target="_blank" style="font-size:11px;margin-left:8px;padding:1px 7px;border-radius:4px;background:#12263f;border:1px solid #2f6feb;color:#79c0ff;text-decoration:none">📨 訊息</a></h3>
+
+</h3>
 <a href="/stories" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">📚 故事</a>
 <div id="agentbox" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:14px;align-items:stretch">

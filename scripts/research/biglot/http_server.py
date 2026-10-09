@@ -26,6 +26,7 @@ import urllib.parse as urllib_parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import biglot_dashboard
+from biglot import nav_bar
 from biglot.disposal_view import render_disposal
 from biglot.day_views import render_history, render_day, snapshot_day
 from biglot.timeline_snap import render_timeline_page, render_timeline_frag, save_timeline_slot_if_due
@@ -142,6 +143,7 @@ class H(BaseHTTPRequestHandler):
                 body = render_stock(sid, day).encode("utf-8")
         else:
             body = biglot_dashboard.SHELL.replace("{NOTES}", _load_notes()).encode("utf-8")   # SHELL 是 f-string,{{NOTES}} 已成 {NOTES}
+        body = nav_bar.inject(path, body, getattr(biglot_dashboard, "_DISPOSAL_BADGE", ""))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
