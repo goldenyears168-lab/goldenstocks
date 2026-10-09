@@ -204,10 +204,14 @@ jobs:
     category: monitoring
     order_capable: false  # 自己不呼叫下單API；但可透過kill switch檔案間接觸發
       # momentum-rotation-poll既有的halted強制平倉路徑，見下方說明
-    status: enabled
+    status: disabled
     enabled_since: "2026-08-12"
+    disabled_since: "2026-10-09"
     schedule: "StartInterval 120s（2026-08-12使用者要求從900s縮短；launcher自濾 weekdays 08:40-13:45，盤中約150次呼叫/天）"
     description: >
+      🛑 2026-10-09 使用者要求跟著 momentum-rotation-poll 停用：launchctl bootout + disable（plist 保留於
+      ~/Library/LaunchAgents，重開機不復活）。動機＝poll 自 10/03 起已停用，watch 仍每天約150次 AI 呼叫，
+      並於 10/09 對「worker 缺勤」寫入 kill switch（誤報，無部位）。恢復需使用者明確指示，且須與 poll 同步。以下為停用前紀錄：
       momentum-rotation-poll 盤中即時監看：headless claude -p 讀today's
       logs/intraday/momentum_rotation_*.log + ledger/broadcast json。判準核心原則
       （2026-08-12使用者明確交代）：觸發暫停不是看「有沒有賠錢」，是看「跟預期/
