@@ -73,6 +73,22 @@ def _stock_by_futcode():
     return _STOCK_BY_FUTCODE_CACHE
 
 
+def _persist_fills(fills, entry_ts_map):
+    """查詢成功時把這份成交快照落檔,供 claudecode Hub(損益/成交對帳)唯讀;不增加任何 API 呼叫。"""
+    try:
+        import os
+        from datetime import datetime as _dt
+
+        out = DATA_DIR / "order" / "futopt_fills_cache.json"
+        tmp = out.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"at": _dt.now().astimezone().isoformat(timespec="seconds"),
+                                   "lookback_days": _LOOKBACK_DAYS, "fills": fills,
+                                   "entry_ts_map": entry_ts_map}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, out)
+    except Exception as e:  # noqa: BLE001
+        print(f"[futures_pnl] persist fills failed: {e}", file=sys.stderr)
+
+
 def _load_fubon_fills():
     """安全唯讀查詢富邦成交紀錄,15分鐘快取。失敗回傳上次快取(不讓圖因暫時性連線
     問題消失)。只呼叫既有、已核可的唯讀函式(connect_fubon/close_position_record/
@@ -146,6 +162,7 @@ def _load_fubon_fills():
             _FILLS_CACHE["fills"] = fills
             _FILLS_CACHE["entry_ts_map"] = entry_ts_map
             _FILLS_CACHE["t"] = now
+            _persist_fills(fills, entry_ts_map)
     except Exception as e:  # noqa: BLE001
         # ★ 失敗也要推進時間戳,否則每次 render 都重試（見 _FILLS_FAIL_TTL 註解）。
         #   推進量比成功時短,讓富邦恢復後 5 分鐘內就會重新嘗試。
