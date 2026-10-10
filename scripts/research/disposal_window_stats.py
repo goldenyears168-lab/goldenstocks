@@ -95,7 +95,34 @@ def report(R, label, mask):
         print(f"  {k:<6}{len(b):>5}  {a.mean():+10.2f}{a.median():+8.2f}  {red:>6.1f}%{blk:>6.1f}%  {b.mean():+10.2f}  {t:+8.2f}")
 
 
+def stats_json(R) -> dict:
+    groups = {"old_repeat": ("舊制·累犯", ~R["new_rule"] & R["repeat_b"]), "old_first": ("舊制·初犯", ~R["new_rule"] & ~R["repeat_b"]),
+              "new": ("新制(2026-08-10起)", R["new_rule"])}
+    out = {"generated": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"), "n_events": int(len(R)),
+           "first": f"{R['start'].min():%Y-%m-%d}", "last": f"{R['start'].max():%Y-%m-%d}", "groups": {}}
+    for key, (label, mask) in groups.items():
+        g = R[mask.values]
+        rows = []
+        for k in POINTS:
+            a = g[f"{k}_漲跌"].dropna(); b = g[f"{k}_開收"].dropna()
+            if len(b) < 5:
+                rows.append({"point": k, "n": int(len(b))}); continue
+            sd = b.std(ddof=1)
+            rows.append({"point": k, "n": int(len(b)), "chg": float(a.mean()), "red": float((b > 0).mean() * 100),
+                         "black": float((b < 0).mean() * 100), "oc": float(b.mean()),
+                         "t": float(b.mean() / (sd / np.sqrt(len(b)))) if sd > 0 else None})
+        out["groups"][key] = {"label": label, "n": int(len(g)), "rows": rows}
+    return out
+
+
 def main():
+    if "--json" in sys.argv:
+        import json
+        W, P = load()
+        dst = WIN.with_name("disposal_stats.json")
+        dst.write_text(json.dumps(stats_json(build(W, P)), ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"wrote {dst}")
+        return 0
     W, P = load()
     print(f"處置事件 {len(W)} 筆 / 日線覆蓋 {P['stock_id'].nunique()} 檔")
     R = build(W, P)

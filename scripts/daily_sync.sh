@@ -465,6 +465,8 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
       "$PYTHON" "${ROOT}/scripts/research/fetch_disposal_list.py" || true
     run_step_optional "處置風險：計數 + disposal_risk.json" \
       "$PYTHON" "${ROOT}/scripts/research/disposal_risk_watch.py" --top 15 || true
+    run_step_optional "處置風險：歷史統計 disposal_stats.json" \
+      "$PYTHON" "${ROOT}/scripts/research/disposal_window_stats.py" --json || true
   else
     log_line "--- 處置風險 ---"
     log_line "  SKIP（RUN_DISPOSAL_WATCH=0）"

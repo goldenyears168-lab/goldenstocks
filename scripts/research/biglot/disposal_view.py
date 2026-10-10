@@ -9,7 +9,7 @@
   clause1 第一款預測 —— 反解「明天/後天收盤到多少會觸發」
   jail    坐牢中 —— 累幅/剩天，附雙刀回測的進場判準
   release 今天出關 —— 多刀的出場日
-  stats   歷史統計 —— 1,176 筆處置事件的九時點紅黑/開收
+  stats   歷史統計 —— 全部處置事件的九時點紅黑/開收(disposal_stats.json,收盤後重算)
 """
 from __future__ import annotations
 
@@ -32,6 +32,15 @@ TABS = (("all", "總表"), ("daily", "處置日報"), ("clause1", "第一款預�
 ICON = {3: "🔴", 2: "🟠", 1: "🟡", 0: "", -1: "⬛"}
 _CACHE: dict = {"t": 0.0, "risk": None, "win": None, "px": {}}
 _TTL = 120.0
+NEW_RULE = "2026-08-10"
+STATS_JSON = OUT_DIR / "disposal_stats.json"
+NEW_RULE_BANNER = (
+    "<div class='note' style='border-left-color:#ffa657'><b>⚠ 2026-08-10 新制</b>：處置期 10→5 個營業日、"
+    "撮合統一約 2 分鐘（舊制初犯 5 分／累犯 20–25 分）。本頁所有回測數字（多刀、空刀、九時點）"
+    "<b>幾乎都來自舊制</b>；新制僅約百筆事件、尚不足以判斷是否沿用，<b>不要把舊制數字當成新制進場依據</b>。"
+    "<br>2026-10-08 研究：多刀的報酬主要是持有處置窗的整體漂移（舊制任一天進場約 +3.5%），"
+    "『第 3 天』『累幅&gt;−10%』『法人』『量縮』都無可辨識的增量；以收盤已達第一款價格門檻做的『快進處置放空』"
+    "為負期望（新制後 n=28 −3.6%）；出關日開盤追強勢股（站上 5MA 且法人買）持有 3 日 −2.7%。</div>")
 
 
 def _load():
@@ -44,8 +53,63 @@ def _load():
     if WINDOWS_CSV.exists():
         with WINDOWS_CSV.open(encoding="utf-8") as fh:
             win = list(csv.DictReader(fh))
-    _CACHE.update({"t": now, "risk": risk, "win": win, "px": {}})
+    _CACHE.update({"t": now, "risk": risk, "win": win, "px": {}, "names": _build_names(risk),
+                   "repeat": _repeat_keys(win)})
     return risk, win
+
+
+def _repeat_keys(win) -> set[tuple[str, str]]:
+    """累犯 =（stock_id,start）集合。與回測同口徑:前次處置結束後 60 日內再被處置,或原因欄明寫第二次以上。
+
+    只看原因欄文字會漏掉上櫃(櫃買公告沒有「第二次」字樣)。
+    """
+    out: set[tuple[str, str]] = set()
+    prev_end: dict[str, str] = {}
+    for w in sorted(win, key=lambda w: (w["stock_id"], str(w["start"]))):
+        sid, st = w["stock_id"], str(w["start"])
+        pe = prev_end.get(sid)
+        gap = (dt.date.fromisoformat(st) - dt.date.fromisoformat(pe)).days if pe else None
+        if any(k in str(w["measure"]) for k in ("第二次", "第三次", "第四次", "連續三次")) or (gap is not None and gap <= 60):
+            out.add((sid, st))
+        prev_end[sid] = str(w["end"])
+    return out
+
+
+def _is_repeat(w) -> bool:
+    return (w["stock_id"], str(w["start"])) in _CACHE.get("repeat", set())
+
+
+def _signal(w, repeat: bool, nth: int, cum) -> str:
+    """進場提示。新制窗一律標未驗證;舊制窗也不再用『第3天/累幅>−10%』分級(無增量)。"""
+    if str(w["start"]) >= NEW_RULE:
+        return "<span class='dim'>⚠ 新制·回測不適用</span>"
+    return "<span class='dim'>舊制窗</span>"
+
+
+def _build_names(risk) -> dict[str, str]:
+    """代號→中文名稱備援表。儀表板 NAMES 只涵蓋它自己的監測宇宙，處置股多半在宇宙外。
+
+    順序（後者不覆蓋前者）：風險檔 name → 注意公告歷史 name → TWSE 處置公告原始檔。
+    """
+    names: dict[str, str] = {}
+    for sid, v in risk.get("stocks", {}).items():
+        if v.get("name"):
+            names[sid] = v["name"]
+    hist = OUT_DIR / "notice_history.csv"
+    if hist.exists():
+        with hist.open(encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                if r.get("name"):
+                    names.setdefault(r["stock_id"], r["name"])
+    raw = OUT_DIR / "twse_punish_raw.json"
+    if raw.exists():
+        try:
+            for r in json.loads(raw.read_text(encoding="utf-8")):
+                if len(r) > 3 and r[3]:
+                    names.setdefault(str(r[2]), str(r[3]))
+        except (ValueError, TypeError):
+            pass
+    return names
 
 
 def _closes(sids: list[str], n: int = 12) -> dict[str, list[tuple[str, float]]]:
@@ -142,11 +206,11 @@ def _shell(active: str, asof: str, body: str) -> str:
     return (f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>處置監測</title>"
             f"{biglot_dashboard.ARC_CSS}{css}</head><body>"
             f"<div class='meta'><a href='/'>← 大戶儀表板</a> ｜ <b>處置監測</b> ｜ 資料日 {html_mod.escape(asof or '—')}</div>"
-            f"{_tabs_html(active)}{body}</body></html>")
+            f"{_tabs_html(active)}{NEW_RULE_BANNER}{body}</body></html>")
 
 
 def _name(sid: str) -> str:
-    return html_mod.escape(str(biglot_dashboard.NAMES.get(sid, "")))
+    return html_mod.escape(str(biglot_dashboard.NAMES.get(sid) or _CACHE.get("names", {}).get(sid, "")))
 
 
 def _tab_daily(risk) -> str:
@@ -215,10 +279,8 @@ def _tab_jail(risk, win, today: str) -> str:
         inside = [(d, c) for d, c in arr if d >= start]
         cum = ((inside[-1][1] / inside[0][1] - 1) * 100) if len(inside) >= 2 else None
         nth = len(inside)                       # 處置期第幾個交易日
-        repeat = "累犯" if ("第二次" in str(w["measure"]) or "第三次" in str(w["measure"])) else "初犯"
-        sig = ""
-        if repeat == "累犯" and nth >= 3 and cum is not None:
-            sig = "🟢 多刀可進" if cum > -10 else "🔴 跌幅≥10%，訊號消失"
+        repeat = "累犯" if _is_repeat(w) else "初犯"
+        sig = _signal(w, repeat == "累犯", nth, cum)
         cc = "up" if (cum or 0) > 0 else "dn" if cum is not None else ""
         trs.append(f"<tr><td class='l'>{html_mod.escape(sid)} {_name(sid)}</td>"
                    f"<td class='l'>{html_mod.escape(start)}~{html_mod.escape(str(w['end']))}</td>"
@@ -226,12 +288,12 @@ def _tab_jail(risk, win, today: str) -> str:
                    f"<td class='{cc}'>{f'{cum:+.2f}%' if cum is not None else '—'}</td>"
                    f"<td class='l'>{html_mod.escape(str(w['measure'])[:18])}</td>"
                    f"<td class='l'>{sig}</td></tr>")
-    note = ("<div class='note'><b>多刀</b>（自有回測 1,478 筆事件，超額扣 0.44% 成本）：<b>累犯 ∧ 處置第 3 天 ∧ "
-            "累幅 &gt; −10%</b> 買進、<b>出關日開盤</b>賣出 → 中位 +3.77%、正 62%、t+4.77；"
-            "IS +5.78% / OOS +4.37% 皆顯著。累幅 ≤ −10% 那組只有 +0.18%（t+0.07），訊號消失。"
+    note = ("<div class='note'><b>多刀</b>（舊制回測，超額 0050 扣 0.44%）：處置期內任一天收盤買、<b>出關日開盤</b>賣，"
+            "平均約 +3.5%（累犯約 +5%）；<b>第幾天、距前高跌多少、法人、量縮都沒有可辨識的增量</b>"
+            "（跌幅越深均值越高但差異落在檢定力內，樣本外縮水）。新制是否延續未知。"
             "<br>⚠ 處置期為分盤撮合且須預收款券，<b>排隊成交率完全未驗證</b>；p5 −20.95%、單筆最差 −53%，尾部很重。</div>")
     return (note + "<table class='dz'><tr><th class='l'>代號</th><th class='l'>處置期間</th><th class='l'>犯次</th>"
-            "<th>第N天</th><th>累幅</th><th class='l'>原因</th><th class='l'>訊號</th></tr>"
+            "<th>第N天</th><th>累幅</th><th class='l'>原因</th><th class='l'>回測適用</th></tr>"
             + "".join(trs) + "</table>")
 
 
@@ -249,34 +311,43 @@ def _tab_release(win, today: str) -> str:
                    f"<td class='l'>{html_mod.escape(str(w['start']))}~{html_mod.escape(str(w['end']))}</td>"
                    f"<td class='l'>{html_mod.escape(str(w['measure'])[:18])}</td>"
                    f"<td class='l up'>{tag}</td></tr>")
-    note = ("<div class='note'>出關日是<b>多刀的出場點</b>：報酬拆解顯示（累犯 ∧ 累幅&gt;−10%）"
-            "處置期內 +3.40%、<b>出關跳空 +2.12%</b>、出關日內 −0.41%、出關後 1→3 日 +0.43% —— "
-            "報酬全在處置期與跳空，<b>出關後就沒有了</b>，所以賣在<b>出關日開盤</b>而不是收盤或之後。</div>")
+    note = ("<div class='note'>出關日是<b>多刀的出場點</b>（舊制）：報酬在處置期與出關跳空，"
+            "<b>出關後就沒有了</b>，所以賣在<b>出關日開盤</b>。"
+            "<br>反過來<b>不要在出關日開盤追進</b>：開盤進場到當日收 −1.0%、持有 3 日 −1.4%（t−3.4）；"
+            "出關前一日站上 5MA 且窗內法人買超的反而最差（3 日 −2.7%，樣本內外同號）。</div>")
     return (note + "<table class='dz'><tr><th class='l'>代號</th><th class='l'>處置期間</th>"
             "<th class='l'>原因</th><th class='l'></th></tr>" + "".join(trs) + "</table>")
 
 
 def _tab_stats() -> str:
-    rows = [("處前2", "+3.69", "51.5%", "35.1%", "+1.03", "+3.39"),
-            ("處前1（公告日）", "+1.97", "43.9%", "45.7%", "+0.05", "+0.17"),
-            ("處置1（首日）", "−3.15", "29.6%", "58.5%", "−1.53", "−5.68"),
-            ("處置2", "−0.63", "40.9%", "46.6%", "−0.51", "−1.79"),
-            ("處置3", "−0.12", "43.6%", "45.4%", "−0.18", "−0.70"),
-            ("出前3", "+0.64", "48.2%", "45.1%", "−0.01", "−0.02"),
-            ("出前1", "+1.84", "55.2%", "40.2%", "+1.28", "+4.35"),
-            ("出關1", "+1.47", "44.3%", "46.8%", "−0.25", "−0.66"),
-            ("出關2", "+0.36", "38.5%", "54.5%", "−0.75", "−2.33")]
-    trs = "".join(
-        f"<tr><td class='l'>{a}</td><td>{b}%</td><td>{c}</td><td>{d}</td><td>{e}%</td><td>{f}</td></tr>"
-        for a, b, c, d, e, f in rows)
-    note = ("<div class='note'>樣本＝自有 <b>1,176 筆處置事件（2019-12 ~ 2026-09、479 檔）</b>，"
-            "此表為<b>累犯</b>（TWSE 明寫第二次以上，n=328）。紅K/黑K＝收 vs 開（K 棒顏色）；"
-            "平均漲跌＝收 vs 昨收。<br><b>處前1 黑K 率只有 45.7%</b> —— 「處置前一天是黑K」不成立；"
-            "真正的特徵是<b>振幅 7.58%（一般日的 1.9 倍）</b>、買在當日最高價收盤平均 −3.47%。"
-            "<br>真正的利空在<b>處置首日</b>（累犯 −3.15%、黑K 58.5%、t−5.68），初犯只有 −0.51%。"
-            "<br>重算：<code>PYTHONPATH=src .venv/bin/python scripts/research/disposal_window_stats.py</code></div>")
-    return (note + "<table class='dz'><tr><th class='l'>時點</th><th>平均漲跌</th><th>紅K</th><th>黑K</th>"
-            "<th>開收幅</th><th>t</th></tr>" + trs + "</table>")
+    if not STATS_JSON.exists():
+        return ("<div class='note'>尚無 disposal_stats.json。產生：<code>PYTHONPATH=src .venv/bin/python "
+                "scripts/research/disposal_window_stats.py --json</code>（收盤後 daily_sync 會自動重算）。</div>")
+    st = json.loads(STATS_JSON.read_text(encoding="utf-8"))
+
+    def f(x, nd=2, sign=True):
+        return "—" if x is None else (f"{x:+.{nd}f}" if sign else f"{x:.{nd}f}")
+
+    blocks = []
+    for key in ("old_repeat", "old_first", "new"):
+        g = st["groups"].get(key)
+        if not g:
+            continue
+        trs = ""
+        for r in g["rows"]:
+            if "chg" not in r:
+                trs += f"<tr><td class='l'>{r['point']}</td><td colspan='5' class='dim'>n={r['n']} 太少</td></tr>"
+                continue
+            trs += (f"<tr><td class='l'>{r['point']}</td><td>{r['n']}</td><td>{f(r['chg'])}%</td>"
+                    f"<td>{r['red']:.1f}%</td><td>{r['black']:.1f}%</td><td>{f(r['oc'])}%</td><td>{f(r['t'])}</td></tr>")
+        blocks.append(f"<h3>{html_mod.escape(g['label'])}（事件 n={g['n']}）</h3><table class='dz'><tr><th class='l'>時點</th>"
+                      "<th>n</th><th>平均漲跌</th><th>紅K</th><th>黑K</th><th>開收幅</th><th>t</th></tr>" + trs + "</table>")
+    note = (f"<div class='note'>樣本＝自有處置事件 <b>{st['n_events']}</b> 筆（{html_mod.escape(st['first'])} ~ "
+            f"{html_mod.escape(st['last'])}），重算於 {html_mod.escape(st['generated'])}。<b>累犯</b>＝前次處置結束後 60 日內再被處置"
+            "（上市櫃同口徑）。紅K/黑K＝收 vs 開（K 棒顏色）；平均漲跌＝收 vs 昨收；t 為開收幅對 0 的檢定（未做日期聚類，僅供參考）。"
+            "<br>處置首日是舊制累犯的主要利空；<b>新制組樣本很小，數字不可當結論</b>。"
+            "<br>重算：<code>PYTHONPATH=src .venv/bin/python scripts/research/disposal_window_stats.py --json</code></div>")
+    return note + "".join(blocks)
 
 
 def _th(cols) -> str:
@@ -332,12 +403,8 @@ def _tab_all(risk, win, today: str) -> str:
         inside = [(d, c) for d, c in arr if d >= start]
         cum = ((inside[-1][1] / inside[0][1] - 1) * 100) if len(inside) >= 2 else None
         nth = len(inside)
-        repeat = "累犯" if ("第二次" in str(w["measure"]) or "第三次" in str(w["measure"])) else "初犯"
-        sig = ""
-        if repeat == "累犯" and nth >= 3 and cum is not None:
-            sig = "<b class='up'>🟢 多刀可進</b>" if cum > -10 else "<span class='r3'>跌幅≥10%，訊號消失</span>"
-        elif repeat == "累犯" and cum is not None:
-            sig = f"<span class='dim'>第 {nth} 天，等第 3 天</span>"
+        repeat = "累犯" if _is_repeat(w) else "初犯"
+        sig = _signal(w, repeat == "累犯", nth, cum)
         cc = "up" if (cum or 0) > 0 else "dn" if cum is not None else ""
         trs.append(f"<tr><td class='l'>{html_mod.escape(sid)} {_name(sid)}</td>"
                    f"<td class='l'>{html_mod.escape(start[5:])}~{html_mod.escape(str(w['end'])[5:])}</td>"
@@ -346,7 +413,7 @@ def _tab_all(risk, win, today: str) -> str:
                    f"<td class='l'>{html_mod.escape(str(w['measure'])[:16])}</td>"
                    f"<td class='l'>{sig}</td></tr>")
     tbl_b = ("<h3>② 處置坐牢中</h3><table class='dz'>"
-             + _th(["~代號 名稱", "~處置期間", "~犯次", "第N天", "累幅", "~原因", "~多刀訊號"])
+             + _th(["~代號 名稱", "~處置期間", "~犯次", "第N天", "累幅", "~原因", "~回測適用"])
              + "".join(trs) + "</table>")
 
     # ── C 今天出關 ─────────────────────────────────────────────
@@ -362,9 +429,8 @@ def _tab_all(risk, win, today: str) -> str:
             "只有第一~第八款累積，計數在上次處置期滿後重新起算。"
             "<br><b>第一款門檻</b>自動依近期趨勢取漲幅側或跌幅側；<b class='r3'>已越過</b>表示"
             "現價已在觸發區間內，今天收盤維持現狀就會再中一次。"
-            "<br><b>多刀訊號</b>來自自有 1,478 筆事件回測：累犯 ∧ 處置第 3 天 ∧ 累幅 &gt; −10% 買、"
-            "出關日開盤賣 → 中位 +3.77%、正 62%、t+4.77（IS/OOS 皆顯著）。"
-            "<b>⚠ 分盤排隊成交率完全未驗證，p5 −20.95%、單筆最差 −53%。</b>"
+            "<br><b>多刀</b>（舊制回測）：處置期內買、出關日開盤賣，平均約 +3.5%，但與第幾天／跌幅／籌碼無關，"
+            "且新制下未驗證（見上方警示）。<b>⚠ 分盤排隊成交率完全未驗證，p5 −20.95%、單筆最差 −53%。</b>"
             "<br>⚠ 上櫃只有當日快照可抓，上櫃個股計數要累積滿 30 個營業日才完整；"
             "第 3/4 款（量能、週轉率）尚未做門檻反解，實際被中機率比表上高。</div>")
     return note + tbl_a + tbl_b + tbl_c
