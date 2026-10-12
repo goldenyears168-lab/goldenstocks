@@ -308,7 +308,7 @@ def render_pending_block(day: str) -> str:
 <div class='hd' style='margin-bottom:6px'>
  <span class='nm'>🤖 操盤手代理人 · 自動送單
   <span class='tag' style='background:#1f6feb'>{n_ok}</span></span>
- <span class='t'>{day}　規則通過 {n_ok} 張　<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a></span></div>
+ <span class='t'>{day}　{_today_summary(day, len(load_candidates(day)))}　<a href='/agent?day={day}' style='color:#79c0ff'>完整紀錄與規格 →</a></span></div>
 {render_order_strip(day)}{render_ai_view(day)}
 <div class='sub' style='margin:0 0 6px'>規則通過的卡片由獨立下單層在 {_order_window()} 自動送出，不需批准；能擋單的只有「關閉自動送單」與 AI 監督員撤單。
 此頁不會送出委託單（<code>src/clone_agent/</code> 不 import 富邦 SDK）,按鈕只寫開關檔。</div>
@@ -416,12 +416,82 @@ def _capital() -> str:
 <b>不變量：持倉腿從沒「偏高」過，只會偏低</b> —— 瓶頸是新倉成交率只有 48%。</div>"""
 
 
+def _ledger_days() -> list[str]:
+    from clone_agent.order_switch import ledger_path
+    d = ledger_path("2000-01-01").parent
+    return sorted(p.stem.rsplit("_", 1)[-1] for p in d.glob("clone_agent_ledger_*.json"))
+
+
+def _today_summary(day: str, n_cards: int) -> str:
+    """① 摘要:以下單層帳本為準(卡片層的 verdict 幾乎都是 ok,真正擋單的是下單層閘門)。"""
+    from collections import Counter
+    ents = list((read_ledger_display(day).get("entries") or {}).values())
+    if not ents:
+        return f"出卡 {n_cards} 張；此日沒有下單層帳本"
+    sent = [e for e in ents if e.get("status") not in ("skipped",)]
+    why = Counter((e.get("reason") or "?").split(":")[0] for e in ents if e.get("status") == "skipped")
+    names = {"stars_below_4": "★ 不足 4", "outside_window": "不在送單窗", "same_sid_active": "同標的已有單",
+             "broker_position_same_root": "券商已有同商品持倉", "account_cooldown": "額度冷卻中",
+             "broker_margin_short": "券商資力不足", "margin_cap": "超過 147 萬上限"}
+    why_t = "、".join(f"{names.get(k, k)} {v}" for k, v in why.most_common())
+    return (f"出卡 {n_cards} 張 → 下單層送出 {len(sent)} 張、略過 {len(ents) - len(sent)} 張"
+            + (f"（{why_t}）" if why_t else ""))
+
+
+def _capital_live(day: str) -> str:
+    hb, led = read_heartbeat(), read_ledger_display(day)
+    ents = list((led.get("entries") or {}).values())
+    cap = float(hb.get("margin_cap") or 1_470_000)
+    held = sum(float(e.get("margin") or 0) for e in ents if e.get("status") in ("working", "partial", "unknown_submit", "filled", "dry_run"))
+    bk = led.get("broker") or {}
+    av = bk.get("available_margin")
+    oo = bk.get("open_orders") or []
+    other = [o for o in oo if not o.get("ours")]
+    other_t = (f"　<span style='color:#e3b341'>另有 {len(other)} 筆非代理人的未了結委託（手動單），其保證金<b>不在</b>上面的代理人佔用內，"
+               f"但會吃掉券商可用保證金</span>") if other else ""
+    return (f"<div class='sub' style='margin-bottom:6px;border:1px solid #30363d;border-radius:5px;padding:6px 8px'>"
+            f"<b>即時（{_esc(day)}）</b>　代理人佔用 <b>{held/1e4:,.0f} 萬</b>／上限 {cap/1e4:,.0f} 萬（{100*held/cap:.1f}%）"
+            + (f"　券商可用保證金 <b>{float(av)/1e4:,.0f} 萬</b>（{_esc(str(bk.get('at') or '')[11:19])} 核對）" if av is not None else "")
+            + f"{other_t}</div>")
+
+
+def _live_trades() -> str:
+    """③ 代理人實單紀錄:彙整所有下單層帳本中真的送過單的項目(去重,以最新一天的狀態為準)。"""
+    from clone_agent.order_switch import read_ledger_display as rl
+    seen: dict[str, tuple[str, dict]] = {}
+    for d in _ledger_days():
+        for e in (rl(d).get("entries") or {}).values():
+            if e.get("status") != "skipped":
+                seen[e["intent_id"]] = (e.get("carried_from") or d, e)
+    st = {"filled": "持倉中", "closed": "已平倉", "failed": "送單失敗", "cancelled": "已撤單", "working": "掛單中",
+          "partial": "部分成交", "unknown_submit": "狀態不明", "dry_run": "演練"}
+    rows = sorted(seen.values(), key=lambda x: (x[0], x[1].get("card_time") or ""))
+    if not rows:
+        return "<div class='sub'>下單層尚未送過單。</div>"
+    from datetime import datetime
+
+    def hm(ts):
+        return datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else "—"
+    body = "".join(
+        f"<tr><td>{_esc(e.get('uname'))} <span class='dim'>{_esc(e.get('contract'))}</span></td>"
+        f"<td class='dim'>{_esc(d[5:])} {_esc(e.get('card_time'))}</td><td>{_n(e.get('price'), 1)}</td>"
+        f"<td>{e.get('filled_lot', 0)}/{e.get('lot')}</td><td>{hm(e.get('held_since'))}</td>"
+        f"<td>{st.get(e.get('status'), e.get('status'))}"
+        + (f" <span class='dim'>{_esc(e.get('reason'))}</span>" if e.get("reason") else "") + "</td>"
+        f"<td>{_n(e.get('margin'))}</td></tr>"
+        for d, e in rows)
+    ok = sum(1 for _, e in rows if e.get("filled_lot"))
+    return (f"<div class='sub'>共送單 {len(rows)} 筆、其中成交 {ok} 筆（資料來源：下單層帳本，非研究資料）。"
+            f"損益請看 :8780 財務會計（券商成交明細先進先出）；此帳本沒有出場價。</div>"
+            f"<table><tr><th>標的</th><th>卡片時間</th><th>限價</th><th>成交/口</th><th>成交時間</th><th>狀態</th><th>保證金</th></tr>{body}</table>")
+
+
 # ------------------------------------------------------------ 主頁
 
 def render_agent_page(day: str) -> str:
     cs = load_candidates(day)
     okc = [c for c in cs if c.get("verdict") != "blocked"]
-    days = sorted({p.name[11:21] for p in _data_dir().glob("candidates_*.jsonl")})
+    days = sorted({p.name[11:21] for p in _data_dir().glob("candidates_*.jsonl")} | set(_ledger_days()) | {day})
     sel = "".join(f"<option{' selected' if d == day else ''}>{d}</option>" for d in days)
 
     # 成交紀錄
@@ -451,12 +521,15 @@ def render_agent_page(day: str) -> str:
 要停止送單請用下方「關閉自動送單」。AI 監督員另可依 C1–C3 觸發條件請求撤單（每日 ≤5 次，下單層再驗證）。</div>
 {render_order_strip(day)}{render_ai_view(day)}
 
-<h2>① 今日出卡 · {day}　<span class='t'>規則通過 {len(okc)} 張 · 被規則擋下 {len(cs)-len(okc)} 張；實單結果見上方下單層狀態與③成交紀錄</span></h2>
+<h2>① 今日出卡 · {day}　<span class='t'>{_today_summary(day, len(cs))}（卡片層被 blocked {len(cs)-len(okc)} 張）</span></h2>
 
-<h2>② 資金水位 · 三腿消長</h2>
-{_capital()}
+<h2>② 資金水位</h2>
+{_capital_live(day)}
+<details><summary>歷史三腿消長（研究期 09-29～10-02，已停止更新）</summary>{_capital()}</details>
 
-<h2>③ 成交紀錄　<span class='t'>{len(f)} 趟（2026-09-29 起）</span></h2>
+<h2>③ 代理人實單紀錄</h2>
+{_live_trades()}
+<details><summary>研究期人類成交（09-29～10-02 共 {len(f)} 趟，與代理人實單無關，已停止更新）</summary>
 <div class='kpi'><div><b class='{_p(pnl)}'>{_n(pnl,0,True)}</b><span>淨損益</span></div>
 <div><b>{100*wn/len(f) if f else 0:.1f}%</b><span>勝率 {wn}/{len(f)}</span></div>
 <div><b>{_n(mgs)}</b><span>累計動用保證金</span></div>
@@ -464,7 +537,7 @@ def render_agent_page(day: str) -> str:
 <div class='sub'>「報酬÷保證金」才是真正的資金效率——每口保證金從 3 萬到 24 萬差 8 倍，
 用報酬率看會誤判哪一趟做得好。</div>
 <table><tr><th>標的</th><th>方向</th><th>口</th><th>進場</th><th>進場價</th><th>出場</th><th>出場價</th>
-<th>保證金率</th><th>保證金</th><th>淨損益</th><th>÷保證金%</th><th>分鐘</th></tr>{fb}</table>
+<th>保證金率</th><th>保證金</th><th>淨損益</th><th>÷保證金%</th><th>分鐘</th></tr>{fb}</table></details>
 
 <div class='sub'>機器人規則、回測研究與「最常見故事」→ <a href='/agentrules'>代理人規則頁</a>（下方 ④ 是依人類下單習慣整理的舊規格）</div>
 <details><summary>④ 量化規格（點開）</summary>{_spec()}</details>
@@ -480,7 +553,7 @@ def _spec() -> str:
     return f"""<div class='sub'>研究窗 <b>{g('研究窗')}</b>。數字全來自四天逐單重放。
 完整規格與否證清單在 <code>docs/trader-clone-agent-prd.md</code>。</div>
 <h2>進場</h2><table>{T([
- ("H1 時間窗", "研究口徑 09:00–13:40（四天 100% 落在此窗）；<b>實單視窗為 {_order_window()}</b>"),
+ ("H1 時間窗", f"研究口徑 09:00–13:40（四天 100% 落在此窗）；<b>實單視窗為 {_order_window()}</b>"),
  ("H2 方向", "只做多；條件反向只出平倉卡"),
  ("H3 契約", "大型（2000 股）—— 小型費率是大型的 10.6 倍"),
  ("H4 低量門檻", f"5 分成交額 ≥ {_n(g('低量門檻萬'))} 萬（擋掉 {g('低量門檻擋掉%')}%、只放棄 {g('低量門檻放棄獲利%')}% 獲利）"),
