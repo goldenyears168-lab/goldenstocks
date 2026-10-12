@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# 複製人代理人的兩個研究層 job(共用本 launcher,以第一個參數分流)· 皆不連券商、不送單
+#   signal : 訊號生產者 scripts/research/trader_signal_watch.py · KeepAlive 常駐
+#            只讀檔寫 data/clone_agent/candidates_{日}.jsonl(實單層 clone-agent-order 的唯一輸入);
+#            盤外自己 sleep、跨日自動換檔。2026-10-08 前是手動 nohup,10/7 停電後沒人重啟 → 即時零卡。
+#   learn  : 每日學習迴圈 scripts/research/clone_agent_learn.py day · 平日收盤後
+#            重放凍結規則 → ledger/壞案/影子帳/review_{日}.md;休市日(raw tape <10MB)靜默跳過。
+
+set -euo pipefail
+
+MODE="${1:?usage: clone-agent-jobs.sh signal|learn}"
+ROOT="{{PROJECT_ROOT}}"
+APP_SUPPORT="{{APP_SUPPORT}}"
+DATA_DIR="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}"
+
+mkdir -p "${DATA_DIR}/logs/intraday" "${APP_SUPPORT}" "${HOME}/Library/Logs/com.jackm4.goldenstocks"
+
+export TZ="${TZ:-Asia/Taipei}"
+export GOLDENSTOCKS_DATA_DIR="${DATA_DIR}"
+export PYTHONPATH="${ROOT}/src"
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# trader_signal_watch 讀相對路徑 config/,cwd 必須是 repo 根
+cd "${ROOT}"
+
+PYTHON="${ROOT}/.venv/bin/python"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing python: ${PYTHON}"
+  exit 1
+fi
+
+LOCKDIR="${APP_SUPPORT}/clone-agent-${MODE}.lockdir"
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+  holder="$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")"
+  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+    echo "skip: clone-agent-${MODE} already holding lock (pid=${holder}, alive)"
+    exit 0
+  fi
+  echo "reclaiming stale lock (holder=${holder:-unknown} not alive)"
+  rm -rf "${LOCKDIR}"
+  mkdir "${LOCKDIR}" 2>/dev/null || { echo "skip: lock race lost"; exit 0; }
+fi
+echo "$$" > "${LOCKDIR}/pid"
+trap 'rm -rf "${LOCKDIR}" 2>/dev/null || true' EXIT
+
+LOG="${DATA_DIR}/logs/intraday/clone_agent_${MODE}_$(date '+%Y%m%d').log"
+echo "=== launchd clone-agent-${MODE} start $(date '+%Y-%m-%d %H:%M:%S') ===" >> "${LOG}"
+
+# 不用 exec / tee pipe:讓 launchd 直接看到 python 的退出碼,KeepAlive 才會重拉
+set +e
+case "${MODE}" in
+  signal)
+    "${PYTHON}" -u "${ROOT}/scripts/research/trader_signal_watch.py" >> "${LOG}" 2>&1
+    EXIT=$?
+    ;;
+  learn)
+    RAW="${DATA_DIR}/cache/biglot_live_watch/raw_$(date '+%Y-%m-%d').jsonl"
+    # 休市日收集器仍會寫 futprice/raw(只有心跳,~50KB);正常交易日 raw ~100MB
+    if [[ ! -f "${RAW}" ]] || [[ "$(stat -f %z "${RAW}")" -lt 10000000 ]]; then
+      echo "skip: 今日 raw tape <10MB(休市日?)" >> "${LOG}"
+      EXIT=0
+    else
+      "${PYTHON}" -u "${ROOT}/scripts/research/clone_agent_learn.py" day >> "${LOG}" 2>&1
+      EXIT=$?
+    fi
+    ;;
+  *) echo "unknown mode: ${MODE}" >> "${LOG}"; EXIT=2 ;;
+esac
+set -e
+
+echo "=== launchd clone-agent-${MODE} end exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ===" >> "${LOG}"
+exit "${EXIT}"

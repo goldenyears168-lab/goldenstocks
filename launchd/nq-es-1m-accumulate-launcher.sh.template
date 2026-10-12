@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# 每日 08:00 / 20:00（Asia/Taipei，不分星期幾）· NQ/ES 1分K滾動歸檔 · 不下單
+#
+# 目的：Yahoo 只提供~8天的1分K intraday歷史，tmf-exit-mechanism-search研究線
+# （台指-NQ脫鉤防禦性出場，H-TXNQ-DECOUPLE-DEFENSIVE-EXIT）需要真實1分K重疊
+# 史才能驗證live解析度的訊號，否則永遠卡在8天視窗。此job呼叫
+# scripts/research/nq_es_1m_daily_accumulate.py，把當下的~8天滾動視窗併入
+# 本機parquet封存檔（依timestamp去重，可安全重跑）。純研究資料累積，不建立
+# Fubon session、不碰下單邏輯。一天兩次是為了降低單次失敗造成永久缺口的機率
+# （Yahoo抓取偶有暫時性失敗）。
+
+set -euo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+STAMP="$(date '+%Y%m%d')"
+RUN_LOG="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs/nq_es_1m_accumulate_${STAMP}.log"
+
+mkdir -p "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs"
+
+echo ""
+echo "=== launchd nq-es-1m-accumulate 開始 $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+export ROOT="${ROOT}"
+export PYTHONPATH="${ROOT}/src"
+
+_load_env_file() {
+  local path="$1"
+  if [[ ! -r "${path}" ]]; then
+    return 0
+  fi
+  set +e
+  set -a
+  # shellcheck disable=SC1090
+  source "${path}" 2>/dev/null
+  set +a
+  set -e
+}
+
+_load_env_file "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/.env"
+
+PYTHON="${ROOT}/.venv/bin/python"
+
+EXIT=0
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing venv python: ${PYTHON}"
+  EXIT=1
+else
+  set +e
+  "${PYTHON}" "${ROOT}/scripts/research/nq_es_1m_daily_accumulate.py" \
+    2>&1 | tee "${RUN_LOG}"
+  EXIT=${PIPESTATUS[0]}
+  set -e
+fi
+
+echo "=== launchd nq-es-1m-accumulate 結束 exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+if [[ "${EXIT}" -ne 0 && -x "${PYTHON}" ]]; then
+  set +e
+  "${PYTHON}" "${ROOT}/scripts/notify_job_result.py" \
+    --subject-prefix="NQ/ES 1分K歸檔" \
+    --exit-code="${EXIT}" \
+    --log-path="${RUN_LOG}" \
+    --extra="nq_es_1m_daily_accumulate 同步失敗，詳見 log（純研究資料累積，不影響下單）" \
+    --env-flag="RUN_NQ_ES_1M_ACCUMULATE_EMAIL"
+  set -e
+fi
+
+exit "${EXIT}"

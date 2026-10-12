@@ -28,6 +28,8 @@ LABELS=(
   com.jackm4.goldenstocks.tmf-channel-poll
   com.jackm4.goldenstocks.clone-agent-order
   com.jackm4.goldenstocks.clone-agent-supervisor
+  com.jackm4.goldenstocks.clone-agent-signal
+  com.jackm4.goldenstocks.clone-agent-learn
   com.jackm4.goldenstocks.biglot-dashboard
   com.jackm4.goldenstocks.tmf-sim-server
   com.jackm4.goldenstocks.expert-pool-staged-gate
@@ -44,6 +46,7 @@ LABELS=(
   com.jackm4.goldenstocks.ops-console-evening-sync
   com.jackm4.goldenstocks.mini-schedule
   com.jackm4.goldenstocks.daily-sync
+  com.jackm4.goldenstocks.etf-holdings-sync
   com.jackm4.goldenstocks.nq-es-1m-accumulate
   com.jackm4.goldenstocks.taifex-tick-accumulate
   com.jackm4.goldenstocks.momentum-rotation-poll
@@ -60,6 +63,8 @@ TEMPLATES=(
   com.jackm4.goldenstocks.tmf-channel-poll.plist.template
   com.jackm4.goldenstocks.clone-agent-order.plist.template
   com.jackm4.goldenstocks.clone-agent-supervisor.plist.template
+  com.jackm4.goldenstocks.clone-agent-signal.plist.template
+  com.jackm4.goldenstocks.clone-agent-learn.plist.template
   com.jackm4.goldenstocks.biglot-dashboard.plist.template
   com.jackm4.goldenstocks.tmf-sim-server.plist.template
   com.jackm4.goldenstocks.expert-pool-staged-gate.plist.template
@@ -76,6 +81,7 @@ TEMPLATES=(
   com.jackm4.goldenstocks.ops-console-evening-sync.plist.template
   com.jackm4.goldenstocks.mini-schedule.plist.template
   com.jackm4.goldenstocks.daily-sync.plist.template
+  com.jackm4.goldenstocks.etf-holdings-sync.plist.template
   com.jackm4.goldenstocks.nq-es-1m-accumulate.plist.template
   com.jackm4.goldenstocks.taifex-tick-accumulate.plist.template
   com.jackm4.goldenstocks.momentum-rotation-poll.plist.template
@@ -431,6 +437,7 @@ render_template() {
       -e "s|{{TMF_CHANNEL_LAUNCHER}}|${TMF_CHANNEL_LAUNCHER}|g" \
       -e "s|{{CLONE_AGENT_ORDER_LAUNCHER}}|${CLONE_AGENT_ORDER_LAUNCHER}|g" \
       -e "s|{{CLONE_AGENT_SUPERVISOR_LAUNCHER}}|${CLONE_AGENT_SUPERVISOR_LAUNCHER}|g" \
+      -e "s|{{CLONE_AGENT_JOBS_LAUNCHER}}|${CLONE_AGENT_JOBS_LAUNCHER}|g" \
       -e "s|{{BIGLOT_DASHBOARD_LAUNCHER}}|${BIGLOT_DASHBOARD_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_LAUNCHER}}|${MOMENTUM_ROTATION_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_WATCH_LAUNCHER}}|${MOMENTUM_ROTATION_WATCH_LAUNCHER}|g" \
@@ -448,6 +455,7 @@ render_template() {
       -e "s|{{OPS_CONSOLE_EVENING_LAUNCHER}}|${OPS_CONSOLE_EVENING_LAUNCHER}|g" \
       -e "s|{{MINI_SCHEDULE_LAUNCHER}}|${MINI_SCHEDULE_LAUNCHER}|g" \
       -e "s|{{DAILY_SYNC_LAUNCHER}}|${DAILY_SYNC_LAUNCHER}|g" \
+      -e "s|{{ETF_HOLDINGS_SYNC_LAUNCHER}}|${ETF_HOLDINGS_SYNC_LAUNCHER}|g" \
       -e "s|{{EVENING_HOLDINGS_LAUNCHER}}|${EVENING_HOLDINGS_LAUNCHER}|g" \
       -e "s|{{MORNING_BRIEF_LAUNCHER}}|${MORNING_BRIEF_LAUNCHER}|g" \
       -e "s|{{INTRADAY_GATE_LAUNCHER}}|${INTRADAY_GATE_LAUNCHER}|g" \
@@ -583,6 +591,20 @@ install_clone_agent_supervisor_launcher() {
   APP_SUPPORT="${app_support}"
   render_template "${src}" "${CLONE_AGENT_SUPERVISOR_LAUNCHER}"
   chmod +x "${CLONE_AGENT_SUPERVISOR_LAUNCHER}"
+}
+
+install_clone_agent_jobs_launcher() {
+  local src="${LAUNCHD_SRC}/clone-agent-jobs-launcher.sh.template"
+  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
+  CLONE_AGENT_JOBS_LAUNCHER="${app_support}/clone-agent-jobs.sh"
+  if [[ ! -f "${src}" ]]; then
+    echo "✗ 缺少 ${src}" >&2
+    exit 1
+  fi
+  mkdir -p "${app_support}"
+  APP_SUPPORT="${app_support}"
+  render_template "${src}" "${CLONE_AGENT_JOBS_LAUNCHER}"
+  chmod +x "${CLONE_AGENT_JOBS_LAUNCHER}"
 }
 
 install_biglot_dashboard_launcher() {
@@ -849,6 +871,19 @@ install_daily_sync_launcher() {
   chmod +x "${DAILY_SYNC_LAUNCHER}"
 }
 
+install_etf_holdings_sync_launcher() {
+  local src="${LAUNCHD_SRC}/etf-holdings-sync-launcher.sh.template"
+  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
+  ETF_HOLDINGS_SYNC_LAUNCHER="${app_support}/etf-holdings-sync.sh"
+  if [[ ! -f "${src}" ]]; then
+    echo "✗ 缺少 ${src}" >&2
+    exit 1
+  fi
+  mkdir -p "${app_support}"
+  render_template "${src}" "${ETF_HOLDINGS_SYNC_LAUNCHER}"
+  chmod +x "${ETF_HOLDINGS_SYNC_LAUNCHER}"
+}
+
 install_mini_schedule_launcher() {
   local src="${LAUNCHD_SRC}/mini-schedule-launcher.sh.template"
   local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
@@ -1070,6 +1105,7 @@ install_agents() {
   TMF_CHANNEL_LAUNCHER=""
   CLONE_AGENT_ORDER_LAUNCHER=""
   CLONE_AGENT_SUPERVISOR_LAUNCHER=""
+  CLONE_AGENT_JOBS_LAUNCHER=""
   BIGLOT_DASHBOARD_LAUNCHER=""
   MOMENTUM_ROTATION_LAUNCHER=""
   MOMENTUM_ROTATION_WATCH_LAUNCHER=""
@@ -1087,6 +1123,7 @@ install_agents() {
   OPS_CONSOLE_EVENING_LAUNCHER=""
   MINI_SCHEDULE_LAUNCHER=""
   DAILY_SYNC_LAUNCHER=""
+  ETF_HOLDINGS_SYNC_LAUNCHER=""
   EVENING_HOLDINGS_LAUNCHER=""
   MORNING_BRIEF_LAUNCHER=""
   INTRADAY_GATE_LAUNCHER=""
@@ -1110,6 +1147,7 @@ install_agents() {
   install_tmf_channel_launcher
   install_clone_agent_order_launcher
   install_clone_agent_supervisor_launcher
+  install_clone_agent_jobs_launcher
   install_biglot_dashboard_launcher
   install_futopt_fill_listener_launcher
   install_futopt_books_collect_launcher
@@ -1129,6 +1167,7 @@ install_agents() {
   install_ops_console_evening_launcher
   install_mini_schedule_launcher
   install_daily_sync_launcher
+  install_etf_holdings_sync_launcher
   install_nq_es_1m_accumulate_launcher
   install_taifex_tick_accumulate_launcher
   # specialty-expert-pool-watch retired 2026-07-20 · merged into nightly-expert-digest

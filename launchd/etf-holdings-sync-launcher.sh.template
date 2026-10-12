@@ -1,0 +1,5 @@
+#!/bin/bash
+# Template · install-launchd → ~/Library/Application Support/com.jackm4.goldenstocks/etf-holdings-sync.sh
+set -euo pipefail
+ROOT="{{PROJECT_ROOT}}"
+exec /bin/bash "${ROOT}/scripts/launchd/etf-holdings-sync.command"

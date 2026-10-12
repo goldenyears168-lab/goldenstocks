@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# momentum-rotation Order · long-lived worker（KeepAlive）· 重用 Fubon session
+# 日盤 08:44-13:41（窗外 worker 內部 sleep，不重登入；跟 tmf-channel-poll /
+# dayflip-short-poll 同一套手法）。
+#
+# dry-run-first 預設：ORDER_MOMENTUM_ROTATION_AUTO_SUBMIT 預設 0。要送真單需
+# 使用者在 .env 明確改成 1（且 ORDER_MASTER_ENABLED 也要開）。這支 launcher
+# 本身不改任何旗標值，只帶入 plist 預設或 .env 覆寫。
+
+set -euo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+APP_SUPPORT="{{APP_SUPPORT}}"
+
+mkdir -p "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs/intraday" "${APP_SUPPORT}"
+mkdir -p "${HOME}/Library/Logs/com.jackm4.goldenstocks"
+
+export TZ="${TZ:-Asia/Taipei}"
+export ROOT="${ROOT}"
+export PYTHONPATH="${ROOT}/src"
+
+# 2026-09-01 修孤兒量產機:舊鎖用「年齡>120s」判 stale,但 KeepAlive worker 一跑
+# 一整天,鎖必然變老 → 每次 kickstart 新 launcher 都搶走鎖照常啟動,舊 worker 沒死
+# 就變孤兒(實測一天累積 4 支同時寫 ledger,被監看 AI 拉 kill switch)。改成:
+# ①鎖內存 PID、活著就讓路 ②接手前先收割舊 worker 行程(比照 books collector)。
+LOCKDIR="${APP_SUPPORT}/momentum-rotation-poll.lockdir"
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+  holder="$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")"
+  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+    echo "skip: momentum-rotation launcher already alive (pid=${holder})"
+    exit 0
+  fi
+  rm -rf "${LOCKDIR}"
+  if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+    echo "skip: lock race lost"
+    exit 0
+  fi
+fi
+echo "$$" > "${LOCKDIR}/pid"
+trap 'rm -rf "${LOCKDIR}" 2>/dev/null || true' EXIT
+# 收割舊 worker(kickstart 的 SIGTERM 殺不到管線後的 python 本體)
+for stale in $(pgrep -f "run_momentum_rotation_worker.py" 2>/dev/null || true); do
+  echo "reaping stale worker pid=${stale}"
+  kill -TERM "${stale}" 2>/dev/null || true
+done
+sleep 2   # TERM 給 2 秒優雅關閉;扛住的直接 KILL(2026-09-01 實測 41603 扛過一次 TERM)
+for stale in $(pgrep -f "run_momentum_rotation_worker.py" 2>/dev/null || true); do
+  echo "reaping (KILL) stubborn worker pid=${stale}"
+  kill -KILL "${stale}" 2>/dev/null || true
+done
+
+# 2026-08-19 修 log 日期輪替：本 job 是 KeepAlive 長駐 worker，一個行程會活過好幾天。
+# 舊寫法 STAMP="$(date '+%Y%m%d')" 只在**啟動當下**算一次，跨日之後所有輸出仍寫進啟動
+# 那天的檔名（實測 dayflip_short 連續 6 天全寫進 *_20260813.log），害下游「讀今天的
+# log」一律讀到空檔——momentum-rotation 的監看就因此連兩天誤觸 kill switch。
+# 現在檔名一律在**寫入當下**才決定：banner 走 _tick_log()，長駐 worker 的 stdout 走
+# rotating_tee.py 逐行輪替（語義與 tee -a 相同，另會把每行轉發 stdout）。
+LOG_PREFIX="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs/intraday/momentum_rotation"
+ROTATING_TEE="${ROOT}/scripts/launchd/rotating_tee.py"
+_tick_log() { printf '%s_%s.log' "${LOG_PREFIX}" "$(date '+%Y%m%d')"; }
+
+_load_env_file() {
+  local path="$1"
+  local label="$2"
+  if [[ ! -r "${path}" ]]; then
+    return 0
+  fi
+  set +e
+  set -a
+  # shellcheck disable=SC1090
+  source "${path}" 2>/dev/null
+  local rc=$?
+  set +a
+  set -e
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "WARN: cannot source ${label} (${path}) rc=${rc} · continue with defaults"
+  fi
+}
+
+_load_env_file "${APP_SUPPORT}/order.env" "order.env"
+_load_env_file "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/.env" "project .env"
+
+export ORDER_MOMENTUM_ROTATION_AUTO_SUBMIT="${ORDER_MOMENTUM_ROTATION_AUTO_SUBMIT:-0}"
+export ORDER_MOMENTUM_ROTATION_WORKER_INTERVAL="${ORDER_MOMENTUM_ROTATION_WORKER_INTERVAL:-20}"
+export ORDER_MOMENTUM_ROTATION_WORKER_IDLE="${ORDER_MOMENTUM_ROTATION_WORKER_IDLE:-60}"
+# 2026-08-30 實驗旗標（兩者預設關；_load_env_file 用 set -a，.env 的值會覆寫這裡）
+#   HEDGE_ENABLED=1      → 每筆進場同時在次月建反向對沖腿（見 momentum_rotation_hedge.py）
+#   ANCHOR_SEED_AFTER=HH:MM → 丟棄該時刻前的 tick，重現 8/13 anchor 被盤中價種下的 bug
+#   FORCE_MARKET=1       → 兩腿都走市價 IOC（放棄限價的價格上限，滑價風險見程式碼註解）
+export ORDER_MOMENTUM_ROTATION_HEDGE_ENABLED="${ORDER_MOMENTUM_ROTATION_HEDGE_ENABLED:-0}"
+export ORDER_MOMENTUM_ROTATION_ANCHOR_SEED_AFTER="${ORDER_MOMENTUM_ROTATION_ANCHOR_SEED_AFTER:-}"
+export ORDER_MOMENTUM_ROTATION_FORCE_MARKET="${ORDER_MOMENTUM_ROTATION_FORCE_MARKET:-0}"
+#   SIGNAL_V3=1（預設開）→ 2026-08-31 盲點修正版訊號：30分相對大盤z逆勢、時間出場、
+#   災難停損、成本/價差閘門、無搶佔。設 0 退回 v1 開盤突破。
+export ORDER_MOMENTUM_ROTATION_SIGNAL_V3="${ORDER_MOMENTUM_ROTATION_SIGNAL_V3:-1}"
+# 池 v3(50萬甜蜜帶8檔)。2026-09-01 收盤後啟用;要退回 v2 改成 :-v2 重裝+kickstart
+export ORDER_MOMENTUM_ROTATION_POOL="${ORDER_MOMENTUM_ROTATION_POOL:-v3}"
+# V4 凍結候選(四層過濾+持有300秒)。2026-09-01 深夜起紙上主規格;退回=改 :-0
+export ORDER_MOMENTUM_ROTATION_V4="${ORDER_MOMENTUM_ROTATION_V4:-1}"
+#   V3_MODE=micro30（預設,2026-08-31 使用者指定:30秒峰值價+峰值量 fade、持倉30秒）
+#           relz30 = 30分相對大盤 z 逆勢(盲點修正完整版)
+export ORDER_MOMENTUM_ROTATION_V3_MODE="${ORDER_MOMENTUM_ROTATION_V3_MODE:-micro30}"
+#   MICRO_TRIGGER=volburst10x（預設,2026-08-31 使用者指定:5秒量≥10×3分鐘均量,順勢30秒)
+#                peak30 = 30秒峰值價+峰值量 fade
+export ORDER_MOMENTUM_ROTATION_MICRO_TRIGGER="${ORDER_MOMENTUM_ROTATION_MICRO_TRIGGER:-volburst10x}"
+#   V3_SOURCE=spot(預設,2026-08-31 盲點檢定裁決:期貨獨有爆量 ret120 −6.73 顯著為負,
+#   觸發搬現貨 ws、期貨爆量降為 fut_confirm 確認欄位)/ futures = 舊行為
+export ORDER_MOMENTUM_ROTATION_V3_SOURCE="${ORDER_MOMENTUM_ROTATION_V3_SOURCE:-spot}"
+
+PYTHON="${ROOT}/.venv/bin/python"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing venv python: ${PYTHON}" | tee -a "$(_tick_log)"
+  exit 1
+fi
+
+echo "=== launchd momentum-rotation-poll WORKER start $(date '+%Y-%m-%d %H:%M:%S') (dry_run auto_submit=${ORDER_MOMENTUM_ROTATION_AUTO_SUBMIT} hedge=${ORDER_MOMENTUM_ROTATION_HEDGE_ENABLED} anchor_after=${ORDER_MOMENTUM_ROTATION_ANCHOR_SEED_AFTER:-off} force_market=${ORDER_MOMENTUM_ROTATION_FORCE_MARKET} v3=${ORDER_MOMENTUM_ROTATION_SIGNAL_V3}/${ORDER_MOMENTUM_ROTATION_V3_MODE}/${ORDER_MOMENTUM_ROTATION_V3_SOURCE} pool=${ORDER_MOMENTUM_ROTATION_POOL} v4=${ORDER_MOMENTUM_ROTATION_V4}) ===" | tee -a "$(_tick_log)"
+
+set +e
+"${PYTHON}" "${ROOT}/scripts/order/run_momentum_rotation_worker.py" 2>&1 | "${PYTHON}" "${ROTATING_TEE}" "${LOG_PREFIX}"
+EXIT=${PIPESTATUS[0]}
+set -e
+
+echo "=== launchd momentum-rotation-poll WORKER end exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ===" | tee -a "$(_tick_log)"
+exit "${EXIT}"

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# 每日 16:30 / 20:00（Asia/Taipei，不分星期幾）· TAIFEX前30日逐筆成交滾動歸檔 · 不下單
+#
+# 目的：momentum-rotation今天(2026-08-13)研究發現的兩個資料缺口——(1) Fubon
+# REST intraday.trades()有~50筆上限、可能漏掉兩次poll間的tick；(2) Fubon SDK
+# 完全沒有歷史tick回放API，回測只能靠手動存的固定快照
+# (reports/research/expert_pool_futures_tick/*.csv)。TAIFEX官方「前30個交易日
+# 逐筆成交」免費下載可以解決這兩個問題（完整、官方、可長期累積），但只保留
+# 前30天、隔天不跑就會永久漏掉當天。此job呼叫
+# scripts/research/taifex_tick_daily_accumulate.py --days 3，把最近3個日曆日
+# 併入本機CSV封存檔（依日期去重，可安全重跑）。純研究資料累積，不建立Fubon
+# session、不碰下單邏輯。一天兩次是為了降低單次失敗（期交所暫時性錯誤/網路）
+# 造成永久缺口的機率，比照nq-es-1m-accumulate同一個手法。
+#
+# ⚠️ 誠實記錄：這份資料沒有買賣方向欄位，不是真正的order flow imbalance資料，
+# 只是完整、不被50筆上限沖掉的逐筆成交(價格/量)——見
+# taifex_tick_daily_accumulate.py檔頭docstring。
+#
+# 2026-08-13同步加上taifex_broad_tick_daily_accumulate.py——micro VCP(量縮
+# 盤整+趨勢+爆量)研究在12檔上驗證時撞上樣本量瓶頸(4折常有3折崩潰到個位數~
+# 十幾筆，risk-adj不可信)，使用者要求擴大標的池到全市場個股期貨(而不只
+# momentum-rotation這12檔)增加訊號密度。同一份TAIFEX每日zip、同一次下載，
+# 只是解析時收下全部326檔個股期貨(含TMF微型台指期貨)而非只認12檔，各自存
+# 獨立CSV，跟前者互不干擾。
+
+set -euo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+STAMP="$(date '+%Y%m%d')"
+RUN_LOG="${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs/taifex_tick_accumulate_${STAMP}.log"
+
+mkdir -p "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/logs"
+
+echo ""
+echo "=== launchd taifex-tick-accumulate 開始 $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+export ROOT="${ROOT}"
+export PYTHONPATH="${ROOT}/src"
+
+_load_env_file() {
+  local path="$1"
+  if [[ ! -r "${path}" ]]; then
+    return 0
+  fi
+  set +e
+  set -a
+  # shellcheck disable=SC1090
+  source "${path}" 2>/dev/null
+  set +a
+  set -e
+}
+
+_load_env_file "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/.env"
+
+PYTHON="${ROOT}/.venv/bin/python"
+
+EXIT=0
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "✗ missing venv python: ${PYTHON}"
+  EXIT=1
+else
+  set +e
+  "${PYTHON}" "${ROOT}/scripts/research/taifex_tick_daily_accumulate.py" --days 3 \
+    2>&1 | tee "${RUN_LOG}"
+  EXIT=${PIPESTATUS[0]}
+  "${PYTHON}" "${ROOT}/scripts/research/taifex_broad_tick_daily_accumulate.py" --days 3 \
+    2>&1 | tee -a "${RUN_LOG}"
+  BROAD_EXIT=${PIPESTATUS[0]}
+  if [[ "${BROAD_EXIT}" -ne 0 ]]; then
+    EXIT="${BROAD_EXIT}"
+  fi
+  set -e
+fi
+
+echo "=== launchd taifex-tick-accumulate 結束 exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+if [[ "${EXIT}" -ne 0 && -x "${PYTHON}" ]]; then
+  set +e
+  "${PYTHON}" "${ROOT}/scripts/notify_job_result.py" \
+    --subject-prefix="TAIFEX逐筆歸檔" \
+    --exit-code="${EXIT}" \
+    --log-path="${RUN_LOG}" \
+    --extra="taifex_tick_daily_accumulate 同步失敗，詳見 log（純研究資料累積，不影響下單）" \
+    --env-flag="RUN_TAIFEX_TICK_ACCUMULATE_EMAIL"
+  set -e
+fi
+
+exit "${EXIT}"

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# 由 install-launchd.sh 安裝至 ~/Library/Application Support/com.jackm4.goldenstocks/
+# momentum-rotation 盤中即時監看：StartInterval 每15分鐘觸發一次，本檔自己過濾
+# 週一~五 08:40~13:45 窗口（其餘時間 exit 0 不動作）。headless Claude Code 讀
+# 「當日已經發生的」log/ledger/broadcast，異常寫 ALERT log、正常也append一行到
+# watch log。唯讀 agent，不下單、不改設定。
+#
+# 骨架仿 leading-dip-poll-launcher.sh.template 的 StartInterval+時間窗過濾 pattern，
+# claude 呼叫段落沿用 mini-schedule-launcher.sh.template。
+
+set -uo pipefail
+
+ROOT="{{PROJECT_ROOT}}"
+DATA_DIR="${GOLDENSTOCKS_DATA_DIR:-${HOME}/goldenstocks-data}"
+PROMPT="${ROOT}/scripts/launchd/momentum-rotation-watch-prompt.txt"
+
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# --- 時間窗過濾：週一~五 08:40~13:45（其餘時間直接退出，不佔用/不留log） ---
+WD="$(date '+%u')"
+H=$((10#$(date '+%H')))
+M=$((10#$(date '+%M')))
+if [[ "${WD}" -gt 5 ]]; then exit 0; fi
+if [[ "${H}" -lt 8 ]] || [[ "${H}" -gt 13 ]]; then exit 0; fi
+if [[ "${H}" -eq 8 && "${M}" -lt 40 ]]; then exit 0; fi
+if [[ "${H}" -eq 13 && "${M}" -gt 45 ]]; then exit 0; fi
+
+# --- lockdir 防重疊（單次 claude -p 可能跑超過15分鐘週期，避免疊加） ---
+LOCK_DIR="/tmp/com.jackm4.goldenstocks.momentum-rotation-watch.lock"
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  exit 0
+fi
+trap 'rmdir "${LOCK_DIR}" 2>/dev/null' EXIT
+
+LOG_DIR="${DATA_DIR}/logs/momentum_rotation_watch"
+mkdir -p "${LOG_DIR}"
+LOG="${LOG_DIR}/run_$(date '+%Y%m%d_%H%M%S').log"
+
+code=0
+{
+  echo "=== momentum-rotation-watch 開始 $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+  if [[ ! -r "${PROMPT}" ]]; then
+    echo "!! 找不到 prompt: ${PROMPT}（判準 SSOT）· 中止" >&2
+    exit 1
+  fi
+
+  if [[ -r "${DATA_DIR}/.env.schedule" ]]; then
+    # shellcheck disable=SC1091
+    source "${DATA_DIR}/.env.schedule"
+  else
+    echo "WARN: 無 ${DATA_DIR}/.env.schedule · 改用已存憑證"
+  fi
+
+  CLAUDE="${HOME}/.local/bin/claude"
+  if [[ ! -x "${CLAUDE}" ]]; then
+    CLAUDE="$(ls -td "${HOME}/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null | head -1)"
+  fi
+  if [[ -z "${CLAUDE}" || ! -x "${CLAUDE}" ]]; then
+    echo "!! 找不到 claude 執行檔 · 中止" >&2
+    exit 1
+  fi
+  echo "claude: ${CLAUDE}"
+  echo "prompt: ${PROMPT}"
+
+  cd "${DATA_DIR}" || { echo "!! 進不了資料目錄 ${DATA_DIR}" >&2; exit 1; }
+
+  "${CLAUDE}" -p "$(cat "${PROMPT}")" \
+    --model sonnet \
+    --dangerously-skip-permissions
+  code=$?
+  echo "=== 結束 exit=${code} $(date '+%Y-%m-%d %H:%M:%S') ==="
+} >>"${LOG}" 2>&1
+
+exit "${code}"

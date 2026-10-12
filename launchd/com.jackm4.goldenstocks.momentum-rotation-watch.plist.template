@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jackm4.goldenstocks.momentum-rotation-watch</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{MOMENTUM_ROTATION_WATCH_LAUNCHER}}</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/tmp</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>GOLDENSTOCKS_DATA_DIR</key>
+		<string>/Users/jackm4/goldenstocks-data</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<!-- 每2分鐘觸發一次（2026-08-12使用者明確要求縮短，換取異常最多晚2分鐘被AI看到；
+	     盤中約150次呼叫/天，成本明顯高於15分鐘版本，使用者已知情選擇）；
+	     launcher 自己過濾週一~五 08:40~13:45（唯讀，不下單）。StartInterval 是固定
+	     週期（非鐘面對齊），故 RunAtLoad 保持 false，實際窗口過濾全靠 launcher 內的
+	     weekday/HH:MM 判斷 -->
+	<key>StartInterval</key>
+	<integer>120</integer>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ExitTimeOut</key>
+	<integer>300</integer>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/momentum-rotation-watch.launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/momentum-rotation-watch.launchd.err.log</string>
+</dict>
+</plist>
