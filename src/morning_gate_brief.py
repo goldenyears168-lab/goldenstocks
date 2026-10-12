@@ -19,6 +19,7 @@ Run: PYTHONPATH=src .venv/bin/python src/morning_gate_brief.py [--no-email]
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -192,6 +193,46 @@ def _tx_night_gap(session: str) -> float | None:
         return None
 
 
+# ── 收盤價預測誤差（讀 claudecode 預測帳本 · 純唯讀 · 與下單層無關） ──
+LEDGER_DATA = Path(os.environ.get("CLOSE_LEDGER_DIR", str(Path.home() / "claudecode" / "topics" / "ledger" / "data")))
+CLOSE_MIN_DAYS, CLOSE_MIN_INDEP = 15, 30
+
+
+def close_error_lines(data_dir: Path | None = None) -> list[str]:
+    """AI 分析師「預測最近一個收盤」的成績（正式列、不含回放）。帳本缺檔/無結算 → 回傳空 list（簡報照寄）。"""
+    d = data_dir or LEDGER_DATA
+    try:
+        rows = [json.loads(x) for x in (d / "close_forecasts.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
+        res = json.loads((d / "close_results.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    done = [(r, res[r["id"]]) for r in rows if not r.get("replay") and res.get(r["id"], {}).get("status") == "ok"]
+    if not done:
+        return []
+    last = max(r["target_date"] for r, _ in done)
+    out = ["", f"### ◆ AI 分析師收盤價預測誤差（目標日 {last} · 預測價 vs 實際收盤）"]
+    for kind, label in (("taiex", "加權指數"), ("futures", "台指期")):
+        k = sorted(((r, x) for r, x in done if r["kind"] == kind and r["target_date"] == last), key=lambda p: p[0]["bid"])
+        if k:
+            r, x = k[-1]
+            out.append(f"   {label} 最後一次預測 {r['pred_close']:,.0f} → 收 {x['actual_close']:,.0f}（誤差 {x['err_pct']:+.2f}% · 猜現價 {x['naive_err_pct']:+.2f}%）")
+    st = [(r, x) for r, x in done if r["kind"] == "stock" and r["target_date"] == last]
+    if st:
+        mae = sum(abs(x["err_pct"]) for _, x in st) / len(st)
+        nv = sum(abs(x["naive_err_pct"]) for _, x in st) / len(st)
+        out.append(f"   個股 {len({r['sid'] for r, _ in st})} 檔：平均絕對誤差 {mae:.2f}%（猜現價 {nv:.2f}%）· 勝過猜現價 {sum(1 for _, x in st if x['beat_naive']) / len(st):.0%}")
+    allst = [(r, x) for r, x in done if r["kind"] == "stock"]
+    days = {r["target_date"] for r, _ in allst}
+    indep = {(r["sid"], r["target_date"]) for r, _ in allst}
+    if len(days) < CLOSE_MIN_DAYS or len(indep) < CLOSE_MIN_INDEP:
+        out.append(f"   累計僅 {len(days)} 個目標日 / {len(indep)} 個獨立樣本（門檻 {CLOSE_MIN_DAYS} 日 / {CLOSE_MIN_INDEP} 筆）→ 不下結論")
+    else:
+        mae = sum(abs(x["err_pct"]) for _, x in allst) / len(allst)
+        nv = sum(abs(x["naive_err_pct"]) for _, x in allst) / len(allst)
+        out.append(f"   累計 {len(days)} 日：平均絕對誤差 {mae:.2f}%（猜現價 {nv:.2f}%）· 技巧分 {1 - mae / nv:+.0%}" if nv > 0 else "")
+    return [x for x in out if x] + [""]
+
+
 def build_payload(conn, session: str) -> dict:
     """Machine-readable morning-gate snapshot (also feeds hang gap_bias)."""
     from datetime import datetime as _dt
@@ -298,6 +339,7 @@ def build_brief(conn, session: str) -> tuple[str, str]:
         f"   VIX {vix:.2f}（{vix_tag}） @ {vix_d}" if vix else "   VIX —",
         f"   VIXTWN {vtw:.2f} @ {vtw_d}" if vtw else "",
         "",
+        *close_error_lines(),
         "### ⚠️ 使用邊界",
         "   只定調「開盤那一刻」的缺口（可信）。**開盤後第一小時 = 雜訊（55日 corr −0.09、常反彈），勿追殺。**",
         "   要避缺口 → 08:45 期貨/夜盤盤前處理；開盤後交給盤中防守。",
