@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
 from typing import Any
 
 from clone_agent.approval import _data_dir, load_candidates, load_decisions
@@ -602,109 +603,100 @@ def _spec() -> str:
 _LVL = {"致命": "#ff7b72", "高": "#e3b341", "中": "#79c0ff", "低": "#8b949e"}
 
 
+def _learn_dir():
+    return _data_dir() / "learn"
+
+
+def _champion_stats(L, m: str = "ex60") -> dict:
+    """冠軍帳(樣本內/樣本外)的 n、均值、t、拿掉前3大後的均值。"""
+    import math
+    x = L[m].dropna()
+    if len(x) < 2:
+        return {"n": len(x), "mean": None, "t": None, "ex3": None, "hit": None}
+    sd = x.std(ddof=1)
+    return {"n": len(x), "mean": float(x.mean()),
+            "t": float(x.mean() / (sd / math.sqrt(len(x)))) if sd > 0 else None,
+            "ex3": float(x.sort_values().iloc[:-3].mean()) if len(x) > 3 else None,
+            "hit": float((x > 0).mean())}
+
+
 def render_paper_page(day: str = "") -> str:
-    """全自動紙上模擬（零人工審核）。
+    """唯一的紙上軌:複製人 CA-R1 凍結規則的每日重放(clone_agent_learn.py 的產物)。
 
-    這一頁的任務不是展示績效,是**在上線前找出模擬騙了我們的地方**。所以異常區放最前面,
-    而且每一條都寫出門檻與為什麼那個門檻合理 —— 看起來漂亮的回測比看起來難看的危險。
+    樣本外從 learn 設定的 oos_from 起算;異常區放最前面,先看這裡再看績效。
     """
-    d = _j("paper_stats.json") or {}
-    S, A = d.get("stats") or {}, d.get("anomalies") or []
-    tr = _j("paper_trades.json") or []
-    if not S:
+    import pandas as pd
+    from clone_agent.rules_version import label as rules_label
+
+    ld = _learn_dir()
+    lp = ld / "ledger.jsonl"
+    cfg_p = Path(__file__).resolve().parents[2] / "config" / "clone_agent_learn.json"
+    if not lp.exists() or not cfg_p.exists():
         return ("<style>" + CSS + "</style><div class='ag'><h2>紙上模擬</h2>"
-                "<div class='sub'>還沒有結果。跑 "
-                "<code>scripts/research/trader_paper_sim.py</code> 產生。</div></div>")
+                "<div class='sub'>還沒有學習迴圈帳本。每日收盤後由 "
+                "<code>clone_agent_learn.py</code> 產生。</div></div>")
+    cfg = json.loads(cfg_p.read_text(encoding="utf-8"))
+    oos_from = cfg["oos_from"]
+    L = pd.DataFrame([json.loads(x) for x in lp.read_text(encoding="utf-8").splitlines() if x.strip()])
+    champ = L.query(cfg["champion"]["filter"])
+    champ = champ[champ["ex60"].notna()]
+    ins, oos = champ[champ.day < oos_from], champ[champ.day >= oos_from]
+    S_in, S_oos, S_all = _champion_stats(ins), _champion_stats(oos), _champion_stats(champ)
+    n_days_oos = int(oos.day.nunique())
 
-    g = S.get
+    anomalies = []
+    if S_oos["n"] < 30:
+        anomalies.append(("高", f"樣本外只有 {S_oos['n']} 筆 / {n_days_oos} 個交易日",
+                          "n<30 時均值的信賴區間寬到任何數字都不該當結論;影子挑戰者需要的日數見下表"))
+    if S_oos["ex3"] is not None and S_oos["mean"] is not None and S_oos["mean"] > 0 >= S_oos["ex3"]:
+        anomalies.append(("高", "樣本外拿掉前 3 大獲利後轉負", "少數幾筆撐住全部,在統計上與運氣分不開"))
+    if S_in["mean"] is not None and S_oos["mean"] is not None and S_in["mean"] * S_oos["mean"] < 0:
+        anomalies.append(("高", "樣本內與樣本外符號相反", "規則在樣本外沒有重現,先查是不是樣本內過擬合"))
     anom = "".join(
-        f"<div class='card' style='border-left:3px solid {_LVL.get(a['level'],'#8b949e')};margin-bottom:6px'>"
-        f"<div><span class='tag' style='background:{_LVL.get(a['level'],'#484f58')};color:#0d1117'>"
-        f"{_esc(a['level'])}</span> <b>{_esc(a['item'])}</b> — {_esc(a['detail'])}</div>"
-        f"<div class='sub' style='margin:4px 0 0'>→ {_esc(a['why'])}</div></div>" for a in A)
+        f"<div class='card' style='border-left:3px solid {_LVL.get(lv, '#8b949e')};margin-bottom:6px'>"
+        f"<div><span class='tag' style='background:{_LVL.get(lv, '#484f58')};color:#0d1117'>{_esc(lv)}</span> "
+        f"<b>{_esc(item)}</b></div><div class='sub' style='margin:4px 0 0'>→ {_esc(why)}</div></div>"
+        for lv, item, why in anomalies)
 
-    rows = "".join(
-        f"<tr><td>{_esc(x['nm'])} <span class='dim'>{_esc(x['root'])}</span></td>"
-        f"<td><span class='tag'{'' if x['tier']=='R2' else ' style=background:#30363d'}>{_esc(x['tier'])}</span></td>"
-        f"<td class='dim'>{_esc(x['進場'])}</td><td>{_n(x['entry'],1)}</td>"
-        f"<td class='dim'>{_esc(x['出場'])}</td><td>{_n(x['exit'],1)}</td>"
-        f"<td class='dim'>{_n(x['持有分'],0)}</td><td>{_n(x['margin'])}</td>"
-        f"<td class='{_p(x['淨損益'])}'>{_n(x['淨損益'],0,True)}</td>"
-        f"<td class='{_p(x['淨報酬%'])}'>{_n(x['淨報酬%'],2,True)}%</td>"
-        f"<td class='{_p(x['報酬÷保證金%'])}'>{_n(x['報酬÷保證金%'],2,True)}%</td>"
-        f"<td style='text-align:left' class='dim'>{_esc(x['why'])}</td>"
-        f"<td style='text-align:left' class='dim'>{_esc(x['出場原因'])}</td></tr>"
-        for x in sorted(tr, key=lambda y: y["進場"]))
+    def kpi_row(title: str, S: dict) -> str:
+        cls = _p(S["mean"])
+        return (f"<tr><td>{_esc(title)}</td><td>{_n(S['n'])}</td>"
+                f"<td class='{cls}'>{_n(S['mean'], 1, True)}</td><td>{_n(S['t'], 2, True)}</td>"
+                f"<td>{_n(S['hit'] * 100 if S['hit'] is not None else None, 0)}%</td>"
+                f"<td class='{_p(S['ex3'])}'>{_n(S['ex3'], 1, True)}</td></tr>")
 
-    PNL_KEYS = {"淨損益", "保證金報酬率%", "最大單筆虧損", "最大單筆獲利",
-                "日內淨損益", "跨日留倉淨損益"}
+    daily = "".join(
+        f"<tr><td>{_esc(d)}</td><td>{int((champ.day == d).sum())}</td>"
+        f"<td class='{_p(g['ex60'].mean())}'>{_n(g['ex60'].mean(), 1, True)}</td>"
+        f"<td>{'樣本外' if d >= oos_from else '樣本內'}</td></tr>"
+        for d, g in sorted(champ.groupby("day"), key=lambda kv: kv[0], reverse=True)[:15])
 
-    def kpi(label, key, d_=0, sign=False, good=None):
-        v = g(key)
-        if key in PNL_KEYS:                       # 損益:台股慣例賺紅賠綠
-            cls = _p(v)
-        elif good is None or v is None:
-            cls = ""
-        else:                                     # 達標與否:綠=好
-            cls = "pos" if (v > good) == (good >= 0) else "neg"
-        return f"<div><b class='{cls}'>{_n(v,d_,sign) if isinstance(v,(int,float)) else _esc(v)}</b><span>{label}</span></div>"
+    reviews = sorted(ld.glob("review_*.md"))
+    review = _esc(reviews[-1].read_text(encoding="utf-8")) if reviews else "尚無檢討檔"
+    hb = read_heartbeat() or {}
+    sw = read_switch()
+    mode = {"dry": "紙上(不送券商)", "live": "實彈"}.get(hb.get("mode"), "未知")
 
     return f"""<style>{CSS}</style><div class='ag' data-day='{day}'>
-<h2>🧪 紙上模擬 · 全自動（零人工審核）</h2>
-<div class='sub'>2026-09-29 → 10-02 · 掃全宇宙 42 檔 × 每分鐘 · 完全照 PRD 規則執行,
-沒有任何人工批改。<b>進場價一律用訊號分鐘結束後第 1 秒之後的第一筆成交價</b>
-（延後 1 秒是刻意的:同秒成交會製造假 alpha）。成本 0.8bp 來回,保證金用期交所公告費率。</div>
+<h2>🧪 紙上模擬 · 單一軌:{_esc(rules_label())}</h2>
+<div class='sub'>每日收盤後以<b>凍結規則</b>重放當天全部訊號(含排隊模型),扣同名單等權基準與成本,
+指標為 ex60(成本後 60 分超額,bps)。樣本外從 <b>{_esc(oos_from)}</b> 起算。
+操盤手下單層目前:<b>{_esc(mode)}</b> · 開關 {'開' if sw.get('enabled') else '關'}。
+舊的 9/29–10/2 靜態模擬與 biglot 分數紙上帳已退役。</div>
 
-<h2 style='color:#ff7b72'>⚠ 異常 {len(A)} 項 —— 請先看這裡</h2>
-<div class='sub'>這一頁的任務不是展示績效,是在上線前找出模擬騙了我們的地方。
-<b>看起來漂亮的回測比看起來難看的危險。</b></div>
+<h2 style='color:#ff7b72'>⚠ 異常 {len(anomalies)} 項 —— 請先看這裡</h2>
 {anom or "<div class='sub'>沒有偵測到異常。</div>"}
 
-<h2>績效總覽</h2>
-<div class='kpi'>
-{kpi("候選訊號數","候選訊號數")}{kpi("實際進場","實際進場筆數")}
-{kpi("訊號→進場轉換率%","訊號→進場轉換率%",2)}
-{kpi("淨損益","淨損益",0,True,0)}{kpi("勝率%","勝率%",1)}
-{kpi("保證金報酬率%","保證金報酬率%",2,True,0)}
-{kpi("最大回撤","最大回撤")}{kpi("盈虧比","盈虧比",2)}
-</div>
+<h2>冠軍帳(ex60,bps)</h2>
+<table><tr><th>區間</th><th>筆數</th><th>均值</th><th>t</th><th>勝率</th><th>拿掉前3大後均值</th></tr>
+{kpi_row("樣本內(oos_from 之前)", S_in)}{kpi_row("樣本外", S_oos)}{kpi_row("全部", S_all)}</table>
+<div class='sub'>冠軍篩選:<code>{_esc(cfg['champion']['filter'])}</code></div>
 
-<h2 style='color:#ff7b72'>致命拆帳：日內 vs 跨日留倉</h2>
-<div class='sub'>進場規則是<b>日內</b>訊號（5 分／30 分大戶流）。如果獲利全在隔夜,
-賺的就是隔夜漂移而不是規則 —— 而隔夜曝險完全不在規則的解釋與風控範圍內。</div>
-<table><tr><th>分類</th><th>筆數</th><th>淨損益</th><th>佔總損益%</th></tr>
-<tr><td>日內進出</td><td>{_n(g('日內筆數'))}</td>
- <td class='{_p(g('日內淨損益'))}'>{_n(g('日內淨損益'),0,True)}</td>
- <td class='dim'>—</td></tr>
-<tr><td><b>跨日留倉</b></td><td>{_n(g('跨日留倉筆數'))}</td>
- <td class='{_p(g('跨日留倉淨損益'))}'>{_n(g('跨日留倉淨損益'),0,True)}</td>
- <td class='neg'>{_n(g('跨日佔總損益%'),1)}%</td></tr></table>
+<h2>逐日(最近 15 日)</h2>
+<table><tr><th>日期</th><th>筆數</th><th>均 ex60</th><th>區間</th></tr>{daily}</table>
 
-<h2>風險與資金</h2>
-<div class='kpi'>
-{kpi("單筆報酬÷保證金 標準差%","單筆報酬標準差%",2)}
-{kpi("每日損益標準差","每日損益標準差")}
-{kpi("淨損益÷每日損益標準差","夏普式比值(淨損益÷每日損益標準差)",2)}
-{kpi("最大單筆虧損","最大單筆虧損",0,True)}
-{kpi("最大同時持倉","最大同時持倉")}
-{kpi("平均持倉腿%","平均持倉保證金佔權益%",1)}
-{kpi("最高持倉腿%","最高持倉保證金佔權益%",1)}
-{kpi("中位持有分","中位持有分鐘",0)}
-</div>
-<div class='sub'>「夏普式比值」= 四天淨損益 ÷ 每日損益標準差。樣本只有 4 天,
-比值 &lt;2 就跟運氣區分不開 —— 這不是年化夏普值,不要拿去跟別的策略比。</div>
-
-<h2>分散度</h2>
-<div class='kpi'>{kpi("交易日數","交易日數")}{kpi("每日平均筆數","每日平均筆數",1)}
-{kpi("不重複標的","不重複標的數")}{kpi("不重複族群","不重複族群數")}
-{kpi("累計動用保證金","累計動用保證金")}</div>
-<div class='sub'>族群數要配合族群內殘差相關 ρ=0.659 一起看:同族群的筆數不是獨立賭注,
-筆數多不等於分散,日報酬標準差會被低估。</div>
-
-<h2>逐筆交易 · {len(tr)} 筆</h2>
-<table><tr><th>標的</th><th>層級</th><th>進場</th><th>進場價</th><th>出場</th><th>出場價</th>
-<th>分鐘</th><th>保證金</th><th>淨損益</th><th>淨報酬%</th><th>÷保證金%</th>
-<th style='text-align:left'>進場理由</th><th style='text-align:left'>出場原因</th></tr>{rows}</table>
+<h2>最新每日檢討(含影子挑戰者)</h2>
+<pre style='white-space:pre-wrap;font-size:12px'>{review}</pre>
 </div>"""
 
 
