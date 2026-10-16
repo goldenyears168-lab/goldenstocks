@@ -84,7 +84,7 @@ phases:
         fail_kind: aux
 
       - id: rrg_universe_close
-        label: RRG universe close snapshot (per-stock SQLite + Supabase)
+        label: RRG universe close snapshot (per-stock SQLite)
         module: src/rrg_universe_snapshot.py
         run_script: scripts/run_rrg_universe_close.py
         env_flag: RUN_RRG_UNIVERSE_CLOSE
