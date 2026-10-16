@@ -1124,21 +1124,9 @@ jobs:
 
 # --- Cloud agents (not mini launchd — Claude Code scheduled routines, separate system) ---
 cloud_routines:
-  - name: daily-foreign-rotation-commentary
-    schedule: "weekdays 21:30 Asia/Taipei"
-    order_capable: false
-    description: "[已停用 2026-08-01 · Supabase 已移除，建議刪除此 routine] Reads Supabase rotation/risk snapshots + web news, writes AI market commentary back to ops_snapshots (kind=commentary) for the website"
-
-  - name: expert-pool-branch-health-check
-    schedule: "weekdays 21:00 Asia/Taipei"
-    order_capable: false
-    description: "[已停用 2026-08-01 · Supabase 已移除，建議刪除此 routine] Read-only data-freshness health check on ops.* (holdings/snapshots/digests/live_ta), emails a report. No local/git access — Supabase MCP + Gmail MCP only."
-
-  - name: detach-gate-risk-health-check
-    schedule: "daily 21:30 Asia/Taipei (found 2026-08-01, created 2026-07-30, previously undocumented)"
-    order_capable: false
-    description: "[已停用 2026-08-01 · Supabase 已移除，建議刪除此 routine] Read-only freshness check on ops_snapshots kind=risk (Detach Gate payload) — catches the specific 'outer asof advances but inner as_of/session_date stuck' stale-poller failure mode seen 2026-07-28~30. Only pushes a notification on 🔴 (stuck); stays quiet on 🟢/🟡."
-
+  # 2026-10：三個依賴 Supabase 的 routine（daily-foreign-rotation-commentary／expert-pool-branch-health-check／
+  # detach-gate-risk-health-check）已自本表移除。detach-gate-risk-health-check 已於 claude.ai 刪除；
+  # 其餘兩個建立方式為 http_api，需在 claude.ai/code/routines 網頁手動刪除（目前皆為 enabled:false）。
   - name: 台股融資盤後監測
     schedule: "daily ~21:40 Asia/Taipei (found 2026-08-01, created 2026-07-30, previously undocumented)"
     order_capable: false
