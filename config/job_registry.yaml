@@ -997,7 +997,8 @@ jobs:
   - label: capitulation-oos-accumulate
     category: research
     order_capable: false
-    status: enabled
+    status: retired
+    retired_since: "2026-10-17"  # RRG 宇宙已過時且 FinMind 停用:它讀的 rrg_universe_scores 最新 close 快照停在 10/15,繼續跑會每天用同一份舊資料累積 OOS 事件而不報錯;使用者同意移除
     schedule: "weekdays 19:00"
     description: "投降抄底 forward OOS ledger (capitulation_forward_ledger.py); accumulates out-of-sample events to break the single 2026 regime limit. Read-only DB, email only, 不下單. Added 2026-08-01 (commit ba3e198)."
 
