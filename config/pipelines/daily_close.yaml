@@ -170,7 +170,7 @@ phases:
         module: src/stock_daily_lens.py
         run_script: scripts/run_stock_daily_lens.py
         env_flag: RUN_STOCK_DAILY_LENS
-        env_default: "1"
+        env_default: "0"  # Supabase 已停用（2026-08-17）；lens 核心會讀 Supabase，預設關
         requires:
           - etf_daily_report
           - regime_daily_brief

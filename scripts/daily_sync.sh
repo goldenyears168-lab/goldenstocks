@@ -636,7 +636,7 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
     log_line "  SKIP（RUN_MARKET_PROBE_RADAR=0）"
   fi
 
-  if [[ "${RUN_STOCK_DAILY_LENS:-1}" != "0" ]]; then
+  if [[ "${RUN_STOCK_DAILY_LENS:-0}" != "0" ]]; then   # 預設關：lens 核心會讀已停用的 Supabase（2026-08-18 踩坑）
     run_step_optional "stock_daily_lens + lens_daily_alert" \
       "$PYTHON" "${ROOT}/scripts/run_stock_daily_lens.py" || true
   else
@@ -659,7 +659,7 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
       "$PYTHON" "${ROOT}/scripts/sync_strategy_performance.py" || true
   fi
 
-  if [[ "${RUN_SUPABASE_SIGNAL_SYNC:-1}" != "0" ]] && [[ "${RUN_SUPABASE_RESEARCH_SYNC:-0}" == "1" ]]; then
+  if [[ "${RUN_SUPABASE_SIGNAL_SYNC:-0}" != "0" ]] && [[ "${RUN_SUPABASE_RESEARCH_SYNC:-0}" == "1" ]]; then
     run_step_optional "Supabase stock_signal_hits index" \
       "$PYTHON" -c "from project_dotenv import load_project_dotenv; load_project_dotenv(); from supabase_signal_sync import maybe_sync_signal_hits; n=maybe_sync_signal_hits(); print(f'stock_signal_hits: {n} rows')" || true
   fi
