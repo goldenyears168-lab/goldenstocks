@@ -12,6 +12,34 @@ from finmind_client import (
 )
 
 
+class FinmindDisabledByDefaultTests(unittest.TestCase):
+    """2026-10 起不續約:沒設 FINMIND_ENABLED=1 就不得連線。"""
+
+    def test_disabled_by_default_raises_without_network(self) -> None:
+        from finmind_client import FinMindDisabled, fetch_finmind_json
+
+        env = {k: v for k, v in os.environ.items() if k != "FINMIND_ENABLED"}
+        with patch.dict(os.environ, env, clear=True), patch("finmind_client.requests.get") as get:
+            with self.assertRaises(FinMindDisabled):
+                fetch_finmind_json({"dataset": "TaiwanStockPrice"})
+            get.assert_not_called()
+
+    def test_token_hidden_and_skip_helper_when_disabled(self) -> None:
+        from finmind_client import finmind_token, skip_if_disabled
+
+        with patch.dict(os.environ, {"FINMIND_TOKEN": "x", "FINMIND_ENABLED": "0"}):
+            self.assertEqual(finmind_token(), "")
+            self.assertTrue(skip_if_disabled("測試步驟"))
+        with patch.dict(os.environ, {"FINMIND_ENABLED": "1"}):
+            self.assertFalse(skip_if_disabled("測試步驟"))
+
+    def test_disabled_error_is_runtime_error(self) -> None:
+        from finmind_client import FinMindDisabled
+
+        self.assertTrue(issubclass(FinMindDisabled, RuntimeError))     # 既有 except RuntimeError 路徑照常處理
+
+
+@patch.dict(os.environ, {"FINMIND_ENABLED": "1"})
 class FinmindClientTests(unittest.TestCase):
     def test_finmind_headers_empty_without_token(self) -> None:
         with patch("finmind_client.finmind_token", return_value=""):

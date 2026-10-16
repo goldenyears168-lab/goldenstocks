@@ -16,6 +16,7 @@ from pathlib import Path
 
 import requests
 
+from finmind_client import skip_if_disabled
 from market_sync_window import min_rows_required, resolve_sync_window
 from project_config import SUPPLEMENTAL_WATCHLIST_STOCKS
 from stock_db import (
@@ -406,6 +407,8 @@ def main() -> int:
         help="強制每檔重抓（忽略 DB 覆蓋；易觸發 FinMind 402）",
     )
     args = parser.parse_args()
+    if skip_if_disabled("成分股行情+法人"):
+        return 0
 
     if args.start_date and args.lookback_days is not None:
         print("ERROR: --start-date 與 --lookback-days 請擇一", file=sys.stderr)

@@ -1,4 +1,11 @@
-"""FinMind API 共用客戶端（data + tick snapshot）。"""
+"""FinMind API 共用客戶端（data + tick snapshot）。
+
+2026-10 起專案**不再續約 FinMind**(Sponsor 於 2026-10-15 到期,帳號降為 Free 每日 600 次)。
+因此預設停用:沒有明確設 `FINMIND_ENABLED=1` 就一律不連線(`FinMindDisabled`),
+避免排程對必定失敗的端點打幾百個請求、燒光 Free 額度、並讓日誌出現假成功。
+資料來源已改用官方公開頁:期交所(`taifex_client`)、TWSE/TPEX、富邦行情站;對照見
+docs/data-sources-migration.md。需要手動臨時使用時,以環境變數 `FINMIND_ENABLED=1` 開啟。
+"""
 
 from __future__ import annotations
 
@@ -19,7 +26,25 @@ FINMIND_TRADING_DAILY_REPORT_URL = (
 )
 
 
+class FinMindDisabled(RuntimeError):
+    """FinMind 已停用(未設 FINMIND_ENABLED=1)。繼承 RuntimeError,讓既有的 except RuntimeError 路徑照常處理。"""
+
+
+def finmind_enabled() -> bool:
+    return os.environ.get("FINMIND_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+
+
+def skip_if_disabled(label: str) -> bool:
+    """排程入口用:已停用就印一行說明並回 True,呼叫端直接結束(不顯示成假成功、也不逐檔報警)。"""
+    if finmind_enabled():
+        return False
+    print(f"SKIP {label}: FinMind 已停用(2026-10 起不續約);改用官方來源,見 docs/data-sources-migration.md", flush=True)
+    return True
+
+
 def finmind_token() -> str:
+    if not finmind_enabled():
+        return ""
     from project_dotenv import finmind_token_from_env
 
     return finmind_token_from_env()
@@ -44,6 +69,8 @@ def fetch_finmind_json(
     ``ip banned`` for this account while the same token in params works.
     Snapshot endpoints still use ``Authorization: Bearer``.
     """
+    if not finmind_enabled():
+        raise FinMindDisabled("FinMind 已停用(未設 FINMIND_ENABLED=1);請改用官方來源")
     req_params = dict(params)
     headers: dict[str, str] = {}
     token = finmind_token()

@@ -16,6 +16,7 @@ from pathlib import Path
 
 import requests
 
+from finmind_client import skip_if_disabled
 from stock_db import (
     DEFAULT_DB_PATH,
     connect,
@@ -561,6 +562,8 @@ def main() -> int:
     parser.add_argument("--end-date", default=None)
     parser.add_argument("--lookback-days", type=int, default=None)
     args = parser.parse_args()
+    if skip_if_disabled("基本面(月營收/財報/股利/PER)"):
+        return 0
 
     dry_run = args.dry_run or not args.sync_db
     end = date.fromisoformat(args.end_date) if args.end_date else None

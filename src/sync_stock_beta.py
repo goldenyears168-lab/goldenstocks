@@ -26,6 +26,7 @@ import yfinance as yf
 
 from finmind_client import fetch_finmind_dataset
 from project_config import DEFAULT_CAPITAL_NTD
+from finmind_client import skip_if_disabled
 from stock_db import DEFAULT_DB_PATH, connect, upsert_stock_beta
 
 BENCHMARK_SYMBOL = "^TWII"
@@ -349,6 +350,8 @@ def main() -> None:
         help="不寫入 DB",
     )
     args = parser.parse_args()
+    if skip_if_disabled("Beta"):
+        return
 
     print("取得股票清單（FinMind TaiwanStockInfo）…")
     universe = fetch_stock_universe(include_emerging=args.include_emerging)

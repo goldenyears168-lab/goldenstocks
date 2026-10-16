@@ -11,6 +11,7 @@ from pathlib import Path
 
 import requests
 
+from finmind_client import skip_if_disabled
 from market_sync_window import min_rows_required, resolve_sync_window
 from screener_universe import resolve_sync_watchlist
 from stock_db import (
@@ -224,6 +225,8 @@ def main() -> int:
     parser.add_argument("--max-stocks", type=int, default=0)
     parser.add_argument("--force-refresh", action="store_true")
     args = parser.parse_args()
+    if skip_if_disabled("個股市值"):
+        return 0
 
     end = date.fromisoformat(args.end_date) if args.end_date else date.today()
     start = (

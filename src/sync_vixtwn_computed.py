@@ -33,6 +33,7 @@ import argparse, math, datetime as dt, sqlite3, os, json, time, sys
 from collections import defaultdict
 
 from finmind_client import fetch_finmind_json
+from finmind_client import skip_if_disabled
 from stock_db import connect
 from stock_db.util import utc_now_iso
 
@@ -193,6 +194,8 @@ def main():
     ap.add_argument("--end", default=dt.date.today().strftime("%Y-%m"))
     ap.add_argument("--dry-run", action="store_true")
     A = ap.parse_args()
+    if skip_if_disabled("VIXTWN 自算備援(TXO)"):
+        return
 
     conn = connect() if not A.dry_run else None
     if conn:

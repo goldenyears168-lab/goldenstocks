@@ -17,6 +17,7 @@ from project_config import (
     DEFAULT_ETF_SIGNAL_LOOKBACK_DAYS,
     parse_etf_codes_arg,
 )
+from finmind_client import skip_if_disabled
 from stock_db import DEFAULT_DB_PATH, connect, upsert_etf_daily_signal_snapshots
 
 SOURCE = "finmind"
@@ -165,6 +166,8 @@ def main() -> int:
         help="每檔 ETF 一行摘要",
     )
     args = parser.parse_args()
+    if skip_if_disabled("ETF 訊號快照"):
+        return 0
 
     codes = parse_etf_codes(args.etf_code, args.etf_codes)
     exit_code = 0
