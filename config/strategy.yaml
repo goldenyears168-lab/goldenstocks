@@ -385,9 +385,9 @@ strategies:
     launchd_label: com.jackm4.goldenstocks.detach-gate
     schedule_time: "09:40–12:30 Asia/Taipei Mon-Fri · 5m"
     env_flag: RUN_DETACH_GATE
-    enabled: true
-    module: order.us_tw_5m_sell_gate
-    screen_script: scripts/order/run_detach_gate_poll.py
+    enabled: false  # 2026-10 下單袖套已移除（規格與研究層保留；須與 strategies.yaml 一致）
+    module: order.us_tw_5m_sell_gate  # 已移除 2026-10（git 歷史可還原）
+    screen_script: scripts/order/run_detach_gate_poll.py  # 已移除 2026-10
     description: >
       TW↔NQ 5m Detach Gate（trough-first）· RED 寄信 ·
       範圍＝券商全帳戶持倉（非僅 C18／LD 袖）· 各檔買一價 floor(qty/2) ·

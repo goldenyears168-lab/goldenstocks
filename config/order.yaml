@@ -1271,6 +1271,7 @@ c18acc_pyramid_add:
 # 範圍＝券商全帳戶持倉（非僅策略袖）· confirmed 2026-07-16
 # launchd：com.jackm4.goldenstocks.detach-gate · Mon–Fri 09:40–12:30 / 5m Asia/Taipei
 # Frozen RED：s5_w-0.6_c1_down-0.5_arm0940-1230（research 採納 · sell-only）
+# ⚠ 2026-10：Detach Gate 下單袖套程式／launchd 已整條移除，以下規格僅留存（git 歷史可還原）。
 detach_gate:
   schema: order-detach-gate-v1
   strategy_id: detach-gate

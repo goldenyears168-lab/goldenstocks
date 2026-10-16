@@ -22,7 +22,6 @@ GUI_DOMAIN="gui/${UID_NUM}"
 # （pre-market-auction-collect 已於 2026-08-01 退役，見 RETIRED_LABELS。）
 LABELS=(
   com.jackm4.goldenstocks.buy-signal-radar
-  com.jackm4.goldenstocks.detach-gate
   com.jackm4.goldenstocks.songshan-copytrade-poll
   com.jackm4.goldenstocks.tmf-channel-poll
   com.jackm4.goldenstocks.tmf-sim-server
@@ -51,7 +50,6 @@ LABELS=(
 
 TEMPLATES=(
   com.jackm4.goldenstocks.buy-signal-radar.plist.template
-  com.jackm4.goldenstocks.detach-gate.plist.template
   com.jackm4.goldenstocks.songshan-copytrade-poll.plist.template
   com.jackm4.goldenstocks.tmf-channel-poll.plist.template
   com.jackm4.goldenstocks.tmf-sim-server.plist.template
@@ -87,7 +85,6 @@ usage() {
 
   現行排程（Order layer · Songshan / TMF；本地時間）：
     buy-signal-radar        週一至五 09:00–13:20 每 5 分（notify；ABC Order 已退役）
-    detach-gate             週一至五 09:40–12:30 每 5 分（台美脫鉤閘門 · 半倉買一）
     songshan-copytrade-poll 週一至五 09:25–09:40 每 5 分（跟單松山 5d淨比95∩!mega+25m nonfail · 預算制約10萬）
     tmf-channel-poll        KeepAlive worker（日盤+夜盤 · TMF · 重用 session · 預設 dry-run）
     tmf-sim-server          KeepAlive（TMF paper UI :8770 · 不下單 · PYTHONPATH=src 用新引擎）
@@ -127,14 +124,13 @@ usage() {
   注意：Mac 須已登入。盤中 poll 用 StartInterval=300（非 Aqua CalendarInterval），
         開盤窗由 launcher 過濾；order-wake 每 5 分 caffeinate。launchd stdout 寫
         ~/Library/Logs/com.jackm4.goldenstocks/（避開 Documents TCC → EX_CONFIG）。
-        buy/sell radar · detach-gate
+        buy/sell radar
         以 Application Support launcher + /bin/bash 背景執行。
 EOF
 }
 
 LAUNCHD_COMMANDS=(
   buy-signal-radar
-  detach-gate
   songshan-copytrade-poll
   tmf-channel-poll
   expert-pool-staged-gate
@@ -246,6 +242,8 @@ RETIRED_LABELS=(
   com.jackm4.goldenstocks.rrg-c18acc-poll
   # 2026-10 退役（Leading Dip 下單袖套不再使用 · launchd／python 一併移除；策略規格與研究層保留）
   com.jackm4.goldenstocks.leading-dip-poll
+  # 2026-10 退役（Detach Gate 下單袖套不再使用 · launchd／python 一併移除；策略規格與研究層保留）
+  com.jackm4.goldenstocks.detach-gate
 )
 
 uninstall_retired_agents() {
@@ -283,12 +281,6 @@ generate_sell_radar_calendar_intervals() {
   SELL_RADAR_CALENDAR_INTERVALS_FILE="${out}"
 }
 
-generate_detach_gate_calendar_intervals() {
-  local out="/tmp/com.jackm4.goldenstocks.detach-gate-calendar.xml"
-  generate_five_minute_clock_calendar "${out}"
-  DETACH_GATE_CALENDAR_INTERVALS_FILE="${out}"
-}
-
 generate_songshan_copytrade_calendar_intervals() {
   local out="/tmp/com.jackm4.goldenstocks.songshan-copytrade-calendar.xml"
   generate_five_minute_clock_calendar "${out}"
@@ -302,7 +294,6 @@ render_template() {
     generate_buy_radar_calendar_intervals
     sed -e "s|{{PROJECT_ROOT}}|${PROJECT_ROOT}|g" \
         -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
-        -e "s|{{DETACH_GATE_LAUNCHER}}|${DETACH_GATE_LAUNCHER}|g" \
         -e "s|{{EVENING_HOLDINGS_LAUNCHER}}|${EVENING_HOLDINGS_LAUNCHER}|g" \
         -e "s|{{MORNING_BRIEF_LAUNCHER}}|${MORNING_BRIEF_LAUNCHER}|g" \
         -e "s|{{INTRADAY_GATE_LAUNCHER}}|${INTRADAY_GATE_LAUNCHER}|g" \
@@ -324,7 +315,6 @@ render_template() {
     generate_sell_radar_calendar_intervals
     sed -e "s|{{PROJECT_ROOT}}|${PROJECT_ROOT}|g" \
         -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
-        -e "s|{{DETACH_GATE_LAUNCHER}}|${DETACH_GATE_LAUNCHER}|g" \
         -e "s|{{EVENING_HOLDINGS_LAUNCHER}}|${EVENING_HOLDINGS_LAUNCHER}|g" \
         -e "s|{{MORNING_BRIEF_LAUNCHER}}|${MORNING_BRIEF_LAUNCHER}|g" \
         -e "s|{{INTRADAY_GATE_LAUNCHER}}|${INTRADAY_GATE_LAUNCHER}|g" \
@@ -339,29 +329,6 @@ render_template() {
         "${template}" \
       | sed "/{{SELL_RADAR_CALENDAR_INTERVALS}}/r ${SELL_RADAR_CALENDAR_INTERVALS_FILE}" \
       | sed '/{{SELL_RADAR_CALENDAR_INTERVALS}}/d' \
-      >"${dest}"
-    return
-  fi
-  if grep -q '{{DETACH_GATE_CALENDAR_INTERVALS}}' "${template}"; then
-    generate_detach_gate_calendar_intervals
-    sed -e "s|{{PROJECT_ROOT}}|${PROJECT_ROOT}|g" \
-        -e "s|{{APP_SUPPORT}}|${APP_SUPPORT:-${HOME}/Library/Application Support/com.jackm4.goldenstocks}|g" \
-        -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
-        -e "s|{{DETACH_GATE_LAUNCHER}}|${DETACH_GATE_LAUNCHER}|g" \
-        -e "s|{{EVENING_HOLDINGS_LAUNCHER}}|${EVENING_HOLDINGS_LAUNCHER}|g" \
-        -e "s|{{MORNING_BRIEF_LAUNCHER}}|${MORNING_BRIEF_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_GATE_LAUNCHER}}|${INTRADAY_GATE_LAUNCHER}|g" \
-        -e "s|{{VCP_FUNNEL_LAUNCHER}}|${VCP_FUNNEL_LAUNCHER}|g" \
-        -e "s|{{RRG_MONO_INTRADAY_LAUNCHER}}|${RRG_MONO_INTRADAY_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_1300_DIGEST_LAUNCHER}}|${INTRADAY_1300_DIGEST_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_OPEN_DIGEST_LAUNCHER}}|${INTRADAY_OPEN_DIGEST_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_MIDDAY_DIGEST_LAUNCHER}}|${INTRADAY_MIDDAY_DIGEST_LAUNCHER}|g" \
-        -e "s|{{MUTUAL_FUND_LAUNCHER}}|${MUTUAL_FUND_LAUNCHER}|g" \
-        -e "s|{{MINERVINI_LAUNCHER}}|${MINERVINI_LAUNCHER}|g" \
-        -e "s|{{WEEKLY_DEEP_LAUNCHER}}|${WEEKLY_DEEP_LAUNCHER}|g" \
-        "${template}" \
-      | sed "/{{DETACH_GATE_CALENDAR_INTERVALS}}/r ${DETACH_GATE_CALENDAR_INTERVALS_FILE}" \
-      | sed '/{{DETACH_GATE_CALENDAR_INTERVALS}}/d' \
       >"${dest}"
     return
   fi
@@ -381,7 +348,6 @@ render_template() {
       -e "s|{{APP_SUPPORT}}|${APP_SUPPORT:-${HOME}/Library/Application Support/com.jackm4.goldenstocks}|g" \
       -e "s|{{HOME}}|${HOME}|g" \
       -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
-      -e "s|{{DETACH_GATE_LAUNCHER}}|${DETACH_GATE_LAUNCHER}|g" \
       -e "s|{{SONGSHAN_COPYTRADE_LAUNCHER}}|${SONGSHAN_COPYTRADE_LAUNCHER}|g" \
       -e "s|{{TMF_CHANNEL_LAUNCHER}}|${TMF_CHANNEL_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_LAUNCHER}}|${MOMENTUM_ROTATION_LAUNCHER}|g" \
@@ -450,19 +416,6 @@ install_buy_radar_launcher() {
   mkdir -p "${app_support}"
   render_template "${src}" "${BUY_RADAR_LAUNCHER}"
   chmod +x "${BUY_RADAR_LAUNCHER}"
-}
-
-install_detach_gate_launcher() {
-  local src="${LAUNCHD_SRC}/detach-gate-launcher.sh.template"
-  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
-  DETACH_GATE_LAUNCHER="${app_support}/detach-gate.sh"
-  if [[ ! -f "${src}" ]]; then
-    echo "✗ 缺少 ${src}" >&2
-    exit 1
-  fi
-  mkdir -p "${app_support}"
-  render_template "${src}" "${DETACH_GATE_LAUNCHER}"
-  chmod +x "${DETACH_GATE_LAUNCHER}"
 }
 
 install_songshan_copytrade_launcher() {
@@ -975,7 +928,6 @@ install_agents() {
   uninstall_retired_agents
   ensure_launchd_commands
   BUY_RADAR_LAUNCHER=""
-  DETACH_GATE_LAUNCHER=""
   SONGSHAN_COPYTRADE_LAUNCHER=""
   TMF_CHANNEL_LAUNCHER=""
   MOMENTUM_ROTATION_LAUNCHER=""
@@ -1012,7 +964,6 @@ install_agents() {
   FUTOPT_BOOKS_COLLECT_LAUNCHER=""
   sync_order_env_mirror
   install_buy_radar_launcher
-  install_detach_gate_launcher
   install_songshan_copytrade_launcher
   install_tmf_channel_launcher
   install_futopt_fill_listener_launcher

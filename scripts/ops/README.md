@@ -33,7 +33,7 @@
 
 #### 盤中 · Order／觀測
 - live：`songshan-copytrade-poll` · `expert-pool-staged-gate`
-- 觀測：`detach-gate`（RED 仍即時寄）· `buy/sell-signal-radar`（不下單）· `ops-live-ta-poll`
+- 觀測：`buy/sell-signal-radar`（不下單）
 - 另有 `order-wake`（`install-order-launchd.sh` · 防睡眠）
 
 夜間對照：`winbond-expert-pool-watch`＝20:00 買方共識；`holdings-branch-sell-monitor`＝20:10 富邦持倉×專家淨賣＋跨池面板 K/N≥5000萬；`ops-console-evening-sync`＝20:40 本地資料刷新（分點 tape／溫度計面板／個股日線／Stage 熱力圖）。

@@ -152,22 +152,6 @@ def _worker_main(argv: list[str] | None = None) -> int:
                 poll_minute=str(req.get("poll_minute") or ""),
                 dry_run=bool(req.get("dry_run")) if req.get("dry_run") is not None else None,
             )
-        elif kind == "detach_half_flatten":
-            from order.detach_gate_order import run_half_flatten
-
-            result = run_half_flatten(
-                session_date=str(req.get("session_date") or "") or None,
-                dry_run=bool(req.get("dry_run")) if req.get("dry_run") is not None else None,
-                auto_submit=(
-                    bool(req.get("auto_submit")) if req.get("auto_submit") is not None else None
-                ),
-                order_enabled=(
-                    bool(req.get("order_enabled"))
-                    if req.get("order_enabled") is not None
-                    else None
-                ),
-                force=bool(req.get("force")),
-            )
         elif kind == "holdings_status":
             from stock_db import DEFAULT_DB_PATH, connect
             from order.holdings_pulse import build_holdings_pulse

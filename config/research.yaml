@@ -6132,7 +6132,6 @@ topics:
       - scripts/research/render_us_tw_30m_rolling_risk_gate_html.py
       - scripts/research/run_us_tw_30m_gate_calendar_html.py
       - scripts/research/run_us_tw_sell_only_live_readiness.py
-      - scripts/order/run_us_tw_5m_sell_gate_poll.py
     graduation:
       gates:
         G1_preregistered_hypothesis: passed

@@ -176,7 +176,7 @@ strategies:
     title: Detach Gate · 台美脫鉤閘門
     layer: strategy
     kind: operational
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（order.us_tw_5m_sell_gate／launchd 皆刪；規格與研究層保留）
     env_flag: RUN_DETACH_GATE
     description: >
       TW↔NQ rolling 30m DETACH（5m poll）· trough-first 半倉風控 ·

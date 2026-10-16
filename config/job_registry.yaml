@@ -56,11 +56,18 @@ jobs:
 
   - label: detach-gate
     category: order
-    order_capable: true
-    status: disabled
+    order_capable: false
+    status: retired
     disabled_since: "2026-07-29"
-    schedule: "weekdays 09:00-13:30, every 5min"
-    description: "TW/US detach risk gate — was flag-safe but job wasn't launchctl-disabled until 07-29 audit"
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: >
+      TW/US Detach Gate（台美脫鉤閘門）— **2026-10 整條移除**：order.detach_gate_order／
+      us_tw_5m_sell_gate、run_detach_gate_poll.py、run_us_tw_5m_sell_gate_poll.py、launchd plist／
+      launcher 模板與 .command、fubon_subprocess 的 detach_half_flatten 分支、安裝腳本項目與測試
+      皆刪除，label 進 RETIRED_LABELS。策略規格（strategy.yaml）與研究層（us_tw_* study、
+      research topic us-tw-rolling-10m-poll）保留；strategies.yaml 已設 enabled:false。
+      要恢復請 git revert 該移除 commit，並須使用者明確直接指示。
 
   - label: tmf-channel-poll
     category: order
