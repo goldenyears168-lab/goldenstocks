@@ -706,10 +706,18 @@ _FUBON = {"tape": None, "bars_checked": set()}
 
 
 def _panel_branches() -> dict[str, str]:
-    """專家池全部核心分點(代號 → 名稱);富邦依分點頁只需抓這些。"""
+    """專家池全部核心分點 + /chips 席位表(隔日沖/共識席位)的代號 → 名稱;富邦依分點頁只需抓這些。"""
     out: dict[str, str] = {}
     for spec in POOLS.values():
         out.update(spec.core)
+    try:
+        import yaml
+
+        seats = yaml.safe_load((ROOT / "config" / "chip_seats.yaml").read_text(encoding="utf-8")).get("seats") or {}
+        for tid, v in seats.items():
+            out.setdefault(str(tid), str((v or {}).get("name") or tid))        # 代號大小寫是不同分點,不轉小寫
+    except Exception as exc:  # noqa: BLE001 — 席位表缺檔/格式錯只影響席位可見度,不擋補檔
+        print(f"  WARN chip_seats.yaml 載入失敗: {exc}")
     return out
 
 
