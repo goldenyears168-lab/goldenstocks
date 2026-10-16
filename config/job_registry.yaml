@@ -348,10 +348,9 @@ jobs:
   - label: buy-signal-radar
     category: notify
     order_capable: false
-    status: disabled
-    disabled_since: "2026-07-29"
-    schedule: "weekdays 09:00-13:30, every 5min"
-    description: "Buy-signal radar, notify only (ABC order path retired 2026-07-16); paused as non-分點 clutter"
+    status: retired
+    schedule: "(retired)"
+    description: "Buy-signal radar — 2026-10 整條移除（strategy_signal_radar／buy_observation／launchd 模板與 .command 皆刪，label 進 RETIRED_LABELS）。"
 
   - label: sell-signal-radar
     category: notify

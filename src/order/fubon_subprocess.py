@@ -129,7 +129,6 @@ def run_fubon_order_worker(payload: dict[str, Any], *, timeout_sec: float = 120.
 
 def _worker_main(argv: list[str] | None = None) -> int:
     import argparse
-    from types import SimpleNamespace
 
     parser = argparse.ArgumentParser(prog="order.fubon_subprocess")
     parser.add_argument("--request", required=True)
@@ -138,21 +137,7 @@ def _worker_main(argv: list[str] | None = None) -> int:
     req = json.loads(Path(args.request).read_text(encoding="utf-8"))
     kind = str(req.get("kind") or "")
     try:
-        if kind in {"abc_v3_f1_entry", "abc_v3_f1_position"}:
-            raise RuntimeError(
-                f"abc_order_removed:{kind} · ABC removed from Order layer 2026-07-16"
-            )
-        elif kind == "c18acc_actions":
-            from order.c18acc_order import process_c18acc_orders
-
-            actions = [SimpleNamespace(**row) for row in (req.get("actions") or [])]
-            result = process_c18acc_orders(
-                actions,
-                session_date=str(req["session_date"]),
-                poll_minute=str(req.get("poll_minute") or ""),
-                dry_run=bool(req.get("dry_run")) if req.get("dry_run") is not None else None,
-            )
-        elif kind == "holdings_status":
+        if kind == "holdings_status":
             from stock_db import DEFAULT_DB_PATH, connect
             from order.holdings_pulse import build_holdings_pulse
             from order.order_fill_report import holdings_status_rows_from_pulse

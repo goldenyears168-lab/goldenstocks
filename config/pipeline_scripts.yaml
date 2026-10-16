@@ -68,14 +68,6 @@ scripts:
     module: src/minervini_sepa_daily.py
     strategy_id: minervini-sepa-basket
 
-  run_rrg_improving_watch_daily:
-    path: scripts/run_rrg_improving_watch_daily.py
-    layer: pipeline
-    pipeline: daily_close
-    node: rrg_improving_watch_daily
-    module: src/rrg_improving_watch.py
-    env_flag: RUN_RRG_IMPROVING_WATCH
-
   run_rrg_universe_timeline_daily:
     path: scripts/run_rrg_universe_timeline_daily.py
     layer: pipeline
@@ -83,29 +75,6 @@ scripts:
     node: rrg_universe_timeline_daily
     module: scripts/run_rrg_universe_timeline_daily.py
     env_flag: RUN_RRG_UNIVERSE_TIMELINE
-
-  run_c18acc_extension_screen:
-    path: scripts/run_c18acc_extension_screen.py
-    layer: pipeline
-    pipeline: manual   # launchd c18acc-extension-overlay 已退役；.command 亦已刪除
-    module: src/c18acc_extension_screen.py
-    strategy_id: rrg-mono-swap-accel-extension
-
-  run_buy_signal_radar:
-    path: scripts/run_buy_signal_radar.py
-    layer: pipeline
-    pipeline: launchd
-    launchd: scripts/launchd/buy-signal-radar.command
-    module: src/strategy_signal_radar.py
-    strategy_id: buy-signal-radar
-
-  run_sell_signal_radar:
-    path: scripts/run_sell_signal_radar.py
-    layer: pipeline
-    pipeline: launchd
-    launchd: scripts/launchd/sell-signal-radar.command
-    module: src/strategy_signal_radar.py
-    strategy_id: sell-signal-radar
 
   run_sync_mutual_fund_holdings:
     path: scripts/run_sync_mutual_fund_holdings.py
@@ -137,28 +106,11 @@ scripts:
     purpose: T-1 探針雷達 · archived topic · manual only
     report_dir: reports/daily/regime
 
-  backfill_stock_chip_extras:
-    path: scripts/backfill_stock_chip_extras.py
-    layer: pipeline
-    pipeline: daily_close
-    module: src/stock_db/chip.py
-    env_flag: RUN_LENDING_BALANCE_SYNC
-    purpose: >-
-      借券餘額（TWSE TWT72U · 一 request 回全市場）＋股權分散大戶結構
-      （FinMind TaiwanStockHoldingSharesPer）＋現沖比例重算。
-      FinMind 沒有借券還券側，餘額只能來自 TWSE。
-
   backfill_probe_kbar:
     path: scripts/research/archive/backfill_probe_kbar.py
     layer: research
     purpose: 探針 universe 1m kbar 回灌 · archived
     report_dir: reports/research/market-probe
-
-  backfill_c18acc_kbar:
-    path: scripts/backfill_c18acc_kbar.py
-    layer: research
-    purpose: C18acc mono shortlist 精準 1m kbar（P0 · FinMind quota-aware）
-    report_dir: reports/research/rrg
 
   run_market_probe_strategy_research:
     path: scripts/research/archive/run_market_probe_strategy_research.py
@@ -176,13 +128,3 @@ scripts:
     path: scripts/run_daily_sync.py
     layer: pipeline
     purpose: daily_sync wrapper · 手動重跑收盤管線
-
-  run_launchd_replay:
-    path: scripts/run_launchd_replay.py
-    layer: pipeline
-    purpose: launchd job replay · 排程健檢
-
-  run_signal_radar_replay:
-    path: scripts/run_signal_radar_replay.py
-    layer: pipeline
-    purpose: buy/sell radar 歷史 replay · 除錯

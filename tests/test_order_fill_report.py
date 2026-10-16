@@ -81,40 +81,6 @@ class TestOrderFillReport(unittest.TestCase):
         self.assertIn("損益", text)
         self.assertIn("損益率", text)
 
-    def test_pool_digest_mixed_blocker(self) -> None:
-        from order.order_fill_report import format_c18acc_pool_digest
-
-        subject, body = format_c18acc_pool_digest(
-            session_date="2026-07-13",
-            poll_minute="13:00",
-            pool_as_of="2026-07-13",
-            pool=[
-                {"stock_id": "5876", "stock_name": "上海商銀", "seg_last": 0.5, "disp": 1.0},
-                {"stock_id": "3706", "stock_name": "神達", "seg_last": 0.7, "disp": 1.2},
-            ],
-            slots=[
-                {
-                    "slot": 0,
-                    "stock_id": "2377",
-                    "stock_name": "微星",
-                    "entry_date": "2026-07-13",
-                    "entry_px": 148.5,
-                }
-            ],
-            lead="3706 神達",
-            lead_drift="領先標的已換人",
-            entry_gate="有標的正在靠近買點",
-            blocker="3706：spread_class=mixed · avoid gate",
-            spread_gate_snapshot={"3706": "mixed", "5876": "mixed", "2377": "aligned"},
-            entry_confirm={"3706": 2, "5876": 2},
-            actions_n=0,
-        )
-        self.assertIn("POOL", subject)
-        self.assertIn("13:00", subject)
-        self.assertIn("3706", body)
-        self.assertIn("mixed", body)
-        self.assertIn("avoid mixed", body)
-        self.assertIn("神達", body)
 
 
 if __name__ == "__main__":

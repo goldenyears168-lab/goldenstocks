@@ -129,27 +129,16 @@ Gate 兩層且皆須通過：`config/strategies.yaml` 的 `enabled`（registry g
 
 `config/job_registry.yaml` 是「裝了什麼、能不能送單」的唯一 SSOT，勿只信 `docs/daily-operations.md` 舊表。
 
-現況（2026-10）：**目前沒有任何 live order-capable job**。`tmf-channel-poll`（TMF 實彈 worker）與 `tmf-sim-server` 已於 2026-10 隨使用者確認「不再使用」而整套部署移除（launchd／入口腳本／worker／blotter／測試；label 在 `RETIRED_LABELS`）。⚠ `src/tmf_channel/` 引擎函式庫與 `src/order/tmf_channel_*` 仍保留——150+ 研究腳本依賴它們（config／PV16 spec／回測引擎），它們**不下單、無排程**。其餘 2 支（`songshan-copytrade-poll`／`expert-pool-staged-gate`）仍三重鎖住（`leading-dip-poll`／`detach-gate` 已於 2026-10 整條移除）——
+現況（2026-10）：**目前沒有任何 live order-capable job**。`tmf-channel-poll`（TMF 實彈 worker）與 `tmf-sim-server` 已於 2026-10 整套移除，連同 TMF 引擎函式庫與 188 支研究腳本；僅留 futopt 收集器共用核心（`tmf_channel.session_pool`、`order.tmf_channel_{ledger,marketdata,ws_feed}`），不下單。其餘 2 支（`songshan-copytrade-poll`／`expert-pool-staged-gate`）仍三重鎖住（`leading-dip-poll`／`detach-gate` 已於 2026-10 整條移除）——
 1. `.env` 旗標本身安全（`ORDER_*_DRY_RUN=1` / `ORDER_*_ENABLED=0`）
 2. `launchctl disable`（重開機／重裝不復活）
 3. `.env` 總開關 `ORDER_MASTER_ENABLED`（各袖仍各自 disabled／dry）
 
 改動下單相關程式時**維持 dry-run／disabled 為預設**：plist template 與 launcher template 內的 `ORDER_*_DRY_RUN` 一律 `1`、`ORDER_*_AUTO_SUBMIT` 一律 `0`，實彈只由 mini 的 `.env` 開。恢復任何袖的送單能力必須是使用者明確直接的指示。
 
-**ABC Order 軌已退役**（2026-07-16）；`buy-signal-radar` 只寄信、不送單。
-**C18acc 排程已退役**（2026-08-04 · 策略不再採用 · 主要動機是不再收它的失敗信）。安靜是靠三層，**不是**靠改程式：
-1. launchd 移除 —— plist／launcher／`.command` 從 repo 與 mini 刪除，label 進 `RETIRED_LABELS`，重跑安裝腳本只會再卸載一次、不會復活
-2. `config/strategies.yaml`＋`config/strategy.yaml` 的 `rrg-mono-swap-accel`／`-extension` 設 `enabled: false`（registry gate 擋掉收盤 brief）
-3. `.env` 的 `RUN_RRG_C18ACC_SCREEN`／`_EMAIL`／`RUN_C18ACC_POOL_DIGEST_EMAIL`／`RUN_RRG_MONO_SWAP_ACCEL_DAILY` 全設 0
+**ABC Order 軌、C18acc 排程與程式碼已整條移除**（2026-10）：`src/order/c18acc_*`／`abc_v3_f1_*`（下單層）、`rrg_mono_swap_accel_screen`、`c18acc_extension_*`、`strategy_signal_radar`（buy/sell radar）、`buy_observation`、`rrg_improving_watch`、dayflip 下單碼皆刪，歷史見 git。留下的共用件：`abc_v3_f1_kinematics`（純邏輯，供研究回測）、`watchlist_kbar.sync_watchlist_kbar`（holdings_pulse 用）。`config/strategies.yaml`／`strategy.yaml` 內的對應條目維持 `enabled: false` 當歷史紀錄。
 
-**程式碼與 `config/order.yaml` 規格一律未動**（`src/order/c18acc_*.py`、screen、research／backtest 線都在），要研究時手動跑 `scripts/run_rrg_mono_swap_accel_screen.py` 即可。退役時尚有 3 個未平槽位（2377／2103／4167），現為手動持倉。
-
-⚠️ 關掉 `rrg-mono-swap-accel` 的副作用（已處理，但值得記住這個模式）：`rrg_universe_close` 原本 gate 是 `hold7 OR swap-accel`（`match: any`），而 hold7 早已 disabled，所以 swap-accel 是**唯一**還撐著它的——一關就會讓 `rrg_universe_scores` 的 `screen_kind='close'` 停止寫入，而它有兩個活的消費者：
-
-- `capitulation-oos-accumulate`（launchd · 平日 19:00）取 `MAX(session_date) WHERE screen_kind='close'`，停寫後會凍在舊日期、每天拿同一份舊快照繼續累積 OOS 事件——**不會報錯**，但會污染 OOS ledger
-- ~~`stock_daily_lens`~~（2026-10 已移除；原本也消費 `screen_kind='close'`，現僅 `capitulation-oos-accumulate` 一個消費者）
-
-已把該步從 registry gate 解耦（`src/pipeline_gates.py` · `strategy_ids: ()`，純 infra 只吃 `RUN_RRG_UNIVERSE_CLOSE`），並補測試釘住。**教訓**：退役策略前先查 `_DAILY_SYNC_STEPS` 裡有沒有 `match: any` 的步驟把它列為 parent——那種 gate 會在最後一個 parent 被關掉時靜默熄火。
+⚠️ 教訓（保留）：退役策略前先查 `_DAILY_SYNC_STEPS` 裡有沒有 `match: any` 的步驟把它列為 parent——那種 gate 會在最後一個 parent 被關掉時靜默熄火（`rrg_universe_close` 已解耦為純 infra，只吃 `RUN_RRG_UNIVERSE_CLOSE`）。
 
 ---
 

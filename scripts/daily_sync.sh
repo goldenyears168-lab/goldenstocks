@@ -78,8 +78,6 @@ _apply_sync_profile() {
       export RUN_RRG_UNIVERSE_CLOSE=0
       export RUN_XQ_STYLE_METRICS=0
       export RUN_RRG_MONO_DAILY=0
-      export RUN_RRG_MONO_SWAP_ACCEL_DAILY=0
-      export RUN_RRG_IMPROVING_WATCH=0
       export RUN_RRG_UNIVERSE_TIMELINE=0
       export RUN_VCP_FUNNEL_CLOSE=0
       log_line "SYNC_PROFILE=slim（僅 ingest + Facts + Regime；策略軌關閉）"
@@ -470,24 +468,6 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
   else
     log_line "--- RRG mono daily brief + slot confirm ---"
     log_line "  SKIP（RUN_RRG_MONO_DAILY=0）"
-  fi
-
-  if [[ "${RUN_RRG_MONO_SWAP_ACCEL_DAILY:-1}" != "0" ]]; then
-    run_step_if_pipeline_enabled "rrg_mono_swap_accel_daily" \
-      "RRG mono swap-accel (C18acc) daily diagnostic brief" \
-      "$PYTHON" "${ROOT}/scripts/run_rrg_mono_swap_accel_daily_brief.py" || true
-  else
-    log_line "--- RRG mono swap-accel (C18acc) daily diagnostic brief ---"
-    log_line "  SKIP（RUN_RRG_MONO_SWAP_ACCEL_DAILY=0）"
-  fi
-
-  if [[ "${RUN_RRG_IMPROVING_WATCH:-0}" != "0" ]]; then
-    run_step_if_pipeline_enabled "rrg_improving_watch_daily" \
-      "RRG Improving lifecycle watch daily brief" \
-      "$PYTHON" "${ROOT}/scripts/run_rrg_improving_watch_daily.py" || true
-  else
-    log_line "--- RRG Improving lifecycle watch daily brief ---"
-    log_line "  SKIP（RUN_RRG_IMPROVING_WATCH=0）"
   fi
 
   if [[ "${RUN_RRG_UNIVERSE_TIMELINE:-1}" != "0" ]]; then
