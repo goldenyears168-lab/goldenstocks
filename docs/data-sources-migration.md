@@ -12,7 +12,8 @@
 | VIXTWN 日線 | `TaiwanOptionVix` | 期交所 `getVixData` 逐日檔（`taifex_client.fetch_vix_ticks`） | **已完成** | OHLC＋筆數與 FinMind 逐日相同；跑在 20:30 `vixtwn-daily-sync`；原始檔歸檔於 `cache/taifex_vix/` |
 | VIXTWN 1 分鐘 | `TaiwanOptionVix`（舊版 open/close 在分鐘內顛倒） | 同上，彙整前先依時間排序 | **已完成** | 已補回 2026-08-10～10-16 共 13,442 根；high/low/n_ticks 與 FinMind 1,430／1,430 一致 |
 | TMF 引擎 VIX lag1 偏向 | `market_vix_daily` 的 `computed`（TXO 自算，**2026-10-01 起停更**） | 官方逐日收盤延伸 | **程式已改、尚未載入實彈** | 只延伸 `computed` 之後的日期；需 `scripts/order/tmf_cutover.sh` 才生效 |
-| 分點買賣（專家池核心分點） | `TaiwanStockTradingDailyReport` | 富邦行情站 `fubon-ebrokerdj`（依分點頁，金額排名） | 驗證完成、**寫入端未做** | 專家池配對召回 96.7%；持倉賣方口徑淨賣 ≥5,000 萬 95.4%、≥1 億 99.0% |
+| 分點買賣（專家池＋持倉監控） | `TaiwanStockTradingDailyReport` | 富邦行情站 `fubon-ebrokerdj`：個股前 15 名（精確張數）＋專家核心分點（依分點頁，張數／金額排名），`source='fubon'`（`fubon_branch_tape`） | **已完成** | 專家池配對召回 96.7%；持倉賣方口徑淨賣 ≥5,000 萬 95.4%、≥1 億 99.0%；10/16 已補 3,012 列（67 檔、434 分點）。每檔股票只有前段分點，不是全部 ~800 個 |
+| 專家池/持倉監控的收盤價 | `stock_daily_bars` 的 `source='finmind'` | 官方日線（`twse_mi_index`／`tpex_daily`），補檔時 `official_bars.ensure_official_bars` 先確保當日資料 | **已完成** | 原本官方日線 22:45 才由 limitup-fade 順手回補，比 20:05／20:10 還晚 |
 | 個股三大法人買賣超 | `TaiwanStockInstitutionalInvestorsBuySell` | TWSE T86＋櫃買（`scripts/backfill_twse_institutional.py` 已有） | 待做 | 目前僅回補工具，需排進每日；FinMind 宇宙只有約 71～271 檔，官方可到全市場 |
 | 融資融券／當沖／借券 | `TaiwanStockMarginPurchaseShortSale` 等 | TWSE MI_MARGN、TWTB4U、TWT72U；櫃買對應報表 | 待做 | 借券餘額 TWT72U 已在收盤管線 |
 | 外資持股比 | `TaiwanStockShareholding` | TWSE MI_QFIIS＋櫃買 | 待做 | |
@@ -36,7 +37,20 @@
 | 自家 ws 逐筆／五檔／權證／MIS 深度 | 無歷史 API | 各收集器每日 |
 | 前瞻帳本、OOS 事件帳本 | 事後無法重現 | 各 job |
 
-## 三、已知限制（誠實版）
+## 三、尚未處理的系統性依賴：`stock_daily_bars` 的 `source='finmind'`
+
+2026-10-17 盤點：**25 個檔案**讀日線時寫死 `source='finmind'`（FinMind 日線只涵蓋約 520 檔 ETF 成分股，且帶還原價 `adj_close`；官方日線有約 7,900 檔但**沒有** `adj_close`）。FinMind 停用後，這些讀取端看不到 10/16 之後的新日期。
+
+| 類別 | 檔案 |
+|---|---|
+| 收盤管線／儀表板 | `rrg_universe_snapshot`、`rrg_rotation`、`rrg_mono_daily_brief`、`vcp_funnel_specs_daily`、`stock_context`、`report_summary`、`sync_stock_technical_daily` |
+| 資金流與績效歸因 | `flow_returns`、`flow_attribution`、`build_signal_outcomes` |
+| 下單層（均為停用／dry-run 的袖） | `order/dayflip_short_*`、`order/dayflip_post_dump_long_order`、`order/songshan_copytrade_order`、`copytrade/branch_signals`、`copytrade/dual_branch_signals` |
+| 研究／回測 | `research/backtest/*`、`research/chip_relative/panel`、`research/tw100_data_quality` |
+
+處理選項（尚待決定）：(A) 橋接——用官方日線為既有 FinMind 宇宙續寫帶 `adj_close` 的列；(B) 逐一改讀取端同時認官方來源並自行處理還原價；(C) 接受這些功能停在 10/15。
+
+## 四、已知限制（誠實版）
 
 - 富邦分點頁是網頁、不是正式 API；規則是「依排名只列前段」，約 99% 的漏列是排名以下的小部位。使用條款尚未審閱。
 - 停用期間 FinMind 才有的**完整分點底稿**（每檔股票約 800 個分點）從 2026-10-16 起無法重建。
