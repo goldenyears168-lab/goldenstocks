@@ -5,7 +5,7 @@
   R1 非下單層模組不得 import order.* / tmf_channel*          （嚴格；2026-10 已清零，baseline 必為空）
   R2 L3 收盤主線不得 import research.* 或 order.*             （嚴格，baseline 必為空）
   R3 平坦 L4 模組不得 import research.*                       （baseline 容許既有）
-  R4 下單層不得 import research.*                             （baseline 容許既有）
+  R4 下單層不得 import research.*                             （嚴格；2026-10 已清零，baseline 必為空）
   R5 模組層級（top-level）import 不得成環                     （嚴格）
   R6 函式內（lazy）import 邊總數不得超過 baseline            （只許減）
 
@@ -169,7 +169,7 @@ def analyse(src: Path) -> dict:
     }
 
 
-STRICT = {"R1", "R2"}
+STRICT = {"R1", "R2", "R4"}
 
 
 def compare(cur: dict, base: dict) -> tuple[list[str], list[str]]:
@@ -214,7 +214,7 @@ def main(argv=None) -> int:
         if errors:
             print("有新違規，拒絕更新 baseline：", *errors, sep="\n  ")
             return 1
-        for rule in ("R3", "R4"):
+        for rule in ("R3",):
             base["edges"][rule] = sorted(set(base["edges"].get(rule, [])) & set(cur["edges"][rule]))
         base["lazy_only_edges"] = min(base.get("lazy_only_edges", cur["lazy_only_edges"]), cur["lazy_only_edges"])
         a.baseline.write_text(json.dumps(base, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

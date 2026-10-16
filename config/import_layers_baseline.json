@@ -1,6 +1,5 @@
 {
  "edges": {
-  "R1": [],
   "R3": [
    "buy_observation -> research.backtest.rrg_mono_backtest",
    "buy_observation -> research.backtest.rrg_mono_intraday_ab",
@@ -22,8 +21,7 @@
    "rrg_universe_intraday_panel -> research.backtest.w3_rv_hl_winner_profile",
    "strategy_signal_radar -> research.backtest.rrg_mono_intraday_ab",
    "vcp_funnel_specs_daily -> research.backtest.chunge_funnel_backtest"
-  ],
-  "R4": []
+  ]
  },
  "lazy_only_edges": 173,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
