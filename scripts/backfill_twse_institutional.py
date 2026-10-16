@@ -128,14 +128,19 @@ def fetch_tpex(day: date) -> list[dict]:
     if not t:
         return []
     f = [str(x).strip() for x in t["fields"]]
-    # 櫃買欄名重複（每個法人別各有 買進/賣出/買賣超），依位置取「買賣超」欄
+    # 櫃買欄名重複（每個法人別各有 買進/賣出/買賣超），依位置取「買賣超」欄。
+    # 2026-10-17 修正:版面是 24 欄、7 組買賣超 = 外資不含自營 / 外資自營 / 外資及陸資合計 / 投信 /
+    # 自營商自行 / 自營商避險 / 自營商合計。舊版取前三組,把『外資自營商』(幾乎恆為 0)當投信、
+    # 『外資合計』當自營商 —— 已存的 tpex_insti 列因此投信=0、自營商=外資(2026-07 起 1,477/3,430 列與 FinMind 不符)。
     idx = [k for k, n in enumerate(f) if n == "買賣超股數"]
-    if len(idx) < 3:
+    if len(f) != 24 or len(idx) != 7:
+        print(f"  WARN tpex 法人版面無法辨識(欄數 {len(f)}、買賣超 {len(idx)} 組),略過 {day}", file=sys.stderr)
         return []
+    k_foreign, k_trust, k_dealer = idx[2], idx[3], idx[6]
     iso = day.isoformat()
     out = []
     for r in t.get("data") or []:
-        vals = [_num(r[k]) if k < len(r) else None for k in idx]
+        vals = [_num(r[k]) if k < len(r) else None for k in (k_foreign, k_trust, k_dealer)]
         tot = _num(r[-1]) if len(r) > idx[-1] else None
         if tot is None:
             tot = sum(v for v in vals if v is not None) or None

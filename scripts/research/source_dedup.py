@@ -39,7 +39,7 @@ from __future__ import annotations
 #     單一來源,優先序是防禦性登記,不代表真的有衝突。
 SOURCE_PRIORITY: dict[str, tuple[str, ...]] = {
     "stock_daily_bars": ("finmind", "twse_mi_index", "tpex_daily", "yfinance"),
-    "stock_margin_daily": ("twse_mi_margn", "finmind"),
+    "stock_margin_daily": ("twse_mi_margn", "tpex_margn", "finmind"),     # 上市 / 上櫃(2026-10 新增 tpex_margn);兩者股票不重疊
     "stock_lending_balance_daily": ("twse",),
     "stock_institutional_daily": ("twse_t86", "tpex_insti", "finmind"),
     "stock_daytrade_daily": ("twse_twtb4u", "finmind"),
