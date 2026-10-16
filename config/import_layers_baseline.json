@@ -27,6 +27,6 @@
    "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
   ]
  },
- "lazy_only_edges": 191,
+ "lazy_only_edges": 190,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }
