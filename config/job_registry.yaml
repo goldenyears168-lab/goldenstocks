@@ -80,8 +80,9 @@ jobs:
       TMF Final v1.x PV16 實彈 worker — **2026-10 實彈部署移除**（使用者確認不再使用）：
       run_tmf_channel_worker／run_tmf_channel_poll／tmf_cutover.sh、launchd plist／launcher／.command、
       tmf_channel.worker_loop／blotter、對應測試與安裝腳本項目皆刪，label 進 RETIRED_LABELS。
-      ⚠ 研究層仍依賴 tmf_channel 引擎函式庫與 order.tmf_channel_{config,pv16_book,order,marketdata,
-      ledger,...}（150+ 研究腳本）——該函式庫保留，不會下單。
+      同期（2026-10）TMF 引擎函式庫（tmf_channel.*、order.tmf_channel_{config,pv16_book,order,broadcast}）
+      與 188 支依賴它的研究腳本／測試一併刪除；僅留 futopt 收集器共用核心
+      （tmf_channel.session_pool、order.tmf_channel_{ledger,marketdata,ws_feed}）。
       重跑 install-launchd.sh 會卸載常駐 worker；**執行前請先確認期貨無未平倉部位**。
 
   - label: momentum-rotation-poll

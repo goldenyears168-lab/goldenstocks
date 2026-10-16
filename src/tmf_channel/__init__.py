@@ -1,29 +1,6 @@
-"""TMF micro-channel package · engine + Order helpers + research harness.
+"""tmf_channel：僅保留 Fubon session 共用池（session_pool）。
 
-SSOT for live simulate: ``tmf_channel.engine`` (causal O-anchor).
-Recipe / 16-cell book remain in ``order.tmf_channel_config`` /
-``order.tmf_channel_pv16_book``.
-
-執行路徑、模組表、不變式與常見任務見同目錄 ``README.md``。
+TMF 引擎／研究函式庫已於 2026-10 移除（實彈引擎退役、研究線整條下架；歷史見 git）。
+期貨收集器（futopt-*）仍透過 order.tmf_channel_{ledger,marketdata,ws_feed} 與本套件的
+session_pool 取行情，故此核心保留。
 """
-
-from __future__ import annotations
-
-__all__ = [
-    "RECIPE_VERSION",
-    "simulate",
-    "load_vixtwn_1m",
-    "load_vixtwn_delta",
-]
-
-# Lazy re-exports keep ``import tmf_channel`` light for non-engine callers.
-def __getattr__(name: str):  # noqa: D401
-    if name in ("simulate", "load_vixtwn_1m", "load_vixtwn_delta", "classify_pv", "rvol_series"):
-        from tmf_channel import engine as _eng
-
-        return getattr(_eng, name)
-    if name == "RECIPE_VERSION":
-        from order.tmf_channel_pv16_book import RECIPE_VERSION
-
-        return RECIPE_VERSION
-    raise AttributeError(name)
