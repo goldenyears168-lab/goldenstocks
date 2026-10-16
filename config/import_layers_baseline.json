@@ -1,0 +1,63 @@
+{
+ "edges": {
+  "R1": [
+   "ops_live_ta -> order.fubon_account",
+   "ops_live_ta -> order.fubon_session",
+   "rrg_mono_swap_accel_screen -> order.c18acc_monitor_config",
+   "rrg_mono_swap_accel_screen -> order.c18acc_order",
+   "rrg_mono_swap_accel_screen -> order.c18acc_order_config",
+   "rrg_mono_swap_accel_screen -> order.c18acc_position_monitor",
+   "rrg_mono_swap_accel_screen -> order.c18acc_pyramid_ledger",
+   "rrg_mono_swap_accel_screen -> order.order_fill_report",
+   "strategy_signal_radar -> order.fubon_orders",
+   "strategy_signal_radar -> order.fubon_session"
+  ],
+  "R3": [
+   "buy_observation -> research.backtest.rrg_mono_backtest",
+   "buy_observation -> research.backtest.rrg_mono_intraday_ab",
+   "buy_observation -> research.backtest.rrg_mono_swap_exit_b",
+   "c18acc_extension_overlay -> research.backtest.c18acc_extension_exit",
+   "c18acc_extension_overlay -> research.backtest.rrg_mono_score_swap_c",
+   "c18acc_extension_screen -> research.backtest.rrg_mono_score_swap_c",
+   "minervini_sepa_daily -> research.backtest.broad_momentum_tv_backtest",
+   "minervini_sepa_daily -> research.backtest.finpilot_local_backtest",
+   "ops_live_ta -> research.intraday_direction_thermometer",
+   "rrg_improving_watch -> research.backtest.rrg_improving_lifecycle_backtest",
+   "rrg_improving_watch -> research.backtest.rrg_improving_s3rv_executable",
+   "rrg_mono_swap_accel_daily_brief -> research.backtest.rrg_mono_score_swap_c",
+   "rrg_mono_swap_accel_screen -> research.backtest.rrg_lens_score_swap",
+   "rrg_mono_swap_accel_screen -> research.backtest.rrg_mono_intraday_ab",
+   "rrg_mono_swap_accel_screen -> research.backtest.rrg_mono_score_swap_c",
+   "rrg_rotation -> research.backtest.finpilot_local_backtest",
+   "rrg_swap_accel_snapshot_json -> research.backtest.rrg_mono_score_swap_c",
+   "rrg_universe_intraday_panel -> research.backtest.rrg_lens_score_swap",
+   "rrg_universe_intraday_panel -> research.backtest.triple_wma_pullback_sweep",
+   "rrg_universe_intraday_panel -> research.backtest.w3_rv_hl_winner_profile",
+   "stock_daily_lens -> research.backtest.chunge_funnel_backtest",
+   "strategy_backtest_reference -> research.backtest.slot_backtest_summary",
+   "strategy_performance_yearly -> research.backtest.chunge_funnel_backtest",
+   "strategy_performance_yearly -> research.backtest.copytrade_backtest",
+   "strategy_performance_yearly -> research.backtest.rrg_mono_backtest",
+   "strategy_performance_yearly -> research.backtest.rrg_mono_score_swap_c",
+   "strategy_performance_yearly -> research.backtest.slot_backtest_summary",
+   "strategy_performance_yearly -> research.backtest.slot_portfolio_metrics",
+   "strategy_signal_radar -> research.backtest.rrg_mono_intraday_ab",
+   "vcp_funnel_specs_daily -> research.backtest.chunge_funnel_backtest",
+   "vcp_snapshot_json -> research.backtest.chunge_funnel_backtest"
+  ],
+  "R4": [
+   "order.abc_v3_f1_position_monitor -> research.backtest.abc_v3_f1_structural_pyramid_study",
+   "order.abc_v3_f1_position_monitor -> research.backtest.archive.abc_v3_f1_kinematic_tp_sl_study",
+   "order.abc_v3_f1_position_monitor -> research.backtest.archive.c18acc_kinematic_timeline_cache",
+   "order.abc_v3_f1_position_monitor -> research.backtest.archive.c18acc_triple_wma_extreme_profile",
+   "order.abc_v3_f1_position_monitor -> research.backtest.dual_wma_signal_backtest",
+   "order.leading_dip_order -> research.backtest.leading_dip_sleeve_validate",
+   "order.us_tw_5m_sell_gate -> research.backtest.us_tw_30m_rolling_risk_gate_study",
+   "order.us_tw_5m_sell_gate -> research.backtest.us_tw_rolling_5m_detach_study",
+   "order.us_tw_5m_sell_gate -> research.backtest.us_tw_sell_only_live_readiness_study",
+   "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
+  ]
+ },
+ "lazy_only_edges": 251,
+ "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
+}
