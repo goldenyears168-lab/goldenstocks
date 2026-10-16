@@ -33,6 +33,36 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(SOURCE_PRIORITY["stock_margin_daily"][:2], ("twse_mi_margn", "tpex_margn"))
 
 
+class ForeignHoldingTests(unittest.TestCase):
+    def test_twse_qfiis(self):
+        payload = {"stat": "OK", "data": [
+            ["2330", "台積電", "TW0002330008", "25,932,370,067", "8,105,362,135", "17,827,007,932", 31.25, 68.74, "100.00", "100.00", "", "115/05/26"],
+            ["9999", "壞列"]]}
+        rows = S.parse_qfiis_twse(payload, date(2026, 10, 16))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["stock_id"], rows[0]["foreign_remaining_ratio"], rows[0]["shares_issued"], rows[0]["source"]),
+                         ("2330", 31.25, 25932370067.0, "twse_qfiis"))
+        self.assertEqual(S.parse_qfiis_twse({"stat": "很抱歉，沒有符合條件的資料!"}, date(2026, 10, 17)), [])
+
+    def test_tpex_qfiis_percent_strings(self):
+        payload = {"tables": [{"data": [["36", "3105", "穩懋", "423,940,384", "251,454,108", "172,486,276", "59.31%", "40.68%", "100%", ""]]}]}
+        r = S.parse_qfiis_tpex(payload, date(2026, 10, 16))[0]
+        self.assertEqual((r["stock_id"], r["foreign_remaining_ratio"], r["foreign_remaining_shares"], r["source"]),
+                         ("3105", 59.31, 251454108.0, "tpex_qfiis"))
+
+    def test_priority_registered(self):
+        self.assertEqual(SOURCE_PRIORITY["stock_shareholding_daily"][:2], ("twse_qfiis", "tpex_qfiis"))
+
+
+class BetaUniverseTests(unittest.TestCase):
+    def test_company_lists_four_digit_only_and_markets(self):
+        import sync_stock_beta as B
+        rows = B.parse_company_lists(
+            [{"公司代號": "2330", "公司簡稱": "台積電"}, {"公司代號": "00878", "公司簡稱": "ETF"}],
+            [{"SecuritiesCompanyCode": "3105", "CompanyAbbreviation": "穩懋"}, {"SecuritiesCompanyCode": "910322", "CompanyAbbreviation": "DR"}])
+        self.assertEqual([(r.stock_id, r.name, r.market) for r in rows], [("2330", "台積電", "TSE"), ("3105", "穩懋", "OTC")])
+
+
 class TpexInstitutionalMappingTests(unittest.TestCase):
     """櫃買法人表 24 欄、7 組買賣超:外資不含自營 / 外資自營 / 外資合計 / 投信 / 自營自行 / 自營避險 / 自營合計。"""
 

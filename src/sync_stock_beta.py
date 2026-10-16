@@ -2,7 +2,8 @@
 """
 同步上市櫃股票 Beta 因子查表（vs ^TWII，250 交易日滾動計算）。
 
-清單：FinMind TaiwanStockInfo（twse → TSE、tpex → OTC）
+清單：2026-10-17 起改官方公司基本資料(TWSE openapi t187ap03_L → TSE、櫃買 openapi mopsfin_t187ap03_O → OTC)，
+再與 stock_beta 既有清單(含 ETF)合併；原本的 FinMind TaiwanStockInfo 已停用。價格與 Beta 計算仍是 Yahoo。
 Beta：Yahoo 日線自算，小數 2 位，source=yahoo_computed
 
 建議每週手動更新（非 daily_sync 一環）：
@@ -24,9 +25,7 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
-from finmind_client import fetch_finmind_dataset
 from project_config import DEFAULT_CAPITAL_NTD
-from finmind_client import skip_if_disabled
 from stock_db import DEFAULT_DB_PATH, connect, upsert_stock_beta
 
 BENCHMARK_SYMBOL = "^TWII"
@@ -46,43 +45,50 @@ class StockRow:
     market: str
 
 
+TWSE_COMPANY_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+TPEX_COMPANY_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+
+
+def _get_json(url: str, timeout: float = 60.0) -> list[dict]:
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (goldenstocks)"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def parse_company_lists(twse: list[dict], tpex: list[dict]) -> list[StockRow]:
+    """官方公司基本資料 → 上市(TSE)、上櫃(OTC)的 4 碼普通股。"""
+    out: dict[str, StockRow] = {}
+    for r in twse:
+        sid = str(r.get("公司代號", "")).strip()
+        if sid.isdigit() and len(sid) == 4:
+            out[sid] = StockRow(sid, str(r.get("公司簡稱", "")).strip(), "TSE")
+    for r in tpex:
+        sid = str(r.get("SecuritiesCompanyCode", "")).strip()
+        if sid.isdigit() and len(sid) == 4:
+            out[sid] = StockRow(sid, str(r.get("CompanyAbbreviation", "")).strip(), "OTC")
+    return [out[k] for k in sorted(out)]
+
+
 def fetch_stock_universe(include_emerging: bool = False) -> list[StockRow]:
-    """從 FinMind 取得上市櫃普通股清單（4 碼、依最新 date 去重）。"""
-    payload_rows = fetch_finmind_dataset("TaiwanStockInfo")
-
-    allowed_types = {"twse", "tpex"}
-    if include_emerging:
-        allowed_types.add("emerging")
-
-    latest: dict[str, dict] = {}
-    for row in payload_rows:
-        stock_type = str(row.get("type", "")).lower()
-        if stock_type not in allowed_types:
-            continue
-        stock_id = str(row.get("stock_id", "")).strip()
-        if not (stock_id.isdigit() and len(stock_id) == 4):
-            continue
-        snap_date = str(row.get("date", ""))
-        prev = latest.get(stock_id)
-        if prev is None or snap_date > prev["date"]:
-            latest[stock_id] = row
-
-    rows: list[StockRow] = []
-    for stock_id, row in sorted(latest.items()):
-        if row["type"] == "twse":
-            market = "TSE"
-        elif row["type"] == "tpex":
-            market = "OTC"
-        else:
-            market = "EMERGING"
-        rows.append(
-            StockRow(
-                stock_id=stock_id,
-                name=str(row.get("stock_name", "")).strip(),
-                market=market,
-            )
-        )
-    return rows
+    """官方公司清單 ∪ stock_beta 既有清單(含 ETF、已下市但仍有歷史者);同代號以官方為準。興櫃不處理(Yahoo 無對應)。"""
+    del include_emerging
+    merged: dict[str, StockRow] = {}
+    try:
+        conn = connect(DEFAULT_DB_PATH)
+        try:
+            for sid, name, market in conn.execute("SELECT stock_id, name, market FROM stock_beta"):
+                if market in MARKET_YAHOO and str(sid).isdigit() and len(str(sid)) == 4:
+                    merged[str(sid)] = StockRow(str(sid), str(name or ""), market)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — 沒有舊表也能靠官方清單跑
+        print(f"  WARN 讀取 stock_beta 既有清單失敗: {exc}")
+    for row in parse_company_lists(_get_json(TWSE_COMPANY_URL), _get_json(TPEX_COMPANY_URL)):
+        merged[row.stock_id] = row
+    return [merged[k] for k in sorted(merged)]
 
 
 def yahoo_symbol(stock: StockRow) -> str:
@@ -350,10 +356,8 @@ def main() -> None:
         help="不寫入 DB",
     )
     args = parser.parse_args()
-    if skip_if_disabled("Beta"):
-        return
 
-    print("取得股票清單（FinMind TaiwanStockInfo）…")
+    print("取得股票清單（官方公司基本資料 + stock_beta 既有清單）…")
     universe = fetch_stock_universe(include_emerging=args.include_emerging)
     universe = [s for s in universe if s.market in {"TSE", "OTC"} or args.include_emerging]
     if args.limit > 0:

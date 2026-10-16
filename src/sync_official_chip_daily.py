@@ -10,6 +10,8 @@
   上市當沖    TWSE TWTB4U          → stock_daytrade_daily    source='twse_twtb4u'
   上市法人    TWSE T86             → stock_institutional_daily source='twse_t86'
   上櫃法人    櫃買 insti/dailyTrade → stock_institutional_daily source='tpex_insti'
+  上市外資持股 TWSE MI_QFIIS       → stock_shareholding_daily  source='twse_qfiis'(外資尚可投資比率,詳情頁讀這欄)
+  上櫃外資持股 櫃買 insti/qfii      → stock_shareholding_daily  source='tpex_qfiis'
 上櫃當沖暫無可用端點,未涵蓋。
 
 和既有 `scripts/backfill_twse_*.py` 的差別:它們的『已抓過就跳過』看的是任何來源,FinMind 一直有列的日子會被整天跳過;
@@ -34,8 +36,11 @@ from stock_db.util import DEFAULT_DB_PATH
 ROOT = Path(__file__).resolve().parents[1]
 TPEX_MARGIN_URL = "https://www.tpex.org.tw/www/zh-tw/margin/balance?date={d}&id=&response=json"
 TPEX_MARGIN_SOURCE = "tpex_margn"
+TWSE_QFIIS_URL = "https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?date={d}&selectType=ALLBUT0999&response=json"
+TPEX_QFIIS_URL = "https://www.tpex.org.tw/www/zh-tw/insti/qfii?date={d}&id=&response=json"
+QFIIS_SOURCES = {"twse": "twse_qfiis", "tpex": "tpex_qfiis"}
 
-PARTS = ("margin_twse", "margin_tpex", "daytrade_twse", "inst")
+PARTS = ("margin_twse", "margin_tpex", "daytrade_twse", "inst", "foreign_twse", "foreign_tpex")
 INST_PARTS = ("inst_twse", "inst_tpex")        # 也可只指定其中一邊(例如只修復櫃買法人)
 
 
@@ -87,6 +92,64 @@ def parse_tpex_margin(payload: dict, day: date) -> list[dict]:
     return out
 
 
+def _pct(s) -> float | None:
+    return _num(str(s).replace("%", "")) if s is not None else None
+
+
+def parse_qfiis_twse(payload: dict, day: date) -> list[dict]:
+    """MI_QFIIS:[0]代號 [3]發行股數 [4]尚可投資股數 [6]尚可投資比率(%)。"""
+    if not payload or payload.get("stat") != "OK":
+        return []
+    out = []
+    for r in payload.get("data") or []:
+        if len(r) < 7 or not str(r[0]).strip():
+            continue
+        ratio = _pct(r[6])
+        if ratio is None:
+            continue
+        out.append({"stock_id": str(r[0]).strip(), "trade_date": day.isoformat(), "foreign_remaining_shares": _num(r[4]),
+                    "foreign_remaining_ratio": ratio, "shares_issued": _num(r[3]), "capital_ntd": None, "source": QFIIS_SOURCES["twse"]})
+    return out
+
+
+def parse_qfiis_tpex(payload: dict, day: date) -> list[dict]:
+    """櫃買僑外資及陸資持股比例排行表:[1]代號 [3]發行股數 [4]尚可投資股數 [6]尚可投資比率('59.31%')。"""
+    tables = (payload or {}).get("tables") or []
+    if not tables:
+        return []
+    out = []
+    for r in tables[0].get("data") or []:
+        if len(r) < 7 or not str(r[1]).strip():
+            continue
+        ratio = _pct(r[6])
+        if ratio is None:
+            continue
+        out.append({"stock_id": str(r[1]).strip(), "trade_date": day.isoformat(), "foreign_remaining_shares": _num(r[4]),
+                    "foreign_remaining_ratio": ratio, "shares_issued": _num(r[3]), "capital_ntd": None, "source": QFIIS_SOURCES["tpex"]})
+    return out
+
+
+def upsert_shareholding(conn, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    from stock_db.util import utc_now_iso
+
+    at = utc_now_iso()
+    conn.executemany(
+        """
+        INSERT INTO stock_shareholding_daily (stock_id, trade_date, foreign_remaining_shares, foreign_remaining_ratio,
+                                              shares_issued, capital_ntd, source, synced_at)
+        VALUES (:stock_id, :trade_date, :foreign_remaining_shares, :foreign_remaining_ratio, :shares_issued, :capital_ntd, :source, :synced_at)
+        ON CONFLICT(stock_id, trade_date, source) DO UPDATE SET
+            foreign_remaining_shares=excluded.foreign_remaining_shares, foreign_remaining_ratio=excluded.foreign_remaining_ratio,
+            shares_issued=excluded.shares_issued, synced_at=excluded.synced_at
+        """,
+        [{**r, "synced_at": at} for r in rows],
+    )
+    conn.commit()
+    return len(rows)
+
+
 def have(conn, table: str, day: str, sources: tuple[str, ...]) -> bool:
     ph = ",".join("?" * len(sources))
     return conn.execute(
@@ -120,6 +183,12 @@ def sync_day(conn, day: date, parts=PARTS, *, sleep: float = 1.5, mods=None, for
         _ensure_bars(iso)                       # 當沖比例的分母(全日成交股數)取自當日日線
     run("daytrade_twse", "stock_daytrade_daily", (bm.DAYTRADE_SOURCE,), lambda: bm.fetch_daytrade(day),
         lambda rows: bm.upsert_daytrade(conn, rows, day))
+    run("foreign_twse", "stock_shareholding_daily", (QFIIS_SOURCES["twse"],),
+        lambda: parse_qfiis_twse(bm._get(TWSE_QFIIS_URL.format(d=day.strftime("%Y%m%d"))), day),
+        lambda rows: upsert_shareholding(conn, rows))
+    run("foreign_tpex", "stock_shareholding_daily", (QFIIS_SOURCES["tpex"],),
+        lambda: parse_qfiis_tpex(bm._get(TPEX_QFIIS_URL.format(d=f"{day:%Y}%2F{day:%m}%2F{day:%d}")), day),
+        lambda rows: upsert_shareholding(conn, rows))
     # 法人:上市(T86)與上櫃(insti)各自判斷,不要因為一邊已有就跳過另一邊
     inst_want = set(INST_PARTS) if "inst" in parts else set(parts) & set(INST_PARTS)
     if inst_want:
