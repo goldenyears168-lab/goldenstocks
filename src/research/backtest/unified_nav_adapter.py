@@ -79,18 +79,6 @@ def _rrg_hold7_periods(
     return list(result["pooled_all"]["periods"])
 
 
-def _swap_accel_periods(
-    conn: sqlite3.Connection,
-    *,
-    date_start: str,
-    date_end: str,
-) -> list[dict]:
-    from strategy_performance_yearly import _swap_accel_run
-
-    result = _swap_accel_run(conn, date_start=date_start, date_end=date_end)
-    return list(result.get("periods") or [])
-
-
 def _vcp_periods(
     conn: sqlite3.Connection,
     *,
@@ -136,8 +124,6 @@ def collect_periods(
 
     if strategy_id == "rrg-mono-hold7":
         return _rrg_hold7_periods(conn, date_start=date_start, date_end=date_end)
-    if strategy_id == "rrg-mono-swap-accel":
-        return _swap_accel_periods(conn, date_start=date_start, date_end=date_end)
     if strategy_id.startswith("vcp-"):
         return _vcp_periods(
             conn, strategy_id=strategy_id, date_start=date_start, date_end=date_end

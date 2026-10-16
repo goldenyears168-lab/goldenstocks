@@ -24,12 +24,6 @@
    "rrg_universe_intraday_panel -> research.backtest.rrg_lens_score_swap",
    "rrg_universe_intraday_panel -> research.backtest.triple_wma_pullback_sweep",
    "rrg_universe_intraday_panel -> research.backtest.w3_rv_hl_winner_profile",
-   "strategy_performance_yearly -> research.backtest.chunge_funnel_backtest",
-   "strategy_performance_yearly -> research.backtest.copytrade_backtest",
-   "strategy_performance_yearly -> research.backtest.rrg_mono_backtest",
-   "strategy_performance_yearly -> research.backtest.rrg_mono_score_swap_c",
-   "strategy_performance_yearly -> research.backtest.slot_backtest_summary",
-   "strategy_performance_yearly -> research.backtest.slot_portfolio_metrics",
    "strategy_signal_radar -> research.backtest.rrg_mono_intraday_ab",
    "vcp_funnel_specs_daily -> research.backtest.chunge_funnel_backtest"
   ],
@@ -46,6 +40,6 @@
    "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
   ]
  },
- "lazy_only_edges": 232,
+ "lazy_only_edges": 226,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }
