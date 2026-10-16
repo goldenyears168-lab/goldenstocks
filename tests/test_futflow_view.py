@@ -22,7 +22,7 @@ class FutFlowTests(unittest.TestCase):
         self.assertEqual(F.group_of(5, 11_800_000), "B")
 
     def test_day_burst_and_filters(self):
-        b = F.Book("MXF"); seen = set()
+        b = F.Book("MXF")
         L = [row("2026-10-14T00:03:00.000+08:00", 100, 5, 1),                       # 殭屍(時窗外)
              row("2026-10-14T08:50:00.000+08:00", 47000, 1000, 2, tt=10),           # 基準
              row("2026-10-14T08:50:01.000+08:00", 47000, 1001, 3, tt=20),           # 1 口主動買 → 散戶
@@ -31,18 +31,18 @@ class FutFlowTests(unittest.TestCase):
              row("2026-10-14T08:50:04.000+08:00", 47000, 1006, 4, tt=30),           # (serial,cum) 重複
              row("2026-10-14T08:50:09.000+08:00", 47001, 1007, 6, tt=5_000_000)]    # 讓前面的爆發被沖出
         for ln in L:
-            b.feed_line(ln, "2026-10-14", seen)
-        b._flush_old()
+            b.feed_line(ln, "2026-10-14")
+        b.merger.flush_old()
         bar = b.sessions[("day", "2026-10-14")][8 * 60 + 50]
         self.assertEqual(bar["vol"], 7)
         self.assertEqual(bar["bl"]["R"], 1)
         self.assertEqual(bar["bl"]["B"], 5)
 
     def test_night_stitch_across_midnight(self):
-        b = F.Book("TMF"); seen = set()
-        b.feed_line(row("2026-10-14T23:59:00.000+08:00", 48000, 100, 1, qt="FUTURE_AH"), "2026-10-14", seen)
-        b.feed_line(row("2026-10-14T23:59:30.000+08:00", 48000, 103, 2, qt="FUTURE_AH", tt=1), "2026-10-14", seen)
-        b.feed_line(row("2026-10-15T00:00:10.000+08:00", 48001, 106, 3, qt="FUTURE_AH", tt=9_000_000), "2026-10-15", seen)
+        b = F.Book("TMF")
+        b.feed_line(row("2026-10-14T23:59:00.000+08:00", 48000, 100, 1, qt="FUTURE_AH"), "2026-10-14")
+        b.feed_line(row("2026-10-14T23:59:30.000+08:00", 48000, 103, 2, qt="FUTURE_AH", tt=1), "2026-10-14")
+        b.feed_line(row("2026-10-15T00:00:10.000+08:00", 48001, 106, 3, qt="FUTURE_AH", tt=9_000_000), "2026-10-15")
         self.assertEqual(list(b.sessions), [("night", "2026-10-14")])           # 00:00 以後仍屬 10-14 夜盤
         ks = sorted(b.sessions[("night", "2026-10-14")])
         self.assertLess(ks[0], ks[-1])                                           # 00:00 排在 23:59 之後
@@ -55,14 +55,14 @@ if __name__ == "__main__":
 
 class FutFlowSummaryTests(unittest.TestCase):
     def _book(self):
-        b = F.Book("MXF"); seen = set()
+        b = F.Book("MXF")
         rows = [row("2026-10-14T08:50:00.000+08:00", 47000, 1000, 1, tt=10),
                 row("2026-10-14T08:50:01.000+08:00", 47000, 1001, 2, tt=20),               # 散戶買 1 口
                 row("2026-10-14T08:51:01.000+08:00", 47000, 1006, 3, tt=30_000_000, bid=47000, ask=47001),  # 5 口主動賣(價=買一)→ 大戶賣
                 row("2026-10-14T08:59:59.000+08:00", 47000, 1007, 4, tt=90_000_000)]
         for ln in rows:
-            b.feed_line(ln, "2026-10-14", seen)
-        b._flush_old()
+            b.feed_line(ln, "2026-10-14")
+        b.merger.flush_old()
         return b
 
     def test_amount_and_windows(self):
@@ -141,3 +141,36 @@ class FutFlowActiveTests(unittest.TestCase):
         self.assertTrue(F._is_active(("night", "2026-10-14"), D(2026, 10, 15, 2, 0)))     # 跨午夜仍是 10-14 夜盤
         self.assertFalse(F._is_active(("night", "2026-10-13"), D(2026, 10, 15, 2, 0)))
         self.assertFalse(F._is_active(("night", "2026-10-14"), D(2026, 10, 15, 10, 0)))   # 已收盤
+
+
+class FutFlowCheckpointTests(unittest.TestCase):
+    def _fed(self):
+        b = F.Book("MXF")
+        for ln in [row("2026-10-14T23:59:00.000+08:00", 47000, 100, 1, qt="FUTURE_AH"),
+                   row("2026-10-14T23:59:10.000+08:00", 47000, 106, 2, qt="FUTURE_AH", tt=5),     # 6 口主動買 → 大戶(名目 1,410 萬)
+                   row("2026-10-15T00:00:10.000+08:00", 47001, 107, 3, qt="FUTURE_AH", ask=47001, tt=9_000_000)]:
+            b.feed_line(ln, "2026-10-14" if ln.startswith('{"ts": "2026-10-14') else "2026-10-15", "f")
+        return b
+
+    def test_roundtrip_preserves_state(self):
+        import json as _j
+        b = self._fed()
+        st = _j.loads(_j.dumps(b.to_state()))                      # 經過 JSON,模擬落地再讀回
+        b2 = F.Book.from_state("MXF", st)
+        self.assertIsNotNone(b2)
+        self.assertEqual(sorted(b2.sessions), sorted(b.sessions))
+        k = ("night", "2026-10-14")
+        self.assertEqual({m: x["vol"] for m, x in b2.sessions[k].items()}, {m: x["vol"] for m, x in b.sessions[k].items()})
+        self.assertEqual(b2.stream.prev, b.stream.prev)
+        self.assertEqual(b2.merger.open, b.merger.open)
+        # 還原後繼續餵資料,結果與沒中斷的一致
+        nxt = row("2026-10-15T00:00:20.000+08:00", 47001, 109, 4, qt="FUTURE_AH", ask=47001, tt=9_100_000)
+        b.feed_line(nxt, "2026-10-15", "f"); b2.feed_line(nxt, "2026-10-15", "f")
+        self.assertEqual(sum(x["vol"] for x in b2.sessions[k].values()), sum(x["vol"] for x in b.sessions[k].values()))
+
+    def test_bad_checkpoint_rejected(self):
+        st = self._fed().to_state()
+        self.assertIsNone(F.Book.from_state("TMF", st))                       # 品牌不符
+        self.assertIsNone(F.Book.from_state("MXF", dict(st, rules=999)))     # 規則版本不符
+        self.assertIsNone(F.Book.from_state("MXF", dict(st, schema=0)))
+        self.assertIsNone(F.Book.from_state("MXF", {"schema": F.CKPT_SCHEMA}))   # 結構殘缺

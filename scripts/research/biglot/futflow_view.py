@@ -20,28 +20,29 @@ import os
 import threading
 import time
 
+import futures_flow as FF
 from stock_db import DATA_DIR
 
 CACHE = DATA_DIR.parent / "cache"
 ROOTS = ("MXF", "TMF")
-PV = {"MXF": 50, "TMF": 10}
-BIG_AMT = 10_000_000
+PV = FF.PV
+BIG_AMT = FF.BIG_AMT
 GROUPS = ("B", "M", "R")                       # 大戶／中單／散戶
 G_NAME = {"B": "大單", "M": "中單", "R": "散戶"}   # 2026-10-16:「大戶」改稱「大單」——實證上它對應不到外資/法人(見 disc 註記)
 G_COLOR = {"B": "#ff7b72", "M": "#8b949e", "R": "#58a6ff"}   # 與主儀表板台指面板一致:大戶紅、散戶藍;中單用灰(紫=權證、黃=警示已被佔用)
-DAY0, DAY1 = 8 * 3600 + 45 * 60, 13 * 3600 + 45 * 60
 LOAD_FILES = 14                                # 啟動時載入最近幾個日曆檔
 MIN_REFRESH = 1.0                              # 秒
+
+CKPT_SCHEMA = 1
+CKPT_DIR = CACHE / "futflow_view"            # 檢查點目錄(派生資料,可隨時刪除;刪了只是重啟時完整重建)
+CKPT_EVERY = 30.0                            # 秒
 
 _LOCK = threading.RLock()
 _BOOKS: dict = {}
 _LOADING = {"started": False, "done": False, "err": ""}
 
 
-def group_of(lots: int, notional: float) -> str:
-    if lots == 1:
-        return "R"
-    return "B" if notional >= BIG_AMT else "M"
+group_of = FF.group_of            # 規則在共用模組;此處保留名稱供頁面與測試使用
 
 
 def _new_bar(px):
@@ -50,103 +51,69 @@ def _new_bar(px):
 
 
 class Book:
-    """單一品牌的增量讀取狀態。"""
+    """單一品牌的增量讀取狀態。解析與分組規則一律來自 `futures_flow`(共用模組),這裡只負責彙整成分鐘列。"""
 
     def __init__(self, root: str):
         self.root = root
         self.pv = PV[root]
         self.sessions: dict = {}                # (stype, T) → {minute_key: bar}
-        self.prev: dict = {}                    # quote_type → 上一筆累計量
         self.offsets: dict = {}                 # 檔 → 位移
-        self.seen: dict = {}                    # 檔 → set((serial,cum))
-        self.open: dict = {}                    # (qt, dir) → [trade_time, lots, notional, stype, T, mkey]
-        self.last_tt: dict = {}                 # qt → 最後 trade_time
+        self.stream = FF.TradeStream()
+        self.merger = FF.BurstMerger(self.pv, self._on_burst, streaming=True)
         self.last_ts = ""
 
-    @staticmethod
-    def _session(qt, file_date, sec):
-        if qt == "FUTURE":
-            return "day", file_date
-        if sec >= 12 * 3600:
-            return "night", file_date
-        return "night", (dt.date.fromisoformat(file_date) - dt.timedelta(days=1)).isoformat()
+    def _on_burst(self, b):
+        bar = self.sessions[(b.stype, b.T)][b.mk]
+        g = group_of(b.lots, b.notional_sum)
+        side, nside = ("bl", "bn") if b.side > 0 else ("sl", "sn")
+        bar[side][g] += b.lots
+        bar[nside][g] += b.notional_sum
 
-    @staticmethod
-    def mkey(stype, sec):
-        m = int(sec // 60)
-        return m if (stype == "day" or m >= 720) else m + 1440
-
-    def _flush(self, key):
-        e = self.open.pop(key, None)
-        if not e:
+    def feed_line(self, line, file_date, file_key=None):
+        t = self.stream.feed(line, file_date, file_key)
+        if t is None:
             return
-        _tt, lots, notional, stype, T, mk = e
-        bar = self.sessions[(stype, T)][mk]
-        g = group_of(lots, notional)
-        side = "bl" if key[1] > 0 else "sl"
-        nside = "bn" if key[1] > 0 else "sn"
-        bar[side][g] += lots
-        bar[nside][g] += notional
-
-    def feed_line(self, line, file_date, seen):
-        try:
-            r = json.loads(line)
-        except ValueError:
-            return
-        if r.get("stale"):
-            return
-        qt, cv, px = r.get("quote_type"), r.get("cum_volume"), r.get("price")
-        if qt not in ("FUTURE", "FUTURE_AH") or cv is None or px is None:
-            return
-        k = (r.get("serial"), cv)
-        if (qt,) + k in seen:
-            return
-        seen.add((qt,) + k)
-        ts = r["ts"]
-        sec = int(ts[11:13]) * 3600 + int(ts[14:16]) * 60 + int(ts[17:19]) + int(ts[20:23]) / 1000
-        if qt == "FUTURE" and not (DAY0 <= sec < DAY1):
-            return
-        if qt == "FUTURE_AH" and 5 * 3600 <= sec < 15 * 3600:
-            return
-        stype, T = self._session(qt, file_date, sec)
-        mk = self.mkey(stype, sec)
-        bars = self.sessions.setdefault((stype, T), {})
-        p = self.prev.get(qt)
-        self.prev[qt] = cv
-        bar = bars.get(mk)
+        bars = self.sessions.setdefault((t.stype, t.T), {})
+        bar = bars.get(t.mk)
         if bar is None:
-            bar = bars[mk] = _new_bar(px)
-        bar["h"], bar["l"], bar["c"] = max(bar["h"], px), min(bar["l"], px), px
-        self.last_ts = ts
-        if p is None or cv <= p:
-            return                                # session 第一筆／重置／重送：只當基準
-        dv = cv - p
-        bar["vol"] += dv
-        bar["amt"] += dv * self.pv * px
+            bar = bars[t.mk] = _new_bar(t.px)
+        bar["h"], bar["l"], bar["c"] = max(bar["h"], t.px), min(bar["l"], t.px), t.px
+        self.last_ts = t.ts
+        if t.dv <= 0:
+            return                                # 基準列／重置／重送:只當基準
+        bar["vol"] += t.dv
+        bar["amt"] += t.dv * self.pv * t.px
         bar["t"] += 1
-        b, a = r.get("bid"), r.get("ask")
-        d = 1 if (a is not None and px >= a) else (-1 if (b is not None and px <= b) else 0)
-        if d == 0:
-            return
-        tt = r.get("trade_time")
-        key = (qt, d)
-        e = self.open.get(key)
-        if e is not None and e[0] != tt:
-            self._flush(key)
-            e = None
-        if e is None:
-            self.open[key] = [tt, dv, dv * self.pv * px, stype, T, mk]
-        else:
-            e[1] += dv
-            e[2] += dv * self.pv * px
-        self.last_tt[qt] = tt or self.last_tt.get(qt)
+        self.merger.add(t)
 
-    def _flush_old(self):
-        for key in list(self.open):
-            tt = self.open[key][0]
-            lt = self.last_tt.get(key[0])
-            if tt is not None and lt is not None and lt - tt > 2_000_000:   # trade_time 為微秒
-                self._flush(key)
+    # ---- 檢查點(checkpoint):位移與彙整結果一起原子寫入,重啟後只讀新增的位元組 ----
+    def to_state(self, keep_sessions: int = 24) -> dict:
+        keys = sorted(self.sessions, key=lambda k: (k[1], 0 if k[0] == "day" else 1))[-keep_sessions:]
+        return {"schema": CKPT_SCHEMA, "rules": FF.RULES_VERSION, "root": self.root, "offsets": self.offsets, "prev": self.stream.prev,
+                "last_ts": self.last_ts, "last_tt": self.merger.last_tt,
+                "open": {f"{k[0]}|{k[1]}": v for k, v in self.merger.open.items()},
+                "sessions": {f"{k[0]}|{k[1]}": {str(m): bar for m, bar in self.sessions[k].items()} for k in keys}}
+
+    @classmethod
+    def from_state(cls, root: str, st: dict):
+        """檢查點不合(版本、品牌、結構不符)回傳 None,呼叫端改為完整重建。"""
+        try:
+            if st.get("schema") != CKPT_SCHEMA or st.get("rules") != FF.RULES_VERSION or st.get("root") != root:
+                return None
+            b = cls(root)
+            b.offsets = {k: int(v) for k, v in st["offsets"].items()}
+            b.stream.prev = dict(st["prev"])
+            b.last_ts = st.get("last_ts", "")
+            b.merger.last_tt = dict(st.get("last_tt") or {})
+            for k, v in (st.get("open") or {}).items():
+                qt, side = k.split("|")
+                b.merger.open[(qt, int(side))] = v
+            for k, bars in st["sessions"].items():
+                stype, T = k.split("|")
+                b.sessions[(stype, T)] = {int(m): bar for m, bar in bars.items()}
+            return b
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
 
     def read(self, files):
         for f in files:
@@ -158,7 +125,6 @@ class Book:
             off = self.offsets.get(f, 0)
             if size <= off:
                 continue
-            seen = self.seen.setdefault(f, set())
             with open(f, "rb") as fh:
                 fh.seek(off)
                 chunk = fh.read(size - off)
@@ -166,9 +132,11 @@ class Book:
             if nl < 0:
                 continue
             for line in chunk[: nl + 1].decode("utf-8", "replace").splitlines():
-                self.feed_line(line, file_date, seen)
+                self.feed_line(line, file_date, f)
             self.offsets[f] = off + nl + 1
-        self._flush_old()
+        for f in files[:-1]:                    # 舊檔不會再增長,釋放去重集合(每檔約 10 萬筆)
+            self.stream.drop_file(f)
+        self.merger.flush_old()
 
 
 def _files(root):
@@ -176,18 +144,49 @@ def _files(root):
     return fs
 
 
+def _ckpt_path(root):
+    return CKPT_DIR / f"{root.lower()}.json"
+
+
+def _load_ckpt(root, files):
+    """讀檢查點;位移超過檔案大小(檔被截斷或換檔)就整份作廢。"""
+    try:
+        st = json.loads(_ckpt_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    b = Book.from_state(root, st)
+    if b is None:
+        return None
+    for f, off in b.offsets.items():
+        try:
+            if os.path.exists(f) and os.path.getsize(f) < off:
+                return None
+        except OSError:
+            return None
+    return b
+
+
+def _save_ckpt(book):
+    try:
+        CKPT_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _ckpt_path(book.root).with_suffix(".tmp")
+        tmp.write_text(json.dumps(book.to_state(), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, _ckpt_path(book.root))
+    except OSError:
+        pass                                      # 存檔失敗不影響頁面
+
+
 def _initial_load():
     try:
         for root in ROOTS:
-            b = Book(root)
             fs = _files(root)[-LOAD_FILES:]
+            b = _load_ckpt(root, fs) or Book(root)
             with _LOCK:
                 _BOOKS[root] = b
             b.read(fs)
-            # 啟動時只留最後幾個檔的位移以外的 seen 集合：舊檔不會再增長，釋放記憶體
-            for f in fs[:-1]:
-                b.seen.pop(f, None)
+            _save_ckpt(b)
         _LOADING["done"] = True
+        _LOADING["ckpt_t"] = time.time()
     except Exception as exc:  # noqa: BLE001
         _LOADING["err"] = repr(exc)
 
@@ -206,6 +205,10 @@ def _refresh():
         _LOADING["t"] = now
         for root, b in _BOOKS.items():
             b.read(_files(root)[-2:])
+        if now - _LOADING.get("ckpt_t", 0) >= CKPT_EVERY:
+            _LOADING["ckpt_t"] = now
+            for b in _BOOKS.values():
+                _save_ckpt(b)
 
 
 # ---------------------------------------------------------------- 彙整

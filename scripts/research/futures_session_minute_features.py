@@ -26,125 +26,74 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
+import futures_flow as FF  # noqa: E402
 try:
     from stock_db import DATA_DIR as _DATA_DIR
     STATE_ROOT = pathlib.Path(_DATA_DIR).parent      # stock_db.DATA_DIR 指向 <狀態根>/data
 except Exception:  # 沒有 src 路徑時退回環境變數/預設
     STATE_ROOT = pathlib.Path(os.environ.get("GOLDENSTOCKS_DATA_DIR", os.path.expanduser("~/goldenstocks-data")))
 
-PV = {"txf": 200, "mxf": 50, "tmf": 10}
-TIERS = ["S", "M1", "M2", "L", "XL"]
+PV = {k.lower(): v for k, v in FF.PV.items()}
+TIERS = list(FF.TIERS)
 LOT_TIERS = ["1", "2_4", "5_9", "10p"]       # 口數級(跨商品同一套;2026-10-16 起新增,附加在舊欄位之後,不影響既有評估)
-EDGES_M = [0, 2.5, 5, 12, 25]
-DAY0, DAY1 = 8 * 3600 + 45 * 60, 13 * 3600 + 45 * 60
+tier_of = FF.tier_of
 
 
 def lot_tier(v):
     return "1" if v <= 1 else ("2_4" if v <= 4 else ("5_9" if v <= 9 else "10p"))
 
 
-def tier_of(notional_m):
-    t = 0
-    for i, e in enumerate(EDGES_M):
-        if notional_m >= e:
-            t = i
-    return TIERS[t]
-
-
-def parse_ts(s):
-    """'2026-10-14T00:00:00.061+08:00' → (YYYY-MM-DD, 秒數)"""
-    return s[:10], int(s[11:13]) * 3600 + int(s[14:16]) * 60 + int(s[17:19]) + int(s[20:23]) / 1000
-
-
-def session_of(qt, file_date, sec):
-    """回傳 (session_type, T)。夜盤 <12:00 屬前一日曆日的夜盤。"""
-    import datetime
-    if qt == "FUTURE":
-        return "day", file_date
-    if sec >= 12 * 3600:
-        return "night", file_date
-    t = datetime.date.fromisoformat(file_date) - datetime.timedelta(days=1)
-    return "night", t.isoformat()
-
-
 def process(root, files):
+    """解析、分盤別、爆發合併全部來自共用模組 `futures_flow`;這裡只負責彙整成分鐘列與盤別捕獲率檢查。"""
     pv = PV[root]
-    prev = {}                              # quote_type → 上一筆累計量(跨檔延續)
+    stream = FF.TradeStream()
     bars = {}                              # (stype, T, minute_idx) → dict
     sess = collections.defaultdict(lambda: {"first_cum": None, "last_cum": None, "sum_dv": 0, "resets": 0, "rows": 0})
+
+    def on_burst(b):
+        bk = bars[(b.stype, b.T, b.mk)]
+        t = tier_of(b.lots * pv * b.last_px / 1e6)           # 與舊版相同:名目以爆發最後一筆價格計
+        bk[("b_" if b.side > 0 else "s_") + t] += b.lots
+        bk["nb_" + t] += 1
+        bk[("bl_" if b.side > 0 else "sl_") + lot_tier(b.lots)] += b.lots
+
     for f in files:
         file_date = os.path.basename(f).split("_")[-1][:10]
-        seen = set()
-        bursts = {}                        # (qt, trade_time, dir) → [first_sec, vol, last_px, stype, T]
+        merger = FF.BurstMerger(pv, on_burst, streaming=False)      # 批次:同毫秒同方向整檔累加,與舊版一致
         with open(f) as fh:
             for line in fh:
-                try:
-                    r = json.loads(line)
-                except ValueError:
+                t = stream.feed(line, file_date, f)
+                if t is None:
                     continue
-                if r.get("stale"):
-                    continue
-                qt = r.get("quote_type")
-                cv = r.get("cum_volume")
-                if qt not in ("FUTURE", "FUTURE_AH") or cv is None or r.get("price") is None:
-                    continue
-                k = (qt, r.get("serial"), cv)
-                if k in seen:
-                    continue
-                seen.add(k)
-                _, sec = parse_ts(r["ts"])
-                if qt == "FUTURE" and not (DAY0 <= sec < DAY1):
-                    continue
-                if qt == "FUTURE_AH" and 5 * 3600 <= sec < 15 * 3600:
-                    continue
-                stype, T = session_of(qt, file_date, sec)
-                s = sess[(stype, T)]
+                s = sess[(t.stype, t.T)]
                 s["rows"] += 1
-                p = prev.get(qt)
-                prev[qt] = cv
-                if p is None or cv < p:
-                    if p is not None:
+                if t.baseline:
+                    if t.reset:
                         s["resets"] += 1
                     if s["first_cum"] is None:
-                        s["first_cum"] = cv
-                    s["last_cum"] = cv
+                        s["first_cum"] = t.cv
+                    s["last_cum"] = t.cv
                     continue                      # session 第一筆/重置:只當基準
                 if s["first_cum"] is None:
-                    s["first_cum"] = p
-                s["last_cum"] = cv
-                dv = cv - p
-                px, b, a = r["price"], r.get("bid"), r.get("ask")
-                m = int(sec // 60)
-                bk = bars.setdefault((stype, T, m), {"o": px, "h": px, "l": px, "c": px, "vol": 0, "n": 0, "spr_sum": 0.0, "spr_n": 0,
-                                                     **{f"{d}_{t}": 0 for d in ("b", "s") for t in TIERS}, **{f"nb_{t}": 0 for t in TIERS},
-                                                     **{f"{d}l_{t}": 0 for d in ("b", "s") for t in LOT_TIERS}})
-                bk["h"] = max(bk["h"], px)
-                bk["l"] = min(bk["l"], px)
-                bk["c"] = px
-                if dv <= 0:
+                    s["first_cum"] = t.cv - t.dv
+                s["last_cum"] = t.cv
+                bk = bars.setdefault((t.stype, t.T, t.mk), {"o": t.px, "h": t.px, "l": t.px, "c": t.px, "vol": 0, "n": 0, "spr_sum": 0.0, "spr_n": 0,
+                                                            **{f"{d}_{x}": 0 for d in ("b", "s") for x in TIERS}, **{f"nb_{x}": 0 for x in TIERS},
+                                                            **{f"{d}l_{x}": 0 for d in ("b", "s") for x in LOT_TIERS}})
+                bk["h"] = max(bk["h"], t.px)
+                bk["l"] = min(bk["l"], t.px)
+                bk["c"] = t.px
+                if t.dv <= 0:
                     continue
-                s["sum_dv"] += dv
-                bk["vol"] += dv
+                s["sum_dv"] += t.dv
+                bk["vol"] += t.dv
                 bk["n"] += 1
-                if a is not None and b is not None and a > b and px > 0:
-                    bk["spr_sum"] += (a - b) / px * 1e4
+                if t.ask is not None and t.bid is not None and t.ask > t.bid and t.px > 0:
+                    bk["spr_sum"] += (t.ask - t.bid) / t.px * 1e4
                     bk["spr_n"] += 1
-                d = 1 if (a is not None and px >= a) else (-1 if (b is not None and px <= b) else 0)
-                if d == 0:
-                    continue
-                key = (qt, r.get("trade_time"), d)
-                e = bursts.get(key)
-                if e is None:
-                    bursts[key] = [m, dv, px, stype, T]
-                else:
-                    e[1] += dv
-                    e[2] = px
-        for (qt, tt, d), (m, v, px, stype, T) in bursts.items():
-            t = tier_of(v * pv * px / 1e6)
-            bk = bars[(stype, T, m)]
-            bk[("b_" if d > 0 else "s_") + t] += v
-            bk["nb_" + t] += 1
-            bk[("bl_" if d > 0 else "sl_") + lot_tier(v)] += v
+                merger.add(t)
+        merger.flush_all()
+        stream.drop_file(f)
     return bars, sess
 
 
