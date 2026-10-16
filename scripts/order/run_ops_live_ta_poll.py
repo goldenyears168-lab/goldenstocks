@@ -29,6 +29,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from order.ops_live_ta_gateway import install as install_fubon_gateway  # noqa: E402
 from project_dotenv import load_project_dotenv  # noqa: E402
 from ops_console_sync import supabase_ops_configured  # noqa: E402
 from ops_live_ta import (  # noqa: E402
@@ -81,6 +82,7 @@ def _resolve_stocks(conn, args: argparse.Namespace, fubon_session=None) -> list[
 
 
 def main(argv: list[str] | None = None) -> int:
+    install_fubon_gateway()  # ops_live_ta 不再 import order.*，由入口注入富邦 gateway
     parser = argparse.ArgumentParser(
         description="Upsert ops.live_ta for holdings (+ optional disposition auction)"
     )

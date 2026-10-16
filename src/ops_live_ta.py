@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -57,6 +58,31 @@ from ops_console_sync import (
     supabase_ops_configured,
     upsert_live_ta,
 )
+
+
+@dataclass(frozen=True)
+class FubonGateway:
+    """富邦連線／帳戶快照注入點（依賴反轉）：本模組不 import `order.*`，
+    由入口腳本經 `order.ops_live_ta_gateway.install()` 注入。未注入 ＝ 不碰券商。"""
+
+    connect: Callable[..., Any]
+    account_snapshot: Callable[[Any], dict[str, Any]]
+    held_qty: Callable[[dict[str, Any]], int]
+
+
+_FUBON_GATEWAY: FubonGateway | None = None
+
+
+def install_fubon_gateway(gateway: FubonGateway | None) -> None:
+    global _FUBON_GATEWAY
+    _FUBON_GATEWAY = gateway
+
+
+def _connect_fubon() -> Any:
+    """取得富邦 session；未注入 gateway 時丟錯，由呼叫端既有的降級路徑改走 Yahoo。"""
+    if _FUBON_GATEWAY is None:
+        raise RuntimeError("fubon gateway not installed")
+    return _FUBON_GATEWAY.connect(realtime=True)
 
 
 def _tw_yahoo_symbol_candidates(stock_id: str) -> tuple[str, ...]:
@@ -417,9 +443,7 @@ def fetch_fubon_marketdata_quotes(
     if not symbols:
         return out, None
     try:
-        from order.fubon_session import connect_fubon
-
-        sess = session if session is not None else connect_fubon(realtime=True)
+        sess = session if session is not None else _connect_fubon()
         rest_stock = sess.sdk.marketdata.rest_client.stock
     except Exception as exc:  # noqa: BLE001 — poll must degrade to Yahoo
         return out, f"fubon_connect:{exc}"
@@ -529,9 +553,7 @@ def fetch_fubon_candles(
         time.sleep(gap_sec)
     try:
         if rest_stock is None:
-            from order.fubon_session import connect_fubon
-
-            sess = session if session is not None else connect_fubon(realtime=True)
+            sess = session if session is not None else _connect_fubon()
             rest_stock = sess.sdk.marketdata.rest_client.stock
         raw = rest_stock.intraday.candles(symbol=sid, timeframe=tf)
     except Exception as exc:  # noqa: BLE001
@@ -720,9 +742,7 @@ def open_fubon_rest_stock(
 ) -> tuple[Any | None, Any | None, str | None]:
     """Return (rest_stock, session_or_none, connect_error)."""
     try:
-        from order.fubon_session import connect_fubon
-
-        sess = session if session is not None else connect_fubon(realtime=True)
+        sess = session if session is not None else _connect_fubon()
         return sess.sdk.marketdata.rest_client.stock, sess, None
     except Exception as exc:  # noqa: BLE001
         return None, None, f"fubon_connect:{exc}"
@@ -1744,12 +1764,12 @@ def load_holdings_from_ops() -> list[tuple[str, str | None]]:
 
 def load_holdings_from_fubon_session(session: Any) -> list[tuple[str, str | None]]:
     """Live Fubon inventories with qty > 0（當下持倉）."""
-    try:
-        from order.fubon_account import _held_qty, account_snapshot
-    except ImportError:
+    gw = _FUBON_GATEWAY
+    if gw is None:
         return []
+    _held_qty = gw.held_qty
     try:
-        snap = account_snapshot(session)
+        snap = gw.account_snapshot(session)
     except Exception:  # noqa: BLE001
         return []
     out: list[tuple[str, str | None]] = []

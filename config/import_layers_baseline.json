@@ -1,8 +1,6 @@
 {
  "edges": {
   "R1": [
-   "ops_live_ta -> order.fubon_account",
-   "ops_live_ta -> order.fubon_session",
    "strategy_signal_radar -> order.fubon_orders",
    "strategy_signal_radar -> order.fubon_session"
   ],
@@ -52,6 +50,6 @@
    "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
   ]
  },
- "lazy_only_edges": 247,
+ "lazy_only_edges": 246,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }
