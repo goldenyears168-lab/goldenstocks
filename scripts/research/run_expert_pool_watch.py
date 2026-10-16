@@ -69,6 +69,11 @@ from research.expert_pool_yellow_annotation import (  # noqa: E402
 from stock_db import DATA_DIR, DEFAULT_DB_PATH, connect  # noqa: E402
 
 SOURCE = "finmind"
+# 2026-10 FinMind 不續約:歷史列仍是 finmind,新資料來自官方日線(收盤價)與富邦分點頁(分點 tape)。
+BARS_SOURCES = ("finmind", "twse_mi_index", "tpex_daily")
+TAPE_SOURCES = ("finmind", "fubon")
+_BARS_PH = ",".join("?" * len(BARS_SOURCES))
+_TAPE_PH = ",".join("?" * len(TAPE_SOURCES))
 # Master flag; legacy aliases still accepted (first present wins).
 ENV_FLAGS = (
     "RUN_EXPERT_POOL_EMAIL",
@@ -676,11 +681,11 @@ def list_recent_trading_days(conn, *, stock_id: str, n: int) -> list[str]:
     rows = conn.execute(
         """
         SELECT DISTINCT trade_date FROM stock_daily_bars
-        WHERE source = ? AND stock_id = ? AND trade_date <= ? AND close > 0
+        WHERE source IN (%s) AND stock_id = ? AND trade_date <= ? AND close > 0
         ORDER BY trade_date DESC
         LIMIT ?
-        """,
-        (SOURCE, stock_id, today.isoformat(), max(1, n)),
+        """ % _BARS_PH,
+        (*BARS_SOURCES, stock_id, today.isoformat(), max(1, n)),
     ).fetchall()
     days = [str(r[0]) for r in rows]
 
@@ -697,10 +702,70 @@ def list_recent_trading_days(conn, *, stock_id: str, n: int) -> list[str]:
     return days[: max(1, n)]
 
 
-def refresh_stock_tape(conn, stock_id: str, days: list[str], *, delay: float = 0.5) -> dict[str, int]:
-    from finmind_client import fetch_taiwan_stock_trading_daily_report
+_FUBON = {"tape": None, "bars_checked": set()}
+
+
+def _panel_branches() -> dict[str, str]:
+    """專家池全部核心分點(代號 → 名稱);富邦依分點頁只需抓這些。"""
+    out: dict[str, str] = {}
+    for spec in POOLS.values():
+        out.update(spec.core)
+    return out
+
+
+def _fubon_tape():
+    from fubon_branch_tape import FubonTape
+
+    if _FUBON["tape"] is None:
+        _FUBON["tape"] = FubonTape(_panel_branches())
+    return _FUBON["tape"]
+
+
+def _refresh_stock_tape_fubon(conn, stock_id: str, days: list[str]) -> dict[str, int]:
+    """FinMind 停用後的補檔:個股前 15 名分點 + 專家核心分點(依分點頁)→ source='fubon'。
+
+    回傳語意同 FinMind 版:列數;-1 表示該日富邦尚無資料或寫入失敗。已有 FinMind 全分點列的日子不重寫(避免兩來源並存)。
+    """
+    from official_bars import ensure_official_bars
     from stock_db import upsert_stock_broker_branch_daily
 
+    tape = _fubon_tape()
+    counts: dict[str, int] = {}
+    for day in days:
+        if conn.execute(
+            "SELECT 1 FROM stock_broker_branch_daily WHERE trade_date=? AND stock_id=? AND source='finmind' LIMIT 1",
+            (day, stock_id),
+        ).fetchone():
+            counts[day] = 0
+            continue
+        if day not in _FUBON["bars_checked"]:                  # 專家池金額要當日收盤價:先確保官方日線(每日一次)
+            _FUBON["bars_checked"].add(day)
+            try:
+                ensure_official_bars(day)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  official bars {day}: FAIL {exc}")
+        try:
+            if not tape.day_ready(day):
+                print(f"  refresh {stock_id} {day}: FAIL 富邦分點頁尚無資料")
+                counts[day] = -1
+                continue
+            rows = tape.rows_for_stock(stock_id, day, close_on(conn, stock_id, day))
+            n = upsert_stock_broker_branch_daily(conn, rows)
+        except Exception as exc:  # noqa: BLE001 — 網路/DB 鎖
+            print(f"  refresh {stock_id} {day}: FAIL {exc}")
+            counts[day] = -1
+            continue
+        print(f"  refresh {stock_id} {day}: rows={n} traders={len(rows)} (fubon)")
+        counts[day] = n
+    return counts
+
+
+def refresh_stock_tape(conn, stock_id: str, days: list[str], *, delay: float = 0.5) -> dict[str, int]:
+    from finmind_client import fetch_taiwan_stock_trading_daily_report, finmind_enabled
+    from stock_db import upsert_stock_broker_branch_daily
+
+    if not finmind_enabled():
+        return _refresh_stock_tape_fubon(conn, stock_id, days)
     counts: dict[str, int] = {}
     for day in days:
         try:
@@ -731,9 +796,11 @@ def close_on(conn, stock_id: str, trade_date: str) -> float | None:
     row = conn.execute(
         """
         SELECT close FROM stock_daily_bars
-        WHERE stock_id = ? AND trade_date = ? AND source = ? AND close > 0
-        """,
-        (stock_id, trade_date, SOURCE),
+        WHERE stock_id = ? AND trade_date = ? AND source IN (%s) AND close > 0
+        ORDER BY CASE source WHEN 'finmind' THEN 0 ELSE 1 END
+        LIMIT 1
+        """ % _BARS_PH,
+        (stock_id, trade_date, *BARS_SOURCES),
     ).fetchone()
     return float(row[0]) if row else None
 
@@ -763,12 +830,13 @@ def closes_through(conn, stock_id: str, asof: str, *, n: int = 5) -> list[float]
     """Last n closes on or before asof (oldest→newest)."""
     rows = conn.execute(
         """
-        SELECT close FROM stock_daily_bars
-        WHERE stock_id = ? AND source = ? AND trade_date <= ? AND close > 0
+        SELECT MAX(close) FROM stock_daily_bars
+        WHERE stock_id = ? AND source IN (%s) AND trade_date <= ? AND close > 0
+        GROUP BY trade_date
         ORDER BY trade_date DESC
         LIMIT ?
-        """,
-        (stock_id, SOURCE, asof, max(1, n)),
+        """ % _BARS_PH,
+        (stock_id, *BARS_SOURCES, asof, max(1, n)),
     ).fetchall()
     return [float(r[0]) for r in reversed(rows)]
 
@@ -836,11 +904,11 @@ def core_nets_on(conn, spec: PoolSpec, trade_date: str) -> list[dict]:
         f"""
         SELECT securities_trader_id, securities_trader, net, buy, sell
         FROM stock_broker_branch_daily
-        WHERE stock_id = ? AND trade_date = ? AND source = ?
+        WHERE stock_id = ? AND trade_date = ? AND source IN ({_TAPE_PH})
           AND securities_trader_id IN ({placeholders})
           AND net > 0
         """,
-        (spec.stock_id, trade_date, SOURCE, *spec.core.keys()),
+        (spec.stock_id, trade_date, *TAPE_SOURCES, *spec.core.keys()),
     ).fetchall()
     out: list[dict] = []
     for r in rows:
@@ -869,11 +937,11 @@ def core_sell_nets_on(conn, spec: PoolSpec, trade_date: str) -> list[dict]:
         f"""
         SELECT securities_trader_id, securities_trader, net, buy, sell
         FROM stock_broker_branch_daily
-        WHERE stock_id = ? AND trade_date = ? AND source = ?
+        WHERE stock_id = ? AND trade_date = ? AND source IN ({_TAPE_PH})
           AND securities_trader_id IN ({placeholders})
           AND net < 0
         """,
-        (spec.stock_id, trade_date, SOURCE, *spec.core.keys()),
+        (spec.stock_id, trade_date, *TAPE_SOURCES, *spec.core.keys()),
     ).fetchall()
     out: list[dict] = []
     for r in rows:
@@ -935,11 +1003,11 @@ def prev_trading_day(conn, stock_id: str, trade_date: str) -> str | None:
     row = conn.execute(
         """
         SELECT trade_date FROM stock_daily_bars
-        WHERE stock_id = ? AND source = ? AND trade_date < ? AND close > 0
+        WHERE stock_id = ? AND source IN (%s) AND trade_date < ? AND close > 0
         ORDER BY trade_date DESC
         LIMIT 1
-        """,
-        (stock_id, SOURCE, trade_date),
+        """ % _BARS_PH,
+        (stock_id, *BARS_SOURCES, trade_date),
     ).fetchone()
     return str(row[0]) if row else None
 
@@ -1181,10 +1249,10 @@ def resolve_asof(conn, spec: PoolSpec, explicit: str) -> str | None:
     row = conn.execute(
         f"""
         SELECT MAX(trade_date) FROM stock_broker_branch_daily
-        WHERE stock_id = ? AND source = ?
+        WHERE stock_id = ? AND source IN ({_TAPE_PH})
           AND securities_trader_id IN ({placeholders})
         """,
-        (spec.stock_id, SOURCE, *spec.core.keys()),
+        (spec.stock_id, *TAPE_SOURCES, *spec.core.keys()),
     ).fetchone()
     return str(row[0]) if row and row[0] else None
 
@@ -1486,14 +1554,14 @@ def simulate_signal_emails(
         digest_path = out_dir / f"digest_{asof.replace('-', '')}.md"
         # data coverage note
         tape_n = conn.execute(
-            "SELECT COUNT(*) FROM stock_broker_branch_daily WHERE source=? AND trade_date=?",
-            (SOURCE, asof),
+            "SELECT COUNT(*) FROM stock_broker_branch_daily WHERE source IN (%s) AND trade_date=?" % _TAPE_PH,
+            (*TAPE_SOURCES, asof),
         ).fetchone()[0]
         dlines = [
             f"# 達標日報模擬 · {asof}",
             "",
             f"主訊號觸發：**{len(fires)}** / {len(POOLS)} 檔",
-            f"當日 finmind 分點列數：`{tape_n}`"
+            f"當日分點列數(finmind+fubon)：`{tape_n}`"
             + (" · ⚠️ tape 明顯不全，達標數可能低估" if tape_n < 100_000 else ""),
             "",
             "| 分級 | 代號 | 名稱 | Subject |",

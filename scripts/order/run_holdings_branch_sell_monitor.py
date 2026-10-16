@@ -208,10 +208,10 @@ def branch_nets_on(
         f"""
         SELECT securities_trader_id, securities_trader, net, buy, sell
         FROM stock_broker_branch_daily
-        WHERE stock_id = ? AND trade_date = ? AND source = ?
+        WHERE stock_id = ? AND trade_date = ? AND source IN ({",".join("?" * len(pool.TAPE_SOURCES))})
           AND securities_trader_id IN ({placeholders})
         """,
-        (stock_id, trade_date, SOURCE, *branch_map.keys()),
+        (stock_id, trade_date, *pool.TAPE_SOURCES, *branch_map.keys()),
     ).fetchall()
     out: list[dict] = []
     for r in rows:
@@ -279,9 +279,9 @@ def resolve_sid_asof(conn, stock_id: str, explicit: str) -> str | None:
     row = conn.execute(
         """
         SELECT MAX(trade_date) FROM stock_broker_branch_daily
-        WHERE stock_id = ? AND source = ?
-        """,
-        (stock_id, SOURCE),
+        WHERE stock_id = ? AND source IN (%s)
+        """ % ",".join("?" * len(pool.TAPE_SOURCES)),
+        (stock_id, *pool.TAPE_SOURCES),
     ).fetchone()
     return str(row[0]) if row and row[0] else None
 
@@ -297,8 +297,8 @@ def resolve_global_asof(conn, explicit: str, stock_ids: list[str]) -> str | None
     if best:
         return best
     row = conn.execute(
-        "SELECT MAX(trade_date) FROM stock_broker_branch_daily WHERE source = ?",
-        (SOURCE,),
+        "SELECT MAX(trade_date) FROM stock_broker_branch_daily WHERE source IN (%s)" % ",".join("?" * len(pool.TAPE_SOURCES)),
+        tuple(pool.TAPE_SOURCES),
     ).fetchone()
     return str(row[0]) if row and row[0] else None
 

@@ -98,11 +98,11 @@ def top10_nets_on(
         f"""
         SELECT securities_trader_id, securities_trader, net
         FROM stock_broker_branch_daily
-        WHERE stock_id = ? AND trade_date = ? AND source = ?
+        WHERE stock_id = ? AND trade_date = ? AND source IN ('finmind', 'fubon')
           AND securities_trader_id IN ({placeholders})
           AND net > 0
         """,
-        (stock_id, trade_date, SOURCE, *TOP10_TIDS),
+        (stock_id, trade_date, *TOP10_TIDS),
     ).fetchall()
     out: list[dict] = []
     for r in rows:
