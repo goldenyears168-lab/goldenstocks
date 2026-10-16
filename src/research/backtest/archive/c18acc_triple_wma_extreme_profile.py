@@ -32,6 +32,9 @@ from rrg_universe_intraday_panel import (
     build_dual_wma_intraday_trajectories,
     intraday_poll_minutes,
 )
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    _frame_idx_for_minute,
+)
 
 ENTRY_NUMERIC = (
     "w20_rv",
@@ -46,21 +49,6 @@ ENTRY_NUMERIC = (
     "w5_w20_rv_spread",
     "spread_dist",
 )
-
-
-def _frame_idx_for_minute(
-    frames: list[dict[str, str]],
-    trade_date: str,
-    minute: str | None,
-) -> int:
-    if minute:
-        for i, f in enumerate(frames):
-            if f["date"] == trade_date and f["minute"] == minute:
-                return i
-        for i, f in enumerate(frames):
-            if f["date"] == trade_date and f["minute"] >= minute:
-                return i
-    return _entry_frame_idx(frames, trade_date)
 
 
 def _snapshot_from_point(point: dict[str, Any] | None, *, prefix: str) -> dict[str, Any]:

@@ -28,6 +28,11 @@ from rrg_universe_intraday_panel import (
     WMA_ULTRA_LENGTH,
     build_dual_wma_intraday_trajectories,
 )
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    _mv,
+    _q,
+    _rv,
+)
 
 def micro_leg_key(length: int) -> str:
     return f"w{length}"
@@ -41,22 +46,6 @@ PatternId = Literal[
     "triple_w3_rv_high_low",
     "lead_pullback_buy",
 ]
-
-
-def _q(point: dict[str, Any], leg: str) -> str | None:
-    leg_d = point.get(leg) or {}
-    q = leg_d.get("quadrant")
-    return str(q) if q else None
-
-
-def _rv(point: dict[str, Any], leg: str) -> float | None:
-    v = (point.get(leg) or {}).get("rs_ratio")
-    return float(v) if v is not None else None
-
-
-def _mv(point: dict[str, Any], leg: str) -> float | None:
-    v = (point.get(leg) or {}).get("rs_momentum")
-    return float(v) if v is not None else None
 
 
 def _w2_key() -> str:

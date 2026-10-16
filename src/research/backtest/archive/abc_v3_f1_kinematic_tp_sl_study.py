@@ -18,165 +18,21 @@ from research.backtest.archive.c18acc_kinematic_gap_rv3_study import (
     _summarize_portfolio,
 )
 from research.backtest.w3_rv_hl_winner_profile import _mean
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    NEVER_SL,
+    RvMode,
+    Snap,
+    StopLossParams,
+    TakeProfitParams,
+    TpSlCombo,
+    _gap_params_from_tp,
+    _rv_snap_ok,
+    _tp_snap_ok,
+)
 
 SCHEMA = "abc_v3_f1_kinematic_tp_sl-v1"
 
 Leg = dict[str, Any]
-Snap = dict[str, Any]
-RvMode = Literal["none", "drv", "poll_drop", "drv_and_poll", "drv_or_poll"]
-
-
-@dataclass(frozen=True)
-class TakeProfitParams:
-    tp_mode: Literal["gap_rv", "rv_only", "trail_giveback"] = "gap_rv"
-    gap_logic: Literal["or", "w20_w5_only"] = "or"
-    gw5_min: float = 6.0
-    gw3_min: float = 2.0
-    gap_expand_min: float = 0.0
-    rv_leg: Literal["w3", "w5"] = "w3"
-    rv_mode: RvMode = "poll_drop"
-    drv_min: float = 0.35
-    min_ret_pct: float = 8.0
-    trail_giveback_pp: float = 2.0
-    consecutive: int = 1
-
-    @property
-    def variant_id(self) -> str:
-        if self.tp_mode == "trail_giveback":
-            return (
-                f"TP_trail_gb{self.trail_giveback_pp:g}_r{int(self.min_ret_pct)}"
-                f"_c{self.consecutive}"
-            )
-        if self.tp_mode == "rv_only":
-            return (
-                f"TP_rv{self.rv_leg}{self.rv_mode}_d{int(self.drv_min*100)}"
-                f"_r{int(self.min_ret_pct)}_c{self.consecutive}"
-            )
-        return (
-            f"TP_{self.gap_logic}_g5{int(self.gw5_min)}_g3{self.gw3_min:g}"
-            f"_rv{self.rv_leg}{self.rv_mode}_d{int(self.drv_min*100)}"
-            f"_r{int(self.min_ret_pct)}_c{self.consecutive}"
-        )
-
-
-@dataclass(frozen=True)
-class StopLossParams:
-    sl_mode: Literal["kinematic", "underwater"] = "kinematic"
-    dmv_w5_min: float = 0.35
-    dmv_w3_min: float = 0.0
-    drv_w5_min: float = 0.25
-    drv_w3_min: float = 0.0
-    rv_leg: Literal["w3", "w5", "both"] = "w5"
-    rv_mode: RvMode = "drv"
-    require_w5_lagging: bool = False
-    require_w3_lagging: bool = False
-    gap_w20_w5_collapse: float = 0.0
-    arm_ret_max_pct: float = 5.0
-    consecutive: int = 1
-
-    @property
-    def variant_id(self) -> str:
-        lag = ""
-        if self.require_w5_lagging:
-            lag += "w5L"
-        if self.require_w3_lagging:
-            lag += "w3L"
-        return (
-            f"SL_{self.sl_mode}_dmv5{int(self.dmv_w5_min*100)}_drv5{int(self.drv_w5_min*100)}"
-            f"_rv{self.rv_leg}{self.rv_mode}_{lag or 'x'}"
-            f"_arm{int(self.arm_ret_max_pct)}_c{self.consecutive}"
-        )
-
-
-@dataclass(frozen=True)
-class TpSlCombo:
-    tp: TakeProfitParams
-    sl: StopLossParams
-
-    @property
-    def variant_id(self) -> str:
-        return f"{self.tp.variant_id}__{self.sl.variant_id}"
-
-
-def _gap_params_from_tp(tp: TakeProfitParams) -> GapRv3Params:
-    return GapRv3Params(
-        gap_logic="or" if tp.gap_logic == "or" else "w20_w5_only",
-        gw5_min=tp.gw5_min,
-        gw3_min=tp.gw3_min,
-        gap_expand_min=tp.gap_expand_min,
-        rv3_mode="none",
-        drv3_min=0.0,
-        dmv3_min=0.0,
-        min_ret_pct=0.0,
-        require_pullback=False,
-        dist_min=0.0,
-        consecutive=1,
-    )
-
-
-def _rv_snap_ok(
-    snap: Snap,
-    prev: Snap | None,
-    entry: Snap,
-    *,
-    leg: Literal["w3", "w5"],
-    mode: RvMode,
-    drv_min: float,
-) -> bool:
-    if mode == "none":
-        return True
-    key_drv = f"drv_{leg}"
-    key_rv = f"{leg}_rv"
-    drv = snap.get(key_drv)
-    rv = snap.get(key_rv)
-    prev_rv = prev.get(key_rv) if prev else None
-    ent_rv = entry.get(key_rv)
-    poll_drop = (
-        rv is not None
-        and prev_rv is not None
-        and float(rv) < float(prev_rv) - 1e-9
-    )
-    drv_bad = drv is not None and float(drv) <= -drv_min + 1e-9
-    if mode == "drv":
-        return drv_bad
-    if mode == "poll_drop":
-        return poll_drop
-    if mode == "drv_and_poll":
-        return drv_bad and poll_drop
-    if mode == "drv_or_poll":
-        return drv_bad or poll_drop
-    if mode == "below_entry":
-        return (
-            rv is not None
-            and ent_rv is not None
-            and float(rv) < float(ent_rv) - 1e-9
-        )
-    return False
-
-
-def _tp_snap_ok(
-    snap: Snap,
-    prev: Snap | None,
-    entry: Snap,
-    tp: TakeProfitParams,
-    *,
-    running_peak_ret: float,
-) -> bool:
-    ret = float(snap.get("ret_from_entry_pct") or 0)
-    if ret < tp.min_ret_pct - 1e-9:
-        return False
-    if tp.tp_mode == "trail_giveback":
-        return ret <= running_peak_ret - tp.trail_giveback_pp + 1e-9
-    if tp.tp_mode == "rv_only":
-        return _rv_snap_ok(
-            snap, prev, entry, leg=tp.rv_leg, mode=tp.rv_mode, drv_min=tp.drv_min
-        )
-    gp = _gap_params_from_tp(tp)
-    if not _gap_ok(snap, entry, gp):
-        return False
-    return _rv_snap_ok(
-        snap, prev, entry, leg=tp.rv_leg, mode=tp.rv_mode, drv_min=tp.drv_min
-    )
 
 
 def _sl_snap_ok(snap: Snap, prev: Snap | None, entry: Snap, sl: StopLossParams) -> bool:
@@ -384,12 +240,6 @@ def _sl_grid() -> list[StopLossParams]:
     return out
 
 
-NEVER_SL = StopLossParams(
-    dmv_w5_min=0.0,
-    drv_w5_min=99.0,
-    arm_ret_max_pct=-999.0,
-    consecutive=99,
-)
 NEVER_TP = TakeProfitParams(
     gw5_min=999.0,
     gw3_min=999.0,

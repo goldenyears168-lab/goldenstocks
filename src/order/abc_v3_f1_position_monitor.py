@@ -122,11 +122,7 @@ def _pyramid_already_done(ledger: AbcV3F1Ledger, parent_cid: str) -> bool:
 
 
 def champion_tp_combo_from_config(cfg: ChampionTpMonitorConfig) -> Any:
-    from research.backtest.archive.abc_v3_f1_kinematic_tp_sl_study import (
-        NEVER_SL,
-        TakeProfitParams,
-        TpSlCombo,
-    )
+    from abc_v3_f1_kinematics import NEVER_SL, TakeProfitParams, TpSlCombo
 
     tp = TakeProfitParams(
         gw5_min=cfg.gw5_min,
@@ -148,7 +144,7 @@ def evaluate_champion_tp_on_timeline(
     """Return (fired, exit_snap_index) on a partial timeline ending at current poll."""
     if len(timeline) < 2:
         return False, None
-    from research.backtest.archive.abc_v3_f1_kinematic_tp_sl_study import _tp_snap_ok
+    from abc_v3_f1_kinematics import _tp_snap_ok
 
     if combo is None:
         combo = champion_tp_combo_from_config(cfg or load_champion_tp_monitor_config())
@@ -178,10 +174,7 @@ def evaluate_pyramid_rebound_on_timeline(
     """True when the *last* snap in timeline is the first underwater_rebound add point."""
     if len(timeline) < 3:
         return False, None
-    from research.backtest.abc_v3_f1_structural_pyramid_study import (
-        default_pyramid_conditions,
-        find_add_idx,
-    )
+    from abc_v3_f1_kinematics import default_pyramid_conditions, find_add_idx
 
     cond = next(c for c in default_pyramid_conditions() if c.id == "underwater_rebound")
     # Backtest legs end with an exit snap; find_add_idx excludes the last index.
@@ -206,9 +199,12 @@ def build_position_timeline_to_poll(
 ) -> list[dict[str, Any]] | None:
     """Build kinematic timeline from entry through current poll (PIT-safe)."""
     from market_benchmark import load_benchmark_close
-    from research.backtest.archive.c18acc_kinematic_timeline_cache import _build_kinematic_timeline
-    from research.backtest.archive.c18acc_triple_wma_extreme_profile import _frame_idx_for_minute
-    from research.backtest.dual_wma_signal_backtest import _build_stock_frame_maps, _price_at
+    from abc_v3_f1_kinematics import (
+        _build_kinematic_timeline,
+        _build_stock_frame_maps,
+        _frame_idx_for_minute,
+        _price_at,
+    )
     from price_panels import load_price_panels
     from rrg_universe_intraday_panel import (
         WMA_MICRO_LENGTH,
