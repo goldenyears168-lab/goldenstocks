@@ -362,8 +362,7 @@ def _overlay_svg(S, w=860, h=250):
     top, bot = pad_t, h - pad_b
     py = lambda v: top + (hi - v) / (hi - lo) * (bot - top)  # noqa: E731
     mid = (top + bot) / 2
-    up = (S["close"] or 0) >= (S["open"] or 0)
-    pcol = "#ff7b72" if up else "#3fb950"
+    pcol = "#e6edf3"      # 價格線用中性白:大戶線是紅色(與漲同色),價格線再依漲跌上紅綠會與大戶線混淆
     o = [f"<svg viewBox='0 0 {w} {h}' width='100%' style='max-width:{w}px;display:block;background:#0d1117;border:1px solid #30363d;border-radius:6px' class='ffsvg'"]
     pts = []
     cum = S["cum"]
