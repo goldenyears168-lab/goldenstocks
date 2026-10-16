@@ -18,7 +18,7 @@ import argparse, sqlite3, statistics, sys
 from pathlib import Path
 import pandas as pd
 import scipy.stats as ss
-ROOT = Path(__file__).resolve().parents[2]; sys.path.insert(0, str(ROOT / "src"))
+ROOT = Path(__file__).resolve().parents[3]; sys.path.insert(0, str(ROOT / "src"))
 from stock_db import DEFAULT_DB_PATH  # noqa: E402
 
 CACHE = ROOT / "reports/research/chip-overlays/cache/holding_shares_per_futures_universe.csv"

@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 CACHE = ROOT / "reports/research/chip-street-canon/cache"
 REPORT_DIR = ROOT / "reports/research/chip-street-canon"
 

@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 import pandas as pd
-ROOT = Path(__file__).resolve().parents[2]; sys.path.insert(0, str(ROOT / "src"))
+ROOT = Path(__file__).resolve().parents[3]; sys.path.insert(0, str(ROOT / "src"))
 from finmind_client import fetch_finmind, finmind_token  # noqa: E402
 
 OUT = ROOT / "reports/research/chip-overlays/cache"

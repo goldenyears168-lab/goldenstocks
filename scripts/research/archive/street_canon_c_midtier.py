@@ -36,7 +36,7 @@ import pandas as pd
 import statsmodels.api as sm
 from scipy import stats as sps
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 HOLD_CSV = PROJECT_ROOT / "reports/research/chip-overlays/cache/holding_shares_per_futures_universe.csv"
 PRICE_PKL = PROJECT_ROOT / "reports/research/chip-street-canon/cache/price_panel.pkl"
 REPORT_DIR = PROJECT_ROOT / "reports/research/chip-street-canon"

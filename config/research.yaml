@@ -251,8 +251,8 @@ topics:
     layer: research
     report_dir: reports/research/chip-overlays
     run_scripts:
-      - scripts/research/cache_holding_shares_futures_universe.py
-      - scripts/research/tdcc_big_holder_forward_test.py
+      - scripts/research/archive/cache_holding_shares_futures_universe.py
+      - scripts/research/archive/tdcc_big_holder_forward_test.py
     hypotheses:
       - id: H-TDCC-1
         statement: >
@@ -337,9 +337,9 @@ topics:
     layer: research
     report_dir: reports/research/chip-street-canon
     run_scripts:
-      - scripts/research/street_canon_a_conc_momentum.py
-      - scripts/research/street_canon_b_cost_line.py
-      - scripts/research/street_canon_c_midtier.py
+      - scripts/research/archive/street_canon_a_conc_momentum.py
+      - scripts/research/archive/street_canon_b_cost_line.py
+      - scripts/research/archive/street_canon_c_midtier.py
     context: >
       2026-08-27 檢視網路主流籌碼分析（籌碼K線六大指標體系：主力買賣超、買賣家數差、
       籌碼集中度、千張大戶、佔股本比重、主力成本線）後逐條對照本 repo 已測結果：
@@ -1677,9 +1677,9 @@ topics:
     phase: rejected
     layer: research
     run_scripts:
-      - scripts/research/run_foreign_branch_copytrade_compare.py
-      - scripts/research/run_foreign_branch_copytrade_robustness.py
-      - scripts/research/run_foreign_branch_2330_decomposition.py
+      - scripts/research/archive/run_foreign_branch_copytrade_compare.py
+      - scripts/research/archive/run_foreign_branch_copytrade_robustness.py
+      - scripts/research/archive/run_foreign_branch_2330_decomposition.py
     report_dir: reports/research/foreign-branch-copytrade
     artifact: reports/research/foreign-branch-copytrade/20260817_foreign_branch_copytrade_compare.md
     hypotheses:
@@ -10577,10 +10577,10 @@ topics:
     phase: rejected
     split_spec: default_is_oos
     run_scripts:
-      - scripts/research/umc_branch_overnight_signal_sweep.py
-      - scripts/research/umc_branch_market_calibrated_sweep.py
-      - scripts/research/branch_overnight_crosssection_sweep.py
-      - scripts/research/branch_netdisp_multihorizon_validation.py
+      - scripts/research/archive/umc_branch_overnight_signal_sweep.py
+      - scripts/research/archive/umc_branch_market_calibrated_sweep.py
+      - scripts/research/archive/branch_overnight_crosssection_sweep.py
+      - scripts/research/archive/branch_netdisp_multihorizon_validation.py
       - scripts/research/umc_night_forward_recorder.py
     report_dir: reports/research/branch-footprint-screen
     hypotheses:
