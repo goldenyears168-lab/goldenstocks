@@ -1020,9 +1020,12 @@ jobs:
     order_capable: false
     status: enabled
     re_enabled_since: "2026-08-18"
-    schedule: "weekdays 20:40（Supabase 推送已關閉，只跑本地 tape/panel）"
+    schedule: "weekdays 20:40（只跑本地 tape/panel/日線/Stage 熱力圖）"
     description: >
-      ops.snapshots / sleeve / holdings sync to Supabase for the website。
+      **2026-10：Supabase ops console 整條移除**——launcher 內三個推送步驟
+      （write_ops_console_snapshot／write_ops_sleeve_status／run_ops_holdings_sync）與
+      夜間摘要信（send_ops_evening_summary）已刪，只留本地資料刷新。以下為歷史記錄。
+      （舊）ops.snapshots / sleeve / holdings sync to Supabase for the website。
       **2026-08-18 重新 enable，但 Supabase 推送維持關閉**（`.env` 的
       `RUN_OPS_CONSOLE_PUSH=0`，launcher 內三個推送步驟會 SKIP）。
       恢復原因：2026-08-17 整支停掉後實測 8 席 by-trader 全市場 tape 當天就崩
@@ -1124,17 +1127,17 @@ cloud_routines:
   - name: daily-foreign-rotation-commentary
     schedule: "weekdays 21:30 Asia/Taipei"
     order_capable: false
-    description: "Reads Supabase rotation/risk snapshots + web news, writes AI market commentary back to ops_snapshots (kind=commentary) for the website"
+    description: "[已停用 2026-08-01 · Supabase 已移除，建議刪除此 routine] Reads Supabase rotation/risk snapshots + web news, writes AI market commentary back to ops_snapshots (kind=commentary) for the website"
 
   - name: expert-pool-branch-health-check
     schedule: "weekdays 21:00 Asia/Taipei"
     order_capable: false
-    description: "Read-only data-freshness health check on ops.* (holdings/snapshots/digests/live_ta), emails a report. No local/git access — Supabase MCP + Gmail MCP only."
+    description: "[已停用 2026-08-01 · Supabase 已移除，建議刪除此 routine] Read-only data-freshness health check on ops.* (holdings/snapshots/digests/live_ta), emails a report. No local/git access — Supabase MCP + Gmail MCP only."
 
   - name: detach-gate-risk-health-check
     schedule: "daily 21:30 Asia/Taipei (found 2026-08-01, created 2026-07-30, previously undocumented)"
     order_capable: false
-    description: "Read-only freshness check on ops_snapshots kind=risk (Detach Gate payload) — catches the specific 'outer asof advances but inner as_of/session_date stuck' stale-poller failure mode seen 2026-07-28~30. Only pushes a notification on 🔴 (stuck); stays quiet on 🟢/🟡."
+    description: "[已停用 2026-08-01 · Supabase 已移除，建議刪除此 routine] Read-only freshness check on ops_snapshots kind=risk (Detach Gate payload) — catches the specific 'outer asof advances but inner as_of/session_date stuck' stale-poller failure mode seen 2026-07-28~30. Only pushes a notification on 🔴 (stuck); stays quiet on 🟢/🟡."
 
   - name: 台股融資盤後監測
     schedule: "daily ~21:40 Asia/Taipei (found 2026-08-01, created 2026-07-30, previously undocumented)"

@@ -88,51 +88,6 @@ def _webhook_send(subject: str, body: str, *, success: bool) -> None:
     resp.raise_for_status()
 
 
-def _maybe_ops_digest_alert(subject: str, body: str) -> None:
-    """Parallel Inbox wall for send_alert (evening watches, thermo, …).
-
-    Gated by RUN_OPS_DIGEST_SYNC (default on). Never raises — email path wins.
-    job_notify / notify_job_result already walls separately via job: keys.
-    """
-    if os.environ.get("RUN_OPS_DIGEST_SYNC", "1").strip() in ("0", "false", "False"):
-        return
-    try:
-        from ops_console_sync import supabase_ops_configured, upsert_digest
-    except Exception as exc:  # noqa: BLE001
-        import sys
-
-        print(f"ops digest import skip: {exc}", file=sys.stderr)
-        return
-    if not supabase_ops_configured():
-        return
-
-    day = datetime.now(_TPE).date().isoformat()
-    digest_key = f"alert:{hashlib.sha1(f'{day}|{subject}'.encode()).hexdigest()[:16]}"
-    text = (body or "").strip()
-    if len(text) > 20000:
-        text = text[:20000] + "\n\n…(truncated)"
-    low = subject.lower()
-    severity = "info"
-    if any(tok in low for tok in ("失敗", "fail", "error", "拒單", "w0_hard", "有訊號")):
-        severity = "warn"
-    if "red_latched" in low or ("detach" in low and "red" in low):
-        severity = "red"
-    try:
-        upsert_digest(
-            digest_key=digest_key,
-            body_md=text or f"# {subject}\n",
-            subject=subject,
-            channel="email",
-            severity=severity,
-            meta={"source": "send_alert"},
-        )
-        print(f"ops.digests ok · {digest_key}")
-    except Exception as exc:  # noqa: BLE001
-        import sys
-
-        print(f"ops digest skip: {exc}", file=sys.stderr)
-
-
 def send_alert(
     subject: str,
     body: str,
@@ -144,12 +99,8 @@ def send_alert(
     """短訊息通知（Gmail SMTP 或 NOTIFY_WEBHOOK_URL）。
 
     html_body / inline_images / to 僅走 SMTP；若同時設了 webhook 且需要圖文，改走 SMTP.
-    When RUN_OPS_DIGEST_SYNC=1 and ops credentials exist, also upsert ops.digests
-    (before SMTP so a mail failure can still leave an Inbox trail).
-
-    RUN_ALERT_EMAIL=0 → skip SMTP/webhook（仍可上牆）；用於夜間觀測波收斂成 20:40 一封摘要。
+    RUN_ALERT_EMAIL=0 → skip SMTP/webhook。
     """
-    _maybe_ops_digest_alert(subject, body)
     if _env("RUN_ALERT_EMAIL") in ("0", "false", "False"):
         print(f"email skipped: RUN_ALERT_EMAIL=0 · subject={subject}")
         return

@@ -13,7 +13,6 @@
    "c18acc_extension_screen -> research.backtest.rrg_mono_score_swap_c",
    "minervini_sepa_daily -> research.backtest.broad_momentum_tv_backtest",
    "minervini_sepa_daily -> research.backtest.finpilot_local_backtest",
-   "ops_live_ta -> research.intraday_direction_thermometer",
    "rrg_improving_watch -> research.backtest.rrg_improving_lifecycle_backtest",
    "rrg_improving_watch -> research.backtest.rrg_improving_s3rv_executable",
    "rrg_mono_swap_accel_daily_brief -> research.backtest.rrg_mono_score_swap_c",
@@ -40,6 +39,6 @@
    "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
   ]
  },
- "lazy_only_edges": 225,
+ "lazy_only_edges": 218,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# launchd / 手動：private ops console 夜間上牆
-# 週一至五 20:40（晚於 20:35 second-disp）· snapshots + sleeve + holdings
+# launchd / 手動：夜間本地資料刷新（by-trader 全市場分點 tape · 溫度計面板 · 個股日線 · Stage 熱力圖）
+# 週一至五 20:40（晚於 20:35 second-disp）。2026-10 起不再推 Supabase ops console。
 # 僅 mini 安裝；Book 不裝 live launchd。
 
 set -euo pipefail
@@ -28,13 +28,8 @@ if [[ -r "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/.env" ]]; then
   set -e
 fi
 
-# Digests parallel wall · default on if unset
-export RUN_OPS_DIGEST_SYNC="${RUN_OPS_DIGEST_SYNC:-1}"
-# 本 job 尾端會寄「夜間一封摘要」；過程中勿被 wave 的 RUN_ALERT_EMAIL=0 影響
-unset RUN_ALERT_EMAIL
 
 PY="${ROOT}/.venv/bin/python"
-PY_FUBON="${ROOT}/.venv-fubon/bin/python"
 EXIT=0
 
 if [[ ! -x "${PY}" ]]; then
@@ -59,7 +54,7 @@ else
   fi
 
   # 2026-07-30 新增：個股日線補齊（stock_heatmap watchlist），讓熱力圖讀到當日 EOD。
-  # 20:40 已收盤 → FinMind 有當日日線。非致命：失敗只記錄不中斷後續 snapshot 推送。
+  # 20:40 已收盤 → FinMind 有當日日線。非致命：失敗只記錄、不中斷後續步驟。
   set +e
   "${PY}" "${ROOT}/src/sync_stock_market_daily.py" \
     --stock-ids 3189,6147,2492,3653,6505 --sync-db --quiet \
@@ -72,7 +67,7 @@ else
   fi
 
   # 2026-07-27 新增：Weinstein Stage 熱力圖（30週當量·日更2日確認引擎），跑完才有
-  # 當天資料可以被下面的 write_ops_console_snapshot.py --kind stage_heatmap 讀到。
+  # 本地產物供研究使用。
   set +e
   "${PY}" "${ROOT}/scripts/research/build_stage_heatmap_1y.py" \
     2>&1 | tee -a "${RUN_LOG}"
@@ -83,65 +78,10 @@ else
     EXIT=1
   fi
 
-  # ⚠️ 2026-08-17：以下三步是**推 Supabase 公開 ops-console**，由 RUN_OPS_CONSOLE_PUSH
-  # 控制（預設 1；mini 上設 0，因為使用者已停用 Supabase 以省 Pro Plan $25/月）。
-  # **前面的步驟不能一起關掉**——這支 job 順帶是目前唯一還在跑的 by-trader 全市場
-  # 分點 tape 寫入者（backfill_broker_branch_tape.py --universe-json
-  # crash_thermometer_panel_universe.json，8 席：1650/1560/1480/1360/984K/1261/
-  # 5850/585c）。整支 job disable 掉會靜默斷掉那 8 席的每日 tape，見 job_registry。
-  if [[ "${RUN_OPS_CONSOLE_PUSH:-1}" == "0" ]]; then
-    echo "  SKIP ops-console push（RUN_OPS_CONSOLE_PUSH=0 · Supabase 已停用）"
-  else
-  set +e
-  "${PY}" "${ROOT}/scripts/order/write_ops_console_snapshot.py" \
-    --kind all --also-digest \
-    2>&1 | tee -a "${RUN_LOG}"
-  rc=${PIPESTATUS[0]}
-  set -e
-  if [[ "${rc}" -ne 0 ]]; then
-    echo "✗ write_ops_console_snapshot exit=${rc}"
-    EXIT=1
-  fi
-
-  set +e
-  "${PY}" "${ROOT}/scripts/order/write_ops_sleeve_status.py" \
-    2>&1 | tee -a "${RUN_LOG}"
-  rc=${PIPESTATUS[0]}
-  set -e
-  if [[ "${rc}" -ne 0 ]]; then
-    echo "✗ write_ops_sleeve_status exit=${rc}"
-    EXIT=1
-  fi
-  fi
-fi
-
-if [[ "${RUN_OPS_CONSOLE_PUSH:-1}" == "0" ]]; then
-  echo "  SKIP holdings sync（RUN_OPS_CONSOLE_PUSH=0 · Supabase 已停用）"
-elif [[ ! -x "${PY_FUBON}" ]]; then
-  echo "⚠ skip holdings sync · missing ${PY_FUBON}"
-else
-  set +e
-  "${PY_FUBON}" "${ROOT}/scripts/order/run_ops_holdings_sync.py" \
-    2>&1 | tee -a "${RUN_LOG}"
-  rc=${PIPESTATUS[0]}
-  set -e
-  if [[ "${rc}" -ne 0 ]]; then
-    echo "✗ run_ops_holdings_sync exit=${rc}"
-    EXIT=1
-  fi
-fi
-
-# 夜間一封摘要（強制 SMTP；波段細節已上牆）
-if [[ -x "${PY}" ]]; then
-  set +e
-  "${PY}" "${ROOT}/scripts/order/send_ops_evening_summary.py" \
-    2>&1 | tee -a "${RUN_LOG}"
-  rc=${PIPESTATUS[0]}
-  set -e
-  if [[ "${rc}" -ne 0 ]]; then
-    echo "✗ send_ops_evening_summary exit=${rc}"
-    EXIT=1
-  fi
+  # 2026-10：已移除「推 Supabase ops console」三步（write_ops_console_snapshot／
+  # write_ops_sleeve_status／run_ops_holdings_sync）與夜間摘要信（send_ops_evening_summary，
+  # 其內容讀自 Supabase）。**前面各步不可關**——本 job 是目前唯一還在跑的 by-trader 全市場
+  # 分點 tape 寫入者（8 席：1650/1560/1480/1360/984K/1261/5850/585c），見 job_registry。
 fi
 
 echo "=== launchd ops-console-evening-sync 結束 exit=${EXIT} $(date '+%Y-%m-%d %H:%M:%S') ==="

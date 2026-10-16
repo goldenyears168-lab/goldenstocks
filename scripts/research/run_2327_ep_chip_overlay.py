@@ -28,12 +28,41 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ops_live_ta import ft3_rel_20_from_ft_series  # noqa: E402
 from research.chen_chip.whale_events import load_whale_events  # noqa: E402
 from research.chip_relative.panel import (  # noqa: E402
     build_relative_chip_panel,
     load_market_ft_totals,
 )
+
+# 自 src/ops_live_ta.py 內嵌（該模組隨 ops 線於 2026-10 移除；邏輯逐字不變）
+_FT3_DAYS = 3
+_FT3_ABS_DAYS = 20
+_FT3_ABS_MIN_DAYS = 10
+
+
+def ft3_rel_20_from_ft_series(
+    ft_chrono: list[float],
+    *,
+    ft3_days: int = _FT3_DAYS,
+    abs_days: int = _FT3_ABS_DAYS,
+    min_abs_days: int = _FT3_ABS_MIN_DAYS,
+) -> tuple[float | None, float | None, float | None]:
+    """Return ``(ft3_rel_20, ft3, abs_ft_20)`` from chronological FT series.
+
+    ``ft3_rel_20`` = sum(last ``ft3_days``) / sum(|FT| over last ``abs_days``).
+    Requires at least ``ft3_days`` points and ``min_abs_days`` for the abs window.
+    """
+    if len(ft_chrono) < ft3_days:
+        return None, None, None
+    window = ft_chrono[-abs_days:] if len(ft_chrono) >= abs_days else ft_chrono
+    if len(window) < min_abs_days:
+        return None, None, None
+    ft3 = float(sum(ft_chrono[-ft3_days:]))
+    abs20 = float(sum(abs(x) for x in window))
+    if abs20 <= 0:
+        return None, ft3, abs20
+    return ft3 / abs20, ft3, abs20
+
 
 SID = "2327"
 OOS = "2026-01-01"

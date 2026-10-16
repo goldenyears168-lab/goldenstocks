@@ -26,17 +26,17 @@
 
 #### 20:00–20:40 · 夜間觀測波（當日結論）
 - `winbond-expert-pool-watch` 20:00 · `expert-pool-chart-digest` 20:05 · `holdings-branch-sell-monitor` 20:10 · `second-disp-expert-pool-watch` 20:35 · `ops-console-evening-sync` **20:40**
-- **郵件政策（2026-07-23）**：20:00–20:35 設 `RUN_ALERT_EMAIL=0`（細節只上 Inbox）；**20:40 寄一封夜間摘要**（`send_ops_evening_summary.py`，含當日溫度計重算）。重大／Detach RED 仍即時另寄。
+- **郵件政策（2026-10）**：夜間觀測波各 job 各自寄信（不再收斂成 20:40 一封摘要；該摘要讀自 Supabase，已移除）。重大／Detach RED 仍即時寄。
 
 #### 08:50–09:05 · 開盤前
-- `ops-live-ta-poll` 08:50 起 · `crash-thermometer-daily` 09:00（多半昨收、**只算不寄**）· Order 窗開啟
+- `crash-thermometer-daily` 09:00（多半昨收、**只算不寄**）· Order 窗開啟
 
 #### 盤中 · Order／觀測
 - live：`leading-dip-poll` · `songshan-copytrade-poll` · `expert-pool-staged-gate`（`rrg-c18acc-poll` 2026-08-04 退役）
 - 觀測：`detach-gate`（RED 仍即時寄）· `buy/sell-signal-radar`（不下單）· `ops-live-ta-poll`
 - 另有 `order-wake`（`install-order-launchd.sh` · 防睡眠）
 
-夜間對照：`winbond-expert-pool-watch`＝20:00 買方共識；`holdings-branch-sell-monitor`＝20:10 富邦持倉×專家淨賣＋跨池面板 K/N≥5000萬；`ops-console-evening-sync`＝20:40 重算大跌溫度計（當日 asof）→ snapshots／sleeve／holdings → `send_ops_evening_summary.py` 一封摘要。
+夜間對照：`winbond-expert-pool-watch`＝20:00 買方共識；`holdings-branch-sell-monitor`＝20:10 富邦持倉×專家淨賣＋跨池面板 K/N≥5000萬；`ops-console-evening-sync`＝20:40 本地資料刷新（分點 tape／溫度計面板／個股日線／Stage 熱力圖）。
 
 溫度計時序：09:00 多半**昨收、不寄信**；**當日讀數＋郵件以 20:40 為準**。
 
@@ -56,23 +56,11 @@
 
 `1630收盤雷達.command` · `2000週日補庫.command`
 
-## Private ops console（好時量化 · Supabase `ops.*`）
+## Private ops console（已移除 · 2026-10）
 
-前端：https://haoshi-quant-ops.pages.dev · 封存索引見 [`archives/PUBLIC_SITE_RETIRED.md`](../../archives/PUBLIC_SITE_RETIRED.md)。
-
-| 腳本 | 用途 | mini 自動 |
-|------|------|-----------|
-| `scripts/order/run_ops_live_ta_poll.py` | 持倉 Live TA（處置股另有 ~20分撮合鐘）→ `ops.live_ta` | `com.jackm4.goldenstocks.ops-live-ta-poll`（08:50–13:35 · 60s） |
-| `scripts/order/write_ops_console_snapshot.py` | watch／risk／thermo／branches／today → `ops.snapshots`（可 `--also-digest`） | `com.jackm4.goldenstocks.ops-console-evening-sync`（20:40） |
-| `scripts/order/write_ops_sleeve_status.py` | `order.yaml`+env → `ops.sleeve_status` | 同上 20:40 |
-| `scripts/order/run_ops_holdings_sync.py` | 富邦持倉 → `ops.holdings` | 同上 20:40（`.venv-fubon`） |
-| `src/notify_email.send_alert` / `scripts/notify_job_result.py` | email **且**（`RUN_OPS_DIGEST_SYNC=1`，預設開）寫 `ops.digests` | 夜間／晨間 email jobs 並行上牆 |
-| `scripts/order/write_ops_digest_from_file.py` | 檔案／正文 → `ops.digests` | 手動／補檔 |
-
-Helpers：`src/ops_console_sync.py` · `src/ops_console_snapshots.py` · `src/ops_live_ta.py`。
-
-**環境**：mini `.env` 須有 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`；`RUN_OPS_DIGEST_SYNC=1`（launchd `ops-console-evening-sync` plist 亦硬設 1）。勿在 Book 安裝 live Order／ops launchd。
-
-**明日自檢（不必手動 backfill）**：`launchctl list | grep ops-console` 有 label；站上 Inbox／Today／Watch／Risk／Thermo／Holdings 的 asof 為當日；盤中 Live 頁跟 `ops-live-ta-poll`。
-
-寫入走 `public.ops_*` view（PostgREST 未 expose `ops` schema）· DB 有 INSTEAD OF trigger 轉入 `ops.*`。
+好時量化 ops 後台（`haoshi-quant-ops.pages.dev` · Supabase `ops.*`）已整條移除：
+`ops_console_sync` / `ops_console_snapshots` / `ops_live_ta` / `ops_holdings_stability` /
+`ops_stock_heatmap`、`scripts/order/*ops*`、`send_ops_evening_summary`，以及 `notify_email`／
+`notify_job_result` 的 `ops.digests` 並行寫入。`ops-live-ta-poll`、`live-ta-kbar-sync` 早已退役。
+`ops-console-evening-sync` 仍每日 20:40 跑，但只剩**本地**資料刷新（by-trader 全市場分點 tape、
+溫度計面板、個股日線、Stage 熱力圖），不再推任何外部服務。

@@ -27,8 +27,6 @@ if [[ -r "${GOLDENSTOCKS_DATA_DIR:-${ROOT}}/.env" ]]; then
   set +a
   set -e
 fi
-export RUN_OPS_DIGEST_SYNC="${RUN_OPS_DIGEST_SYNC:-1}"
-export RUN_ALERT_EMAIL=0
 
 EXIT=0
 if [[ ! -x "${PYTHON}" ]]; then
