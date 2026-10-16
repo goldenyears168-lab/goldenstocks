@@ -25,7 +25,6 @@ JOBS=(
   "com.jackm4.goldenstocks.buy-signal-radar|Buy signal radar|週一至五 09:00–13:20 每 5 分|logs/intraday/launchd_buy-signal-radar.log|1-5"
   "com.jackm4.goldenstocks.sell-signal-radar|Sell signal radar|週一至五 09:06–13:20 每 5 分|logs/intraday/launchd_sell-signal-radar.log|1-5"
   "com.jackm4.goldenstocks.detach-gate|Detach Gate 台美脫鉤|週一至五 09:40–12:30 每 5 分|logs/intraday/launchd_detach-gate.log|1-5"
-  "com.jackm4.goldenstocks.leading-dip-poll|Leading Dip Order|週一至五 09:05–13:25 每 5 分|logs/intraday/launchd_leading-dip-poll.log|1-5"
   "com.jackm4.goldenstocks.songshan-copytrade-poll|跟單松山 Order|週一至五 09:25–09:40 每 5 分|logs/intraday/launchd_songshan-copytrade-poll.log|1-5"
 )
 
@@ -346,7 +345,6 @@ print_log_hints() {
   printf '  tail -f %s/logs/intraday/launchd_buy-signal-radar.log\n' "${ROOT}"
   printf '  tail -f %s/logs/intraday/launchd_sell-signal-radar.log\n' "${ROOT}"
   printf '  tail -f %s/logs/intraday/launchd_detach-gate.log\n' "${ROOT}"
-  printf '  tail -f %s/logs/intraday/launchd_leading-dip-poll.log\n' "${ROOT}"
   printf '\n%b維護%b\n' "$(c "1")" "$(reset)"
   printf '  安裝/重載：scripts/install-launchd.sh\n'
   printf '  狀態：    scripts/install-launchd.sh --status\n'

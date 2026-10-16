@@ -190,7 +190,7 @@ strategies:
     title: Leading Dip · coverage · gap∩excess(昨收)
     layer: strategy
     kind: research_adopted
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（order.leading_dip_order／launchd 皆刪；規格與研究層保留）
     env_flag: RUN_LEADING_DIP_POLL
     description: >
       Leading ∧ gap3≤−0.80 ∩ excess(昨收)≤−4 · coverage 含開盤 · hold T+3 ·
@@ -203,7 +203,7 @@ strategies:
     title: Leading Dip mid · ≥10:00 · excess(今開)
     layer: strategy
     kind: research_adopted
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（order.leading_dip_order／launchd 皆刪；規格與研究層保留）
     parent_strategy: leading-dip
     env_flag: RUN_LEADING_DIP_POLL
     description: >

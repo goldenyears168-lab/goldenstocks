@@ -26,11 +26,17 @@ jobs:
   # goldenstocks-data/.retired-launchd-backup-20260804-c18acc/
   - label: leading-dip-poll
     category: order
-    order_capable: true
-    status: disabled
+    order_capable: false
+    status: retired
     disabled_since: "2026-07-27"
-    schedule: "weekdays 09:00-13:30, every 5min"
-    description: "Leading Dip satellite sleeve"
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: >
+      Leading Dip satellite sleeve — **2026-10 整條移除**：order.leading_dip_order／_order_config／
+      _ledger、run_leading_dip_poll.py、launchd plist／launcher 模板、安裝腳本項目與測試皆刪除，
+      label 進 install-launchd.sh 的 RETIRED_LABELS（mini 重跑安裝腳本會卸載）。策略規格
+      （strategy.yaml）與研究層（leading_dip_sleeve_validate 等）保留；strategies.yaml 已設
+      enabled:false。要恢復請 git revert 該移除 commit，並須使用者明確直接指示。
 
   - label: songshan-copytrade-poll
     category: order

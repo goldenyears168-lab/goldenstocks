@@ -413,9 +413,9 @@ strategies:
     launchd_label: com.jackm4.goldenstocks.leading-dip-poll
     schedule_time: "09:05–13:25 Asia/Taipei Mon-Fri · 5m"
     env_flag: RUN_LEADING_DIP_POLL
-    enabled: true
-    module: order.leading_dip_order
-    screen_script: scripts/order/run_leading_dip_poll.py
+    enabled: false  # 2026-10 下單袖套已移除（規格與研究層保留；須與 strategies.yaml 一致）
+    module: order.leading_dip_order  # 已移除 2026-10（git 歷史可還原）
+    screen_script: scripts/order/run_leading_dip_poll.py  # 已移除 2026-10
     research_topic: leading-wma20-intraday-excess6-wma3-confirm
     config_ref: config/order.yaml
     description: >
@@ -471,10 +471,10 @@ strategies:
     launchd_label: com.jackm4.goldenstocks.leading-dip-poll
     schedule_time: "10:00–13:25 Asia/Taipei Mon-Fri · 5m (via same poll)"
     env_flag: RUN_LEADING_DIP_POLL
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（規格與研究層保留；須與 strategies.yaml 一致）
     parent_strategy: leading-dip
-    module: order.leading_dip_order
-    screen_script: scripts/order/run_leading_dip_poll.py
+    module: order.leading_dip_order  # 已移除 2026-10（git 歷史可還原）
+    screen_script: scripts/order/run_leading_dip_poll.py  # 已移除 2026-10
     research_topic: leading-wma20-intraday-excess6-wma3-confirm
     config_ref: config/order.yaml
     description: >

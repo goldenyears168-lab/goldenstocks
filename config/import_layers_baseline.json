@@ -24,13 +24,12 @@
    "vcp_funnel_specs_daily -> research.backtest.chunge_funnel_backtest"
   ],
   "R4": [
-   "order.leading_dip_order -> research.backtest.leading_dip_sleeve_validate",
    "order.us_tw_5m_sell_gate -> research.backtest.us_tw_30m_rolling_risk_gate_study",
    "order.us_tw_5m_sell_gate -> research.backtest.us_tw_rolling_5m_detach_study",
    "order.us_tw_5m_sell_gate -> research.backtest.us_tw_sell_only_live_readiness_study",
    "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
   ]
  },
- "lazy_only_edges": 213,
+ "lazy_only_edges": 202,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }

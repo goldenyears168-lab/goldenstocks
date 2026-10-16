@@ -168,43 +168,6 @@ def _worker_main(argv: list[str] | None = None) -> int:
                 ),
                 force=bool(req.get("force")),
             )
-        elif kind == "leading_dip_entry":
-            from order.leading_dip_ledger import load_ledger
-            from order.leading_dip_order import _submit_entry
-            from order.leading_dip_order_config import load_leading_dip_order_config
-
-            conf = load_leading_dip_order_config()
-            ledger_path = Path(str(req["ledger_path"]))
-            result = _submit_entry(
-                row=dict(req.get("row") or {}),
-                conf=conf,
-                session_date=str(req["session_date"]),
-                poll_minute=str(req.get("poll_minute") or ""),
-                trading_dates=[str(x) for x in (req.get("trading_dates") or [])],
-                ledger=load_ledger(ledger_path),
-                ledger_path=ledger_path,
-                dry=bool(req.get("dry_run")),
-                strategy_id=str(req.get("strategy_id") or ""),
-                user_def=str(req.get("user_def") or ""),
-                budget_twd=int(req.get("budget_twd") or 0),
-                sleeve=str(req.get("sleeve") or "main"),
-            )
-        elif kind == "leading_dip_exits":
-            from order.leading_dip_ledger import load_ledger
-            from order.leading_dip_order import _process_exits
-            from order.leading_dip_order_config import load_leading_dip_order_config
-
-            conf = load_leading_dip_order_config()
-            ledger_path = Path(str(req["ledger_path"]))
-            result = _process_exits(
-                ledger=load_ledger(ledger_path),
-                ledger_path=ledger_path,
-                conf=conf,
-                user_def=str(req.get("user_def") or ""),
-                session_date=str(req["session_date"]),
-                poll_minute=str(req.get("poll_minute") or ""),
-                dry=bool(req.get("dry_run")),
-            )
         elif kind == "holdings_status":
             from stock_db import DEFAULT_DB_PATH, connect
             from order.holdings_pulse import build_holdings_pulse

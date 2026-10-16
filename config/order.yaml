@@ -48,6 +48,7 @@ intent:
 strategies:
   # Leading Dip · Strategy 採納 2026-07-16（coverage 主軌 + mid 衛星）
   # Spec SSOT: config/strategy.yaml · Order: src/order/leading_dip_order.py
+  # ⚠ 2026-10：下單袖套程式／launchd 已整條移除，以下規格僅留存（git 歷史可還原）。
   # Dual-sleeve: coverage 昨收錨 + mid ≥10:00 今開錨 · 預算 2 萬/筆 · live
   leading-dip:
     pool_id: leading-dip

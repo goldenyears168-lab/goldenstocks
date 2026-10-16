@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # launchd：Buy signal radar · 09:00–13:20 每 5 分 · observe advisory email only
-# Live Order sleeves：C18acc（rrg poll）+ Leading Dip（leading-dip-poll）。
+# （Order sleeves C18acc／Leading Dip 皆已退役移除；本 job 只寄信、不送單。）
 # ABC Order 已退役（2026-07-15）· radar 不再送單。
 
 set -euo pipefail

@@ -23,7 +23,6 @@ GUI_DOMAIN="gui/${UID_NUM}"
 LABELS=(
   com.jackm4.goldenstocks.buy-signal-radar
   com.jackm4.goldenstocks.detach-gate
-  com.jackm4.goldenstocks.leading-dip-poll
   com.jackm4.goldenstocks.songshan-copytrade-poll
   com.jackm4.goldenstocks.tmf-channel-poll
   com.jackm4.goldenstocks.tmf-sim-server
@@ -53,7 +52,6 @@ LABELS=(
 TEMPLATES=(
   com.jackm4.goldenstocks.buy-signal-radar.plist.template
   com.jackm4.goldenstocks.detach-gate.plist.template
-  com.jackm4.goldenstocks.leading-dip-poll.plist.template
   com.jackm4.goldenstocks.songshan-copytrade-poll.plist.template
   com.jackm4.goldenstocks.tmf-channel-poll.plist.template
   com.jackm4.goldenstocks.tmf-sim-server.plist.template
@@ -87,10 +85,9 @@ usage() {
   預設：將 launchd/*.plist.template 渲染後安裝到
         ~/Library/LaunchAgents/ 並 launchctl load。
 
-  現行排程（Order layer · Leading Dip / Songshan；本地時間）：
+  現行排程（Order layer · Songshan / TMF；本地時間）：
     buy-signal-radar        週一至五 09:00–13:20 每 5 分（notify；ABC Order 已退役）
     detach-gate             週一至五 09:40–12:30 每 5 分（台美脫鉤閘門 · 半倉買一）
-    leading-dip-poll        週一至五 09:05–13:25 每 5 分（Leading Dip · 獨立袖套 · 預設 dry-run）
     songshan-copytrade-poll 週一至五 09:25–09:40 每 5 分（跟單松山 5d淨比95∩!mega+25m nonfail · 預算制約10萬）
     tmf-channel-poll        KeepAlive worker（日盤+夜盤 · TMF · 重用 session · 預設 dry-run）
     tmf-sim-server          KeepAlive（TMF paper UI :8770 · 不下單 · PYTHONPATH=src 用新引擎）
@@ -130,7 +127,7 @@ usage() {
   注意：Mac 須已登入。盤中 poll 用 StartInterval=300（非 Aqua CalendarInterval），
         開盤窗由 launcher 過濾；order-wake 每 5 分 caffeinate。launchd stdout 寫
         ~/Library/Logs/com.jackm4.goldenstocks/（避開 Documents TCC → EX_CONFIG）。
-        leading-dip-poll · buy/sell radar · detach-gate
+        buy/sell radar · detach-gate
         以 Application Support launcher + /bin/bash 背景執行。
 EOF
 }
@@ -138,7 +135,6 @@ EOF
 LAUNCHD_COMMANDS=(
   buy-signal-radar
   detach-gate
-  leading-dip-poll
   songshan-copytrade-poll
   tmf-channel-poll
   expert-pool-staged-gate
@@ -248,6 +244,8 @@ RETIRED_LABELS=(
   com.goldenstocks.mini
   # 2026-08-04 退役（C18acc 策略不再採用 · src/order/c18acc_* python 保留）
   com.jackm4.goldenstocks.rrg-c18acc-poll
+  # 2026-10 退役（Leading Dip 下單袖套不再使用 · launchd／python 一併移除；策略規格與研究層保留）
+  com.jackm4.goldenstocks.leading-dip-poll
 )
 
 uninstall_retired_agents() {
@@ -289,12 +287,6 @@ generate_detach_gate_calendar_intervals() {
   local out="/tmp/com.jackm4.goldenstocks.detach-gate-calendar.xml"
   generate_five_minute_clock_calendar "${out}"
   DETACH_GATE_CALENDAR_INTERVALS_FILE="${out}"
-}
-
-generate_leading_dip_calendar_intervals() {
-  local out="/tmp/com.jackm4.goldenstocks.leading-dip-calendar.xml"
-  generate_five_minute_clock_calendar "${out}"
-  LEADING_DIP_CALENDAR_INTERVALS_FILE="${out}"
 }
 
 generate_songshan_copytrade_calendar_intervals() {
@@ -373,39 +365,12 @@ render_template() {
       >"${dest}"
     return
   fi
-  if grep -q '{{LEADING_DIP_CALENDAR_INTERVALS}}' "${template}"; then
-    generate_leading_dip_calendar_intervals
-    sed -e "s|{{PROJECT_ROOT}}|${PROJECT_ROOT}|g" \
-        -e "s|{{APP_SUPPORT}}|${APP_SUPPORT:-${HOME}/Library/Application Support/com.jackm4.goldenstocks}|g" \
-        -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
-        -e "s|{{DETACH_GATE_LAUNCHER}}|${DETACH_GATE_LAUNCHER}|g" \
-        -e "s|{{LEADING_DIP_LAUNCHER}}|${LEADING_DIP_LAUNCHER}|g" \
-        -e "s|{{SONGSHAN_COPYTRADE_LAUNCHER}}|${SONGSHAN_COPYTRADE_LAUNCHER}|g" \
-        -e "s|{{EP_STAGED_GATE_LAUNCHER}}|${EP_STAGED_GATE_LAUNCHER}|g" \
-        -e "s|{{EVENING_HOLDINGS_LAUNCHER}}|${EVENING_HOLDINGS_LAUNCHER}|g" \
-        -e "s|{{MORNING_BRIEF_LAUNCHER}}|${MORNING_BRIEF_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_GATE_LAUNCHER}}|${INTRADAY_GATE_LAUNCHER}|g" \
-        -e "s|{{VCP_FUNNEL_LAUNCHER}}|${VCP_FUNNEL_LAUNCHER}|g" \
-        -e "s|{{RRG_MONO_INTRADAY_LAUNCHER}}|${RRG_MONO_INTRADAY_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_1300_DIGEST_LAUNCHER}}|${INTRADAY_1300_DIGEST_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_OPEN_DIGEST_LAUNCHER}}|${INTRADAY_OPEN_DIGEST_LAUNCHER}|g" \
-        -e "s|{{INTRADAY_MIDDAY_DIGEST_LAUNCHER}}|${INTRADAY_MIDDAY_DIGEST_LAUNCHER}|g" \
-        -e "s|{{MUTUAL_FUND_LAUNCHER}}|${MUTUAL_FUND_LAUNCHER}|g" \
-        -e "s|{{MINERVINI_LAUNCHER}}|${MINERVINI_LAUNCHER}|g" \
-        -e "s|{{WEEKLY_DEEP_LAUNCHER}}|${WEEKLY_DEEP_LAUNCHER}|g" \
-        "${template}" \
-      | sed "/{{LEADING_DIP_CALENDAR_INTERVALS}}/r ${LEADING_DIP_CALENDAR_INTERVALS_FILE}" \
-      | sed '/{{LEADING_DIP_CALENDAR_INTERVALS}}/d' \
-      >"${dest}"
-    return
-  fi
   if grep -q '{{SONGSHAN_COPYTRADE_CALENDAR_INTERVALS}}' "${template}"; then
     generate_songshan_copytrade_calendar_intervals
     sed -e "s|{{PROJECT_ROOT}}|${PROJECT_ROOT}|g" \
         -e "s|{{APP_SUPPORT}}|${APP_SUPPORT:-${HOME}/Library/Application Support/com.jackm4.goldenstocks}|g" \
         -e "s|{{SONGSHAN_COPYTRADE_LAUNCHER}}|${SONGSHAN_COPYTRADE_LAUNCHER}|g" \
         -e "s|{{EP_STAGED_GATE_LAUNCHER}}|${EP_STAGED_GATE_LAUNCHER}|g" \
-        -e "s|{{LEADING_DIP_LAUNCHER}}|${LEADING_DIP_LAUNCHER}|g" \
         "${template}" \
       | sed "/{{SONGSHAN_COPYTRADE_CALENDAR_INTERVALS}}/r ${SONGSHAN_COPYTRADE_CALENDAR_INTERVALS_FILE}" \
       | sed '/{{SONGSHAN_COPYTRADE_CALENDAR_INTERVALS}}/d' \
@@ -417,7 +382,6 @@ render_template() {
       -e "s|{{HOME}}|${HOME}|g" \
       -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
       -e "s|{{DETACH_GATE_LAUNCHER}}|${DETACH_GATE_LAUNCHER}|g" \
-      -e "s|{{LEADING_DIP_LAUNCHER}}|${LEADING_DIP_LAUNCHER}|g" \
       -e "s|{{SONGSHAN_COPYTRADE_LAUNCHER}}|${SONGSHAN_COPYTRADE_LAUNCHER}|g" \
       -e "s|{{TMF_CHANNEL_LAUNCHER}}|${TMF_CHANNEL_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_LAUNCHER}}|${MOMENTUM_ROTATION_LAUNCHER}|g" \
@@ -499,19 +463,6 @@ install_detach_gate_launcher() {
   mkdir -p "${app_support}"
   render_template "${src}" "${DETACH_GATE_LAUNCHER}"
   chmod +x "${DETACH_GATE_LAUNCHER}"
-}
-
-install_leading_dip_launcher() {
-  local src="${LAUNCHD_SRC}/leading-dip-poll-launcher.sh.template"
-  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
-  LEADING_DIP_LAUNCHER="${app_support}/leading-dip-poll.sh"
-  if [[ ! -f "${src}" ]]; then
-    echo "✗ 缺少 ${src}" >&2
-    exit 1
-  fi
-  mkdir -p "${app_support}"
-  render_template "${src}" "${LEADING_DIP_LAUNCHER}"
-  chmod +x "${LEADING_DIP_LAUNCHER}"
 }
 
 install_songshan_copytrade_launcher() {
@@ -1025,7 +976,6 @@ install_agents() {
   ensure_launchd_commands
   BUY_RADAR_LAUNCHER=""
   DETACH_GATE_LAUNCHER=""
-  LEADING_DIP_LAUNCHER=""
   SONGSHAN_COPYTRADE_LAUNCHER=""
   TMF_CHANNEL_LAUNCHER=""
   MOMENTUM_ROTATION_LAUNCHER=""
@@ -1063,7 +1013,6 @@ install_agents() {
   sync_order_env_mirror
   install_buy_radar_launcher
   install_detach_gate_launcher
-  install_leading_dip_launcher
   install_songshan_copytrade_launcher
   install_tmf_channel_launcher
   install_futopt_fill_listener_launcher
@@ -1140,7 +1089,6 @@ install_agents() {
   echo "  # launchd stdout（避開 Documents TCC）：~/Library/Logs/com.jackm4.goldenstocks/"
   echo "  # TMF tick log：\${GOLDENSTOCKS_DATA_DIR:-~/goldenstocks-data}/logs/intraday/tmf_channel_live_\$(date +%Y%m%d).log"
   echo "  # 業務 tick log 仍在：${PROJECT_ROOT}/logs/intraday/"
-  echo "  tail -f ${PROJECT_ROOT}/logs/intraday/leading_dip_\$(date +%Y%m%d).log"
 }
 
 uninstall_agents() {
