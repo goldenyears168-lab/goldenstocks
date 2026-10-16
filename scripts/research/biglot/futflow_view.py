@@ -27,7 +27,7 @@ ROOTS = ("MXF", "TMF")
 PV = {"MXF": 50, "TMF": 10}
 BIG_AMT = 10_000_000
 GROUPS = ("B", "M", "R")                       # 大戶／中單／散戶
-G_NAME = {"B": "大戶", "M": "中單", "R": "散戶"}
+G_NAME = {"B": "大單", "M": "中單", "R": "散戶"}   # 2026-10-16:「大戶」改稱「大單」——實證上它對應不到外資/法人(見 disc 註記)
 G_COLOR = {"B": "#ff7b72", "M": "#8b949e", "R": "#58a6ff"}   # 與主儀表板台指面板一致:大戶紅、散戶藍;中單用灰(紫=權證、黃=警示已被佔用)
 DAY0, DAY1 = 8 * 3600 + 45 * 60, 13 * 3600 + 45 * 60
 LOAD_FILES = 14                                # 啟動時載入最近幾個日曆檔
@@ -438,7 +438,7 @@ def _head(extra_head=""):
     except Exception:  # noqa: BLE001
         base = "body{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',monospace;margin:8px}.meta{color:#8b949e;font-size:11px}table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}th{background:#161b22;color:#8b949e}th .sub{display:block;font-size:9px;font-weight:400}.up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.warnv{color:#e3b341}a{color:#79c0ff;text-decoration:none}h3{margin:4px 0;font-size:14px}"
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=0.6'>"
-            f"<title>期貨大戶−散戶</title><style>{base}{_CSS_EXTRA}</style>{extra_head}</head><body>")
+            f"<title>期貨大單−散戶</title><style>{base}{_CSS_EXTRA}</style>{extra_head}</head><body>")
 
 
 def _th(label, sub="", tip=""):
@@ -457,7 +457,7 @@ def _pct_cell(v, n):
 
 def _summary_table(S, pct=None):
     wins = (("本盤", S["full"], "本盤累計(日盤自 08:45、夜盤自 15:00 起)"), ("5分", S["w5"], "近 5 分鐘滾動(以最新一根分鐘為終點)"), ("30分", S["w30"], "近 30 分鐘滾動"))
-    o = ["<div class='wrap'><table><thead><tr>", _th("組別", "", "大戶=單筆爆發名目≥1000萬;散戶=1口;中單=其餘。「單」=同毫秒同方向主動成交爆發量,不是母單、不辨認身分")]
+    o = ["<div class='wrap'><table><thead><tr>", _th("組別", "", "大單=單筆爆發名目≥1000萬;散戶=1口;中單=其餘。「單」=同毫秒同方向主動成交爆發量,不是母單、不辨認身分")]
     for nm, _w, tip in wins:
         o.append(_th(f"{nm}淨額", "買−賣·萬", f"{tip}的主動買賣淨名目(萬元)。紅=買超、綠=賣超"))
         o.append(_th(f"{nm}淨口", "買−賣·口", f"{tip}的主動買賣淨口數"))
@@ -477,10 +477,10 @@ def _summary_table(S, pct=None):
         share = (t["bl"] + t["sl"]) / S["vol"] * 100 if S["vol"] else 0
         o.append(f"<td class='up'>{t['bl']:,}</td><td class='dn'>{t['sl']:,}</td><td>{share:.0f}%</td>"
                  + _pct_cell((pct or {}).get(g) if npr >= MIN_PRIOR else None, npr) + "</tr>")
-    o.append("<tr><td class='g'>大戶−散戶</td>")
+    o.append("<tr><td class='g'>大單−散戶</td>")
     for _nm, w, _t in wins:
         v = share_diff(w)
-        o.append(f"<td class='{_cls(v or 0)}' colspan='2' title='(大戶淨額−散戶淨額)÷成交額,與主頁「大戶−散戶」同口徑'>{'—' if v is None else f'{v:+.1f}%'}</td>")
+        o.append(f"<td class='{_cls(v or 0)}' colspan='2' title='(大單淨額−散戶淨額)÷成交額,與主頁「大戶−散戶」同口徑'>{'—' if v is None else f'{v:+.1f}%'}</td>")
     o.append("<td colspan='3' class='dim'>÷成交額</td>" + _pct_cell((pct or {}).get("D") if npr >= MIN_PRIOR else None, npr) + "</tr></tbody></table></div>")
     return "".join(o)
 
@@ -496,7 +496,7 @@ def _block_table(bars, S):
     o = ["<div class='wrap'><table><thead><tr>", _th("時段", "5分"), _th("收"), _th("成交量", "口")]
     for g in GROUPS:
         o.append(_th(f"{G_NAME[g]}淨額", "買−賣·萬"))
-    o.append(_th("大戶−散戶", "÷成交額%"))
+    o.append(_th("大單−散戶", "÷成交額%"))
     o.append("</tr></thead><tbody>")
     for key, b in reversed(list(blocks.items())):
         d = (b["B"] - b["R"]) / b["amt"] * 100 if b["amt"] else None
@@ -511,7 +511,7 @@ def _history_table(sessions, order, root):
     o = ["<div class='wrap'><table><thead><tr>", _th("盤別"), _th("漲跌", "%"), _th("成交量", "口")]
     for g in GROUPS:
         o.append(_th(f"{G_NAME[g]}淨額", "買−賣·萬"))
-    o.append(_th("大戶−散戶", "÷成交額%"))
+    o.append(_th("大單−散戶", "÷成交額%"))
     o.append("</tr></thead><tbody>")
     for k in reversed(order[-10:]):
         s = summarize(sessions[k]); c = (s["close"] / s["open"] - 1) * 100 if s["open"] else 0
@@ -538,7 +538,7 @@ def _body(root, sel):
     # 殘留(<20 根分鐘,例如週末檔的零星重送)不列;但最新的盤別即使剛開盤也要列,才能在開盤後立刻切過去
     order = [k for k in keys if len(sessions[k]) >= 20 or (k == keys[-1] and len(sessions[k]) >= 2 and _is_active(k))]
     if not order:
-        return "<h3>期貨 大戶−散戶</h3><div class='meta'>沒有足夠資料的盤別</div>", False
+        return "<h3>期貨 大單−散戶</h3><div class='meta'>沒有足夠資料的盤別</div>", False
     want = None
     if "|" in sel:
         s_, _, t_ = sel.partition("|")
@@ -551,7 +551,7 @@ def _body(root, sel):
     now = dt.datetime.now()
     live = in_session and is_latest            # 最新盤別、且正在交易時段:不論是預設頁或固定網址都每秒更新
     o = []
-    o.append(f"<h3>期貨 大戶−散戶 · {FUT_NAME[root]} <span class='meta'>{now:%H:%M:%S}</span>"
+    o.append(f"<h3>期貨 大單−散戶 · {FUT_NAME[root]} <span class='meta'>{now:%H:%M:%S}</span>"
              f"<span class='chip {'on' if in_session else 'off'}'>{html_mod.escape(status)}</span></h3>")
     o.append("<div>" + "".join(f"<a class='tab{' on' if r == root else ''}' href='/futflow?root={r}'>{FUT_NAME[r]}</a>" for r in ROOTS) + "</div>")
     o.append("<div>" + "".join(f"<a class='tab{' on' if k == cur else ''}' href='/futflow?root={root}&s={k[0]}|{k[1]}' title='{html_mod.escape(_sess_title(*k))}'>{html_mod.escape(_sess_label(*k))}</a>"
@@ -579,12 +579,14 @@ def _body(root, sel):
     o.append(_history_table(sessions, order, root))
     big_lots = int(BIG_AMT / (PV[root] * (S["close"] or 47000))) + 1
     o.append("<div class='disc'><b>口徑與限制</b><br>"
-             f"· 散戶＝爆發量 1 口;大戶＝名目 ≥ {BIG_AMT / 1e6:.0f} 百萬元(目前約 {FUT_NAME[root].split()[0]} {big_lots} 口以上);其餘為中單。名目＝口數 × 點值 × 成交價。<br>"
+             f"· 散戶＝爆發量 1 口;大單＝名目 ≥ {BIG_AMT / 1e6:.0f} 百萬元(目前約 {FUT_NAME[root].split()[0]} {big_lots} 口以上);其餘為中單。名目＝口數 × 點值 × 成交價。<br>"
              "· 「單」＝同毫秒、同方向的主動成交爆發量,不是母單;期貨沒有分點或身分資料,這是依單量分組,<b>不是辨認人</b>,1 口也可能是演算法切單。<br>"
-             "· 微型台指 1 口名目約為小型台指的 1/5,所以同一門檻下 TMF 的大戶占比偏低、中單偏高;兩個品牌的占比不可直接比較。<br>"
-             "· 「大戶−散戶」＝(大戶淨額 − 散戶淨額) ÷ 成交額,與主頁同口徑;「成交占比」是買賣口數占比,兩者不同。<br>"
+             "· 微型台指 1 口名目約為小型台指的 1/5,所以同一門檻下 TMF 的大單占比偏低、中單偏高;兩個品牌的占比不可直接比較。<br>"
+             "· 「大單−散戶」＝(大單淨額 − 散戶淨額) ÷ 成交額,與主頁同口徑;「成交占比」是買賣口數占比,兩者不同。<br>"
              "· 「百分位」＝本盤累計淨額在最近 10 個同類盤別、同一個開盤後經過時間的位置(日對日、夜對夜);歷史少於 5 個盤別時不計算。它描述『相對平常多極端』,不是方向預測。<br>"
              "· 方向以成交價對買一／賣一判定,無法判定者不計方向。日盤與夜盤是兩條獨立資料流。圖表以分鐘為單位,最新一分鐘每秒更新。<br>"
+             "· <b>「大單」不等於大戶或法人</b>:2026-10 探索期(35 個日盤)把大單淨額對三大法人期貨淨成交量扣掉當日報酬後,偏相關約 0(外資 −0.03~+0.15、自營商 −0.19~+0.10),MXF/TMF/TXF 結論一致;"
+             "大單淨額與當日漲跌的相關約 0.6~0.9,等於價格方向的另一種寫法。樣本小、屬探索,但尚無證據顯示它能預測方向或波動。<br>"
              "· <span class='warnv'>⚠</span> 純觀察展示,不進任何分數、不是證實的訊號;先前回測顯示這些分組的秒級報酬差異遠小於交易成本。</div>")
     return "".join(o), live
 
@@ -597,7 +599,7 @@ function bind(){document.querySelectorAll('svg.ffsvg').forEach(function(s){
  s.onmousemove=function(e){var r=s.getBoundingClientRect(),vb=s.viewBox.baseVal,x=(e.clientX-r.left)/r.width*vb.width,b=null,d=1e9;
   rows.forEach(function(q){var k=Math.abs(q[0]-x);if(k<d){d=k;b=q}});
   var t=document.getElementById('fftip');if(!b){t.style.display='none';return}
-  t.innerHTML=b[1]+' 價 '+b[2].toLocaleString()+'<br><span style="color:#ff7b72">大戶 '+b[3].toLocaleString()+'萬</span> <span style="color:#8b949e">中單 '+b[4].toLocaleString()+'萬</span> <span style="color:#58a6ff">散戶 '+b[5].toLocaleString()+'萬</span>';
+  t.innerHTML=b[1]+' 價 '+b[2].toLocaleString()+'<br><span style="color:#ff7b72">大單 '+b[3].toLocaleString()+'萬</span> <span style="color:#8b949e">中單 '+b[4].toLocaleString()+'萬</span> <span style="color:#58a6ff">散戶 '+b[5].toLocaleString()+'萬</span>';
   t.style.left=(e.clientX+12)+'px';t.style.top=(e.clientY+12)+'px';t.style.display='block'};
  s.onmouseleave=function(){document.getElementById('fftip').style.display='none'}})}
 bind();
@@ -620,7 +622,7 @@ def render_futflow(root: str = "MXF", sel: str = "") -> str:
     root = root.upper() if root.upper() in ROOTS else "MXF"
     if not _LOADING["done"]:
         msg = _LOADING["err"] or "載入最近幾個交易日的逐筆成交中(首次約 1 分鐘),請稍候…"
-        return _head("<meta http-equiv='refresh' content='8'>") + f"<h3>期貨 大戶−散戶</h3><div class='meta'>{html_mod.escape(msg)}</div></body></html>"
+        return _head("<meta http-equiv='refresh' content='8'>") + f"<h3>期貨 大單−散戶</h3><div class='meta'>{html_mod.escape(msg)}</div></body></html>"
     body, live = _body(root, sel)
     u = f"/futflowfrag?root={root}&s={html_mod.escape(sel, quote=True)}"
     return _head() + f"<div id='ffapp' data-live='{1 if live else 0}' data-u='{u}'>{body}</div>" + _JS + "</body></html>"
