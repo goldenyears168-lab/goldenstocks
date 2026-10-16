@@ -18,10 +18,10 @@
 | 融資融券（上市＋上櫃） | `TaiwanStockMarginPurchaseShortSale` | TWSE MI_MARGN（`twse_mi_margn`）＋櫃買 margin/balance（`tpex_margn`） | **已完成** | 與 FinMind 融資餘額 126／126 一致；儀表板波動分數已恢復（42／42） |
 | 當沖（上市） | `TaiwanStockDayTrading` | TWSE TWTB4U（`twse_twtb4u`） | **已完成（僅上市）** | **上櫃當沖尚無可用端點**：儀表板 42 檔中 11 檔上櫃無當沖資料 |
 | 借券餘額 | — | TWSE TWT72U | 本來就官方 | 已在收盤管線 |
-| 外資持股比 | `TaiwanStockShareholding` | TWSE MI_QFIIS＋櫃買 | 待做 | |
+| 外資持股比 | `TaiwanStockShareholding` | TWSE MI_QFIIS（`twse_qfiis`）＋櫃買 qfii（`tpex_qfiis`） | **已完成** | 儀表板 42 檔與 FinMind 40／40 一致；已補 8/20～10/16 |
 | 個股市值 | `TaiwanStockMarketValue` | 日線收盤價 × 發行股數（`stock_daily_bars.shares_outstanding`） | 待做 | |
 | 月營收、財報、PER、股利 | `TaiwanStockMonthRevenue` 等 | MOPS、TWSE（BWIBBU_d、TWT48U） | 待做 | 每週日跑，風險較低 |
-| 鉅額交易 | `TaiwanStockBlockTrade` | TWSE 鉅額成交資訊 | 待做 | 表已停在 2026-09-24 |
+| 鉅額交易 | `TaiwanStockBlockTrade` | TWSE BFIAUU（`twse_block`）＋櫃買 openapi（`tpex_block`） | **已完成** | 9/24 對帳 24／24 一致；已補 9/25～10/16 |
 | TX gap／技術風險 | `TaiwanFuturesDaily` | 期交所期貨每日交易行情 | 待做 | `taifex_client.fetch_market_oi_total` 已能解析同一頁 |
 | 早晨期貨快照 | `taiwan_futures_snapshot`（即時） | 富邦行情／自家 ws | 待做 | **快照無歷史，停用期間的缺口補不回** |
 | 每日 TX 逐筆（biglot-bucket-eod） | `TaiwanFuturesTick` | 自家 ws（`cache/txf_trades`）或期交所 30 日滾動歸檔（`taifex-tick-accumulate`） | 待做 | 目前「抓不到不擋」，欄位會留空 |
@@ -56,10 +56,11 @@
 
 - 上表第三節的 25 個檔案中，RRG 宇宙、VCP 漏斗、Lens 相關**不再處理**。
 - 已處理的儀表板內容：主表「波動分數」（融資餘額＋借券餘額）、頁首 VIXTWN、個股詳情頁的法人／融資／借券。
-- **未處理、需要決定**：
-  - `/chips` 籌碼 SOP：`chip_sop.py` 要求每檔每日至少 100 個分點且合計量達成交量一定比例；富邦只有前 15 名，所以 10/16 起一律顯示「分點未完整」。
-  - 個股詳情頁：外資持股、鉅額、Beta、分點集中度（同樣要求 ≥100 個分點，會消失）。
-  - `capitulation-oos-accumulate`（19:00）以 `rrg_universe_scores` 的最新 `close` 快照累積 OOS 事件；該快照已停在 10/15，會每天用同一份舊資料累積而不報錯。
+- **2026-10-17 已處理**：
+  - `/chips`：`chip_sop.py` 新增「前段分點」口徑（買超前 15＋賣超前 15 ＋ 專家／席位分點）。每日主力張數與全分點版相同（8 檔 10/15 對照差距 ≤5 張，為頁面四捨五入），集中度改除以成交量，期間版改逐日主力加總，家數差不提供。41／41 檔恢復 ok。
+  - 個股詳情頁：**分點集中度**（同口徑，分母改官方成交量；3711 對財報狗 8.50% vs 8.55%）、**外資持股**（TWSE MI_QFIIS＋櫃買 qfii，與 FinMind 40／40 一致）、**鉅額**（TWSE BFIAUU＋櫃買 openapi，9/24 對帳 24／24）、**Beta**（價格本來就是 Yahoo，只換股票清單來源）。
+  - `capitulation-oos-accumulate` 已退役（launchd 卸載、登錄表 retired）。
+- **仍缺**：上櫃當沖（櫃買只提供市場彙總，無逐檔端點）→ 儀表板 11 檔上櫃無當沖資料。
 
 ## 四、已知限制（誠實版）
 
