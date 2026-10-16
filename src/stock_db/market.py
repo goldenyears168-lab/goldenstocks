@@ -724,7 +724,7 @@ def _futures_window_stats(
             SELECT COUNT(DISTINCT futures_id) AS stocks, COUNT(*) AS rows,
                    MIN(trade_date) AS d_min, MAX(trade_date) AS d_max
             FROM futures_institutional_daily
-            WHERE source = 'finmind'
+            WHERE source IN ('finmind', 'taifex')
               AND trade_date >= ? AND trade_date <= ?
             """,
             (window_start, window_end),

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""期貨三大法人（FinMind TaiwanFuturesInstitutionalInvestors）→ futures_institutional_daily。"""
+"""期貨三大法人 → futures_institutional_daily。
+
+2026-10 起資料來源由 FinMind 改為期交所公開頁(`taifex_client`),寫入 `source='taifex'`;
+只補資料庫缺的交易日,不覆蓋 FinMind 歷史列。舊的 FinMind 解析函式保留給測試與日後回溯。
+"""
 
 from __future__ import annotations
 
@@ -10,8 +14,9 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
-import requests
+import requests  # noqa: F401  (保留相容:呼叫端可能 catch requests.HTTPError)
 
+import taifex_client
 from market_sync_window import min_rows_required, resolve_sync_window
 from stock_db import (
     DEFAULT_DB_PATH,
@@ -19,10 +24,10 @@ from stock_db import (
     load_futures_institutional_coverage,
     upsert_futures_institutional_daily,
 )
-from sync_etf_signal import SOURCE, fetch_finmind
+from sync_etf_signal import SOURCE  # FinMind 舊來源名,僅供 parse_futures_institutional_rows 使用
 
 DEFAULT_LOOKBACK_DAYS = 60
-REQUEST_DELAY_SEC = 0.35
+REQUEST_DELAY_SEC = 1.2     # 期交所頁面請求間隔(秒);不要調太低
 INCREMENTAL_OVERLAP_DAYS = 7
 DEFAULT_FUTURES_ID = "TX"
 
@@ -155,17 +160,30 @@ def sync_futures_institutional_daily(
         return stats
 
     assert fetch_start is not None and fetch_end is not None
-    if request_delay > 0:
-        time.sleep(request_delay)
 
     try:
-        raw = fetch_finmind(
-            "TaiwanFuturesInstitutionalInvestors",
-            fid,
-            fetch_start,
-            fetch_end,
-        )
-        rows = parse_futures_institutional_rows(fid, raw)
+        conn = connect(db_path)
+        try:
+            have = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT trade_date FROM futures_institutional_daily "
+                    "WHERE futures_id = ? AND trade_date >= ? AND trade_date <= ?",
+                    (fid, fetch_start.isoformat(), fetch_end.isoformat()),
+                )
+            }
+        finally:
+            conn.close()
+        rows = []
+        day = fetch_start
+        while day <= fetch_end:
+            if day.weekday() < 5 and (force_refresh or day.isoformat() not in have):
+                got = taifex_client.fetch_futures_institutional(day, fid)   # 休市日回 None,不算錯
+                if got:
+                    rows.extend(got)
+                if request_delay > 0:
+                    time.sleep(request_delay)
+            day += timedelta(days=1)
         if not rows:
             stats["warn"] = 1
             if not quiet:
@@ -183,9 +201,9 @@ def sync_futures_institutional_daily(
             conn.close()
         if not quiet:
             print(f"  {fid}: upsert={stats['rows']} ({action})")
-    except requests.HTTPError as exc:
+    except OSError as exc:      # urllib 的網路錯誤(URLError/timeout)皆為 OSError 子類
         stats["warn"] = 1
-        print(f"  WARN {fid}: HTTP {exc}", file=sys.stderr)
+        print(f"  WARN {fid}: 期交所請求失敗 {exc}", file=sys.stderr)
     except RuntimeError as exc:
         stats["warn"] = 1
         print(f"  WARN {fid}: {exc}", file=sys.stderr)

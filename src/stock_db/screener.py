@@ -270,7 +270,7 @@ def load_futures_institutional_coverage(
             """
             SELECT MIN(trade_date) AS d_min, MAX(trade_date) AS d_max, COUNT(*) AS cnt
             FROM futures_institutional_daily
-            WHERE futures_id = ? AND source = 'finmind'
+            WHERE futures_id = ? AND source IN ('finmind', 'taifex')
               AND trade_date >= ? AND trade_date <= ?
             """,
             (futures_id, window_start, window_end),

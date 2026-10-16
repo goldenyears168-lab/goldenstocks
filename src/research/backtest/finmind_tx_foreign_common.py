@@ -36,7 +36,7 @@ def load_foreign_net_oi(conn: sqlite3.Connection, futures_id: str = FUTURES_ID) 
         f"""
         SELECT trade_date, net_oi_vol
         FROM futures_institutional_daily
-        WHERE futures_id = ? AND inst_name IN ({placeholders}) AND source = 'finmind'
+        WHERE futures_id = ? AND inst_name IN ({placeholders}) AND source IN ('finmind', 'taifex')
         ORDER BY trade_date
         """,
         (futures_id, *FOREIGN_INST_NAMES),

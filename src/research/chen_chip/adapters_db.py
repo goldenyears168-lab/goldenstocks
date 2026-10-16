@@ -230,16 +230,17 @@ def load_tx_foreign_futures(conn: sqlite3.Connection, d0: str, d1: str) -> pd.Da
         SELECT trade_date AS d, net_oi_vol, long_oi_vol, short_oi_vol,
                net_deal_vol
         FROM futures_institutional_daily
-        WHERE source=? AND futures_id='TX' AND inst_name='外資'
+        WHERE source IN ('finmind', 'taifex') AND futures_id='TX' AND inst_name='外資'
           AND trade_date>=? AND trade_date<=?
         ORDER BY trade_date
         """,
         conn,
-        params=[SOURCE, d0, d1],
+        params=[d0, d1],
     )
     if df.empty:
         return df
     df["d"] = df["d"].astype(str)
+    df = df.drop_duplicates(subset=["d"], keep="last").reset_index(drop=True)      # 兩來源同日只留一筆
     for c in ("net_oi_vol", "long_oi_vol", "short_oi_vol", "net_deal_vol"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
