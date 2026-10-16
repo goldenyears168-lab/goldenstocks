@@ -37,6 +37,41 @@ class TaifexClientTests(unittest.TestCase):
         self.assertEqual(T.parse_market_oi_total(txt, "MTX"), 44732)
         self.assertIsNone(T.parse_market_oi_total("|沒有|", "MTX"))
 
+    def test_parse_vix_ticks_sorted_and_skips_stats_row(self):
+        from datetime import date
+        raw = ("交易日期\t時間(時/分/秒/毫秒)\t臺指選擇權波動率指數\n--------\t----\t----\n"
+               "20261016\t9001500\t\t\t29.37\n20261016\t9000000\t\t\t29.39\n"
+               "20261016\t11224500\t\t\t27.83\n20261016\tLast 1 min AVG\t\t\t26.33\n20261015\t9000000\t\t\t1.0\n")
+        t = T.parse_vix_ticks(raw, date(2026, 10, 16))
+        self.assertEqual([(x["time"], x["vix"]) for x in t], [("09:00:00", 29.39), ("09:00:15", 29.37), ("11:22:45", 27.83)])
+        self.assertTrue(all(x["date"] == "2026-10-16" for x in t))            # 別的日期列與統計列都不收
+
+    def test_vix_zip_fallback_and_archive(self):
+        import io
+        import tempfile
+        import zipfile
+        from datetime import date
+        from pathlib import Path
+        from unittest import mock
+
+        member = "20260807\t9000000\t\t\t36.31\n20260807\t9001500\t\t\t36.27\n".encode("big5")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("tvix_20260807", member)
+        calls = []
+
+        def fake_read(url, timeout):
+            calls.append(url)
+            return buf.getvalue() if url.endswith(".zip") or "%E6%AD%B7" in url else None      # 逐日檔 404,月壓縮檔有
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(T, "_read", fake_read):
+            t = T.fetch_vix_ticks(date(2026, 8, 7), archive_dir=d)
+            self.assertEqual(len(t), 2)
+            self.assertTrue((Path(d) / "zip" / "202608.zip").exists())            # 壓縮檔存本機
+            n = len(calls)
+            T.fetch_vix_ticks(date(2026, 8, 7), archive_dir=d)
+            self.assertEqual(len(calls), n + 1)                                    # 第二次只再嘗試逐日檔,壓縮檔不重下載
+
 
 if __name__ == "__main__":
     unittest.main()

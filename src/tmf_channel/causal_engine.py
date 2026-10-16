@@ -305,6 +305,22 @@ def load_vixtwn_delta(db_path: Path | None = None, source: str = "computed") -> 
         if i == 0:
             continue
         out[d] = closes[d] - closes[dates[i - 1]]
+    if source == "computed":
+        # 2026-10:'computed'(TXO 自算備援)曾自 10/01 停更而無人察覺,引擎因此一直拿最後一筆舊 Δ 當偏向。
+        # 這裡只『延伸』:computed 最後日期之後,改用官方逐日收盤(finmind 歷史 / taifex 新資料,同一份
+        # 期交所序列)自己算 Δ;computed 已涵蓋的日期完全不動(研究/回測結果不變)。
+        last = dates[-1] if dates else ""
+        orows = con.execute(
+            "SELECT date, close FROM market_vix_daily "
+            "WHERE symbol='VIXTWN' AND source IN ('finmind','taifex') AND close IS NOT NULL ORDER BY date, source"
+        ).fetchall()
+        off: dict[str, float] = {}
+        for d, c in orows:
+            off.setdefault(d, float(c))               # 同日兩來源值相同,取先到者
+        odates = sorted(off)
+        for i, d in enumerate(odates):
+            if i > 0 and d > last:
+                out[d] = off[d] - off[odates[i - 1]]
     return out
 
 
