@@ -14,6 +14,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, time as dt_time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,7 +46,6 @@ from research.backtest.rrg_mono_score_swap_c import (
     held_accel_bypass_on_spread_lost,
     prior_ret_gate_allows,
 )
-from order.c18acc_order_config import assert_pool_matches_champion
 from rrg_mono_daily_brief import (
     LENGTH,
     MAX_SLOTS,
@@ -136,6 +136,32 @@ class ScreenResult:
     lead_drift: str = ""
     blocker: str = ""
     extension_alerts: list[ExtensionAlert] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class C18accOrderHooks:
+    """下單層注入點（依賴反轉）：screen 不 import `order.*`，由入口腳本經
+    `order.c18acc_screen_hooks.install()` 注入。任一欄為 None ＝ 該步驟略過（fail-closed）。"""
+
+    assert_pool: Callable[[str], None] | None = None
+    pyramid_cfg: Callable[[], Any] | None = None
+    pyramid_scan: Callable[..., Any] | None = None
+    pyramid_record: Callable[..., None] | None = None
+    process_orders: Callable[..., tuple[dict[str, Any] | None, list[Any] | None]] | None = None
+    send_fill_report: Callable[[list[dict[str, Any]]], None] | None = None
+    send_pool_digest: Callable[..., Any] | None = None
+
+
+_HOOKS: C18accOrderHooks | None = None
+
+
+def install_order_hooks(hooks: C18accOrderHooks | None) -> None:
+    global _HOOKS
+    _HOOKS = hooks
+
+
+def _hook(name: str) -> Callable[..., Any] | None:
+    return getattr(_HOOKS, name, None) if _HOOKS is not None else None
 
 
 def _scan_row_to_dict(row: ScanRow) -> dict[str, Any]:
@@ -239,7 +265,9 @@ def _resolve_champion_config(config: ScoreSwapCConfig | None = None) -> ScoreSwa
     env_ntb = os.environ.get("C18ACC_NO_TRADE_BEFORE", "").strip()
     if env_ntb and str(cfg.no_trade_before) != env_ntb:
         cfg = replace(cfg, no_trade_before=env_ntb)
-    assert_pool_matches_champion(str(cfg.candidate_pool))
+    guard = _hook("assert_pool")
+    if guard is not None:
+        guard(str(cfg.candidate_pool))
     return cfg
 
 
@@ -2210,21 +2238,17 @@ def run_screen(
                     sold_ids.add(alert.stock_id)
             result.actions = actions
 
-    from order.c18acc_monitor_config import load_c18acc_pyramid_add_monitor_config
-    from order.c18acc_position_monitor import scan_c18acc_pyramid_adds
-    from order.c18acc_pyramid_ledger import append_pyramid_entry, load_c18acc_pyramid_ledger
-
-    pyr_cfg = load_c18acc_pyramid_add_monitor_config()
-    if pyr_cfg.enabled:
+    pyr_cfg_fn = _hook("pyramid_cfg")
+    pyr_cfg = pyr_cfg_fn() if pyr_cfg_fn is not None else None
+    if pyr_cfg is not None and pyr_cfg.enabled:
         session_dates = close.index.astype(str).tolist()
-        pyr_scan = scan_c18acc_pyramid_adds(
+        pyr_scan = _hook("pyramid_scan")(
             conn,
-            state={"slots": slots},
-            session_date=session,
+            slots=slots,
+            session=session,
             poll_minute=poll_minute,
             trading_dates=session_dates,
-            pyramid_cfg=pyr_cfg,
-            ledger=load_c18acc_pyramid_ledger(),
+            cfg=pyr_cfg,
         )
         for hit in pyr_scan.hits:
             px = _kbar_px_at(
@@ -2246,17 +2270,7 @@ def run_screen(
                     slot=hit.position.slot,
                 )
             )
-            append_pyramid_entry(
-                pyramid_parent_cid=hit.position.parent_cid,
-                symbol=hit.position.symbol,
-                session_date=session,
-                poll_minute=poll_minute,
-                slot=hit.position.slot,
-                status="dry_run" if dry else "intent_emitted",
-                dry_run=dry,
-                note=hit.reason,
-                ledger=load_c18acc_pyramid_ledger(),
-            )
+            _hook("pyramid_record")(hit, session=session, poll_minute=poll_minute, dry=dry)
         result.actions = actions
 
     new_last_poll = _fill_entry_narrative(
@@ -2281,20 +2295,16 @@ def run_screen(
 
     state_actions = actions
     order_submit: dict[str, Any] | None = None
-    from order.c18acc_order_config import load_c18acc_order_config
-
-    c18_order_cfg = load_c18acc_order_config()
-    if c18_order_cfg.order_enabled and (c18_order_cfg.auto_submit or not dry):
-        from order.c18acc_order import process_c18acc_orders
-
-        order_submit = process_c18acc_orders(
+    process_orders = _hook("process_orders")
+    if process_orders is not None:
+        order_submit, applied = process_orders(
             actions,
             session_date=session,
             poll_minute=poll_minute,
-            dry_run=dry or not c18_order_cfg.auto_submit,
+            dry=dry,
         )
-        if not dry and c18_order_cfg.auto_submit:
-            state_actions = list(order_submit.get("applied_actions") or [])
+        if applied is not None:
+            state_actions = applied
 
     if apply:
         work_state = {**state, "slots": [dict(p) for p in state.get("slots") or []]}
@@ -2367,22 +2377,14 @@ def main(argv: list[str] | None = None) -> int:
     order_submit = getattr(result, "order_submit", None)
     if isinstance(order_submit, dict):
         rows = [r for r in (order_submit.get("results") or []) if isinstance(r, dict)]
-        if rows:
-            from order.order_fill_report import maybe_send_fill_report
-
-            maybe_send_fill_report(
-                rows,
-                sleeve="C18acc",
-                env_flag="RUN_RRG_C18ACC_EMAIL",
-                header="C18acc 下單結果（白話成交報告）",
-            )
+        send_fill_report = _hook("send_fill_report")
+        if rows and send_fill_report is not None:
+            send_fill_report(rows)
     # E@NTB（13:00）：同日候選池鎖定輪 · 寄候選 + 擋單原因（即使無成交）
     import json
     from pathlib import Path
 
     from stock_db import DATA_DIR
-    from order.order_fill_report import maybe_send_c18acc_pool_digest
-
     state: dict = {}
     slots_path = DATA_DIR / "rrg_c18acc_slots.json"
     if slots_path.is_file():
@@ -2401,24 +2403,26 @@ def main(argv: list[str] | None = None) -> int:
         }
         for r in (result.mono_top10 or [])
     ]
-    maybe_send_c18acc_pool_digest(
-        session_date=result.session_date,
-        poll_minute=result.poll_minute,
-        pool_as_of=result.pool_as_of or "",
-        pool=pool_rows,
-        slots=list(result.slots or []),
-        lead=result.lead or "",
-        lead_drift=result.lead_drift or "",
-        entry_gate=result.entry_gate or "",
-        blocker=result.blocker or "",
-        spread_gate_snapshot=state.get("spread_gate_snapshot")
-        if isinstance(state.get("spread_gate_snapshot"), dict)
-        else None,
-        entry_confirm=state.get("entry_confirm")
-        if isinstance(state.get("entry_confirm"), dict)
-        else None,
-        actions_n=len(result.actions or []),
-    )
+    send_pool_digest = _hook("send_pool_digest")
+    if send_pool_digest is not None:
+        send_pool_digest(
+            session_date=result.session_date,
+            poll_minute=result.poll_minute,
+            pool_as_of=result.pool_as_of or "",
+            pool=pool_rows,
+            slots=list(result.slots or []),
+            lead=result.lead or "",
+            lead_drift=result.lead_drift or "",
+            entry_gate=result.entry_gate or "",
+            blocker=result.blocker or "",
+            spread_gate_snapshot=state.get("spread_gate_snapshot")
+            if isinstance(state.get("spread_gate_snapshot"), dict)
+            else None,
+            entry_confirm=state.get("entry_confirm")
+            if isinstance(state.get("entry_confirm"), dict)
+            else None,
+            actions_n=len(result.actions or []),
+        )
     return 0
 
 

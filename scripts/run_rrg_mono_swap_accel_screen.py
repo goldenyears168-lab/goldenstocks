@@ -9,7 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from order.c18acc_screen_hooks import install
 from rrg_mono_swap_accel_screen import main
 
 if __name__ == "__main__":
+    install()  # 注入下單層 hooks（screen 本身不 import order.*）
     raise SystemExit(main())

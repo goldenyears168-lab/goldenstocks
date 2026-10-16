@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from order.c18acc_screen_hooks import install as install_c18acc_order_hooks
 from project_dotenv import load_project_dotenv
 from rrg_mono_swap_accel_screen import run_screen, ScreenResult
 from stock_db import DEFAULT_DB_PATH, connect
@@ -279,4 +280,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    install_c18acc_order_hooks()  # screen 不再 import order.*，由入口注入
     raise SystemExit(main())
