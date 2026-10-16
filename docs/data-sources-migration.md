@@ -14,8 +14,10 @@
 | TMF 引擎 VIX lag1 偏向 | `market_vix_daily` 的 `computed`（TXO 自算，**2026-10-01 起停更**） | 官方逐日收盤延伸 | **程式已改、尚未載入實彈** | 只延伸 `computed` 之後的日期；需 `scripts/order/tmf_cutover.sh` 才生效 |
 | 分點買賣（專家池＋持倉監控） | `TaiwanStockTradingDailyReport` | 富邦行情站 `fubon-ebrokerdj`：個股前 15 名（精確張數）＋專家核心分點（依分點頁，張數／金額排名），`source='fubon'`（`fubon_branch_tape`） | **已完成** | 專家池配對召回 96.7%；持倉賣方口徑淨賣 ≥5,000 萬 95.4%、≥1 億 99.0%；10/16 已補 3,012 列（67 檔、434 分點）。每檔股票只有前段分點，不是全部 ~800 個 |
 | 專家池/持倉監控的收盤價 | `stock_daily_bars` 的 `source='finmind'` | 官方日線（`twse_mi_index`／`tpex_daily`），補檔時 `official_bars.ensure_official_bars` 先確保當日資料 | **已完成** | 原本官方日線 22:45 才由 limitup-fade 順手回補，比 20:05／20:10 還晚 |
-| 個股三大法人買賣超 | `TaiwanStockInstitutionalInvestorsBuySell` | TWSE T86＋櫃買（`scripts/backfill_twse_institutional.py` 已有） | 待做 | 目前僅回補工具，需排進每日；FinMind 宇宙只有約 71～271 檔，官方可到全市場 |
-| 融資融券／當沖／借券 | `TaiwanStockMarginPurchaseShortSale` 等 | TWSE MI_MARGN、TWTB4U、TWT72U；櫃買對應報表 | 待做 | 借券餘額 TWT72U 已在收盤管線 |
+| 個股三大法人買賣超 | `TaiwanStockInstitutionalInvestorsBuySell` | TWSE T86＋櫃買 insti（`sync_official_chip_daily`，`source='twse_t86'`／`'tpex_insti'`） | **已完成** | 21:10 `chip-margin-catchup` 每日跑；外資／投信與 FinMind 92／94 一致。**同時修正舊回補腳本的櫃買欄位對應錯誤**（舊版把投信寫成 0），2026 年已覆蓋修復 |
+| 融資融券（上市＋上櫃） | `TaiwanStockMarginPurchaseShortSale` | TWSE MI_MARGN（`twse_mi_margn`）＋櫃買 margin/balance（`tpex_margn`） | **已完成** | 與 FinMind 融資餘額 126／126 一致；儀表板波動分數已恢復（42／42） |
+| 當沖（上市） | `TaiwanStockDayTrading` | TWSE TWTB4U（`twse_twtb4u`） | **已完成（僅上市）** | **上櫃當沖尚無可用端點**：儀表板 42 檔中 11 檔上櫃無當沖資料 |
+| 借券餘額 | — | TWSE TWT72U | 本來就官方 | 已在收盤管線 |
 | 外資持股比 | `TaiwanStockShareholding` | TWSE MI_QFIIS＋櫃買 | 待做 | |
 | 個股市值 | `TaiwanStockMarketValue` | 日線收盤價 × 發行股數（`stock_daily_bars.shares_outstanding`） | 待做 | |
 | 月營收、財報、PER、股利 | `TaiwanStockMonthRevenue` 等 | MOPS、TWSE（BWIBBU_d、TWT48U） | 待做 | 每週日跑，風險較低 |
@@ -49,6 +51,15 @@
 | 研究／回測 | `research/backtest/*`、`research/chip_relative/panel`、`research/tw100_data_quality` |
 
 處理選項（尚待決定）：(A) 橋接——用官方日線為既有 FinMind 宇宙續寫帶 `adj_close` 的列；(B) 逐一改讀取端同時認官方來源並自行處理還原價；(C) 接受這些功能停在 10/15。
+
+## 三之二、2026-10-17 決定：RRG／VCP／Lens 不再維護，接受停在 10/15（選項 C）；之後只處理儀表板內容
+
+- 上表第三節的 25 個檔案中，RRG 宇宙、VCP 漏斗、Lens 相關**不再處理**。
+- 已處理的儀表板內容：主表「波動分數」（融資餘額＋借券餘額）、頁首 VIXTWN、個股詳情頁的法人／融資／借券。
+- **未處理、需要決定**：
+  - `/chips` 籌碼 SOP：`chip_sop.py` 要求每檔每日至少 100 個分點且合計量達成交量一定比例；富邦只有前 15 名，所以 10/16 起一律顯示「分點未完整」。
+  - 個股詳情頁：外資持股、鉅額、Beta、分點集中度（同樣要求 ≥100 個分點，會消失）。
+  - `capitulation-oos-accumulate`（19:00）以 `rrg_universe_scores` 的最新 `close` 快照累積 OOS 事件；該快照已停在 10/15，會每天用同一份舊資料累積而不報錯。
 
 ## 四、已知限制（誠實版）
 
