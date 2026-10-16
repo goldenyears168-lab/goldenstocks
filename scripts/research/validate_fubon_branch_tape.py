@@ -114,6 +114,24 @@ def main():
                 elif inpage:
                     stat["spurious"] += 1
         print(f"  [{i + 1}/{len(branches)}] {b} 完成", flush=True)
+    # ---- 持倉賣方監控口徑:37 個專家分點 × DB 內所有被補檔的股票(含持倉),門檻淨賣 ≥2500 萬 / ≥5000 萬 ----
+    allrows = db.execute(f"select trade_date,securities_trader_id,stock_id,buy,sell from stock_broker_branch_daily where trade_date in ({','.join('?' * len(dates))}) and securities_trader_id in ({','.join('?' * len(branches))})", dates + branches).fetchall()
+    sids_all = sorted({r[2] for r in allrows})
+    px2 = {(sid, d): c for sid, d, c in db.execute(f"select stock_id,trade_date,close from stock_daily_bars where trade_date in ({','.join('?' * len(dates))}) and stock_id in ({','.join('?' * len(sids_all))})", dates + sids_all)} if sids_all else {}
+    sell, buy = [], []
+    for d, b, sid, bu, se in allrows:
+        c = px2.get((sid, d))
+        if not c:
+            continue
+        net = ((bu or 0) - (se or 0)) * c
+        pg = fetch(b, d, cache, a.sleep, a.kind)                   # 皆為快取命中
+        (sell if net < 0 else buy).append((abs(net), sid in pg["rows"]))
+    print(f"\n== 持倉賣方監控口徑(分點 {len(branches)} × DB 標的 {len(sids_all)} 檔 × {len(dates)} 日,排名模式 {a.kind}) ==")
+    for lab, arr in (("淨賣", sell), ("淨買", buy)):
+        for thr, nm in ((1e7, "≥1000 萬"), (2.5e7, "≥2500 萬(soft 下限)"), (5e7, "≥5000 萬(panel/hard)"), (1e8, "≥1 億")):
+            sel = [x for x in arr if x[0] >= thr]
+            if sel:
+                print(f"  {lab} {nm:<20} n={len(sel):>4}  召回 {sum(1 for x in sel if x[1])}/{len(sel)} = {sum(1 for x in sel if x[1]) / len(sel):.1%}")
     print("\n== 彙總 ==")
     print(json.dumps(stat, ensure_ascii=False))
     if stat["db_rows"]:
