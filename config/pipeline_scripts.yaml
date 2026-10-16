@@ -37,14 +37,6 @@ scripts:
     module: src/vcp_funnel_specs_daily.py
     strategy_ids: [vcp-pivot-gate, vcp-coil-close]
 
-  run_stock_daily_lens:
-    path: scripts/run_stock_daily_lens.py
-    layer: pipeline
-    pipeline: daily_close
-    node: stock_daily_lens
-    module: src/stock_daily_lens.py
-    env_flag: RUN_STOCK_DAILY_LENS
-
   run_copytrade_l1h9_daily_brief:
     path: scripts/run_copytrade_l1h9_daily_brief.py
     layer: pipeline

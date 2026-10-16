@@ -15,8 +15,6 @@ echo "=============================================="
 echo ""
 
 export SYNC_PROFILE="evening-holdings"
-export RUN_STOCK_DAILY_LENS="${RUN_STOCK_DAILY_LENS:-0}"
-export RUN_SUPABASE_LENS_SYNC="${RUN_SUPABASE_LENS_SYNC:-0}"
 "${ROOT}/scripts/daily_sync.sh" --holdings-only --holdings-report
 EXIT=$?
 

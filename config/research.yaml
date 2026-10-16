@@ -5051,7 +5051,6 @@ topics:
     parent_strategy: rrg-mono-hold7
     baseline_strategy: rrg-mono-hold7
     run_scripts:
-      - scripts/research/archive/backfill_rrg_lens_backtest_data.py
       - scripts/research/archive/run_rrg_lens_score_swap.py
       - scripts/research/archive/run_rrg_lens_score_swap_phase1_parallel.sh
       - scripts/research/archive/summarize_rrg_lens_score_swap.py

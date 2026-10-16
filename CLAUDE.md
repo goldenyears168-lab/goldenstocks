@@ -147,7 +147,7 @@ Gate 兩層且皆須通過：`config/strategies.yaml` 的 `enabled`（registry g
 ⚠️ 關掉 `rrg-mono-swap-accel` 的副作用（已處理，但值得記住這個模式）：`rrg_universe_close` 原本 gate 是 `hold7 OR swap-accel`（`match: any`），而 hold7 早已 disabled，所以 swap-accel 是**唯一**還撐著它的——一關就會讓 `rrg_universe_scores` 的 `screen_kind='close'` 停止寫入，而它有兩個活的消費者：
 
 - `capitulation-oos-accumulate`（launchd · 平日 19:00）取 `MAX(session_date) WHERE screen_kind='close'`，停寫後會凍在舊日期、每天拿同一份舊快照繼續累積 OOS 事件——**不會報錯**，但會污染 OOS ledger
-- `stock_daily_lens`（收盤 · `RUN_STOCK_DAILY_LENS=1`）呼叫 `load_rrg_universe_scores(conn, date, "close")` 三次 → 上網站
+- ~~`stock_daily_lens`~~（2026-10 已移除；原本也消費 `screen_kind='close'`，現僅 `capitulation-oos-accumulate` 一個消費者）
 
 已把該步從 registry gate 解耦（`src/pipeline_gates.py` · `strategy_ids: ()`，純 infra 只吃 `RUN_RRG_UNIVERSE_CLOSE`），並補測試釘住。**教訓**：退役策略前先查 `_DAILY_SYNC_STEPS` 裡有沒有 `match: any` 的步驟把它列為 parent——那種 gate 會在最後一個 parent 被關掉時靜默熄火。
 

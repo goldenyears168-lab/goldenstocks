@@ -23,8 +23,6 @@ outputs:
   - reports/daily/vcp_funnel_specs_daily_brief.md
   - data/stocks.db
   - data/stocks.db · rrg_universe_scores（screen_kind=close）
-  - data/stocks.db · stock_daily_lens · lens_daily_alert
-  - stock_research.stock_daily_lens · lens_daily_alert（Supabase · RUN_SUPABASE_LENS_SYNC=1）
 
 phases:
   - id: ingest_market
@@ -163,19 +161,6 @@ phases:
         env_default: "1"
         requires:
           - constituent stock_daily_bars for as_of（建議 RUN_STOCK_MARKET_SYNC=1）
-        fail_kind: aux
-
-      - id: stock_daily_lens
-        label: cross-layer lens + delta + convergence → Supabase
-        module: src/stock_daily_lens.py
-        run_script: scripts/run_stock_daily_lens.py
-        env_flag: RUN_STOCK_DAILY_LENS
-        env_default: "0"  # Supabase 已停用（2026-08-17）；lens 核心會讀 Supabase，預設關
-        requires:
-          - etf_daily_report
-          - regime_daily_brief
-          - rrg_universe_close
-          - vcp_funnel_close
         fail_kind: aux
 
   - id: human_digest

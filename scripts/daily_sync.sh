@@ -4,7 +4,6 @@
 #   2. EZMoney / 凱基 / 群益 / 野村官網持股 → etf_holdings
 #   3. TSM ADR / SOX / 台指期 gap → tech_risk_daily_snapshot
 #   4. 持股 changes + 跨 ETF 共識（≥2 snapshot_date）
-#   5. 16:30 尾段：stock_daily_lens + lens_daily_alert → Supabase（RUN_STOCK_DAILY_LENS）
 # 選用：ENABLE_FINMIND_SIGNAL=1 才跑法人（需 FinMind 權限；403 時請勿開啟）
 
 set -euo pipefail
@@ -83,12 +82,7 @@ _apply_sync_profile() {
       export RUN_RRG_IMPROVING_WATCH=0
       export RUN_RRG_UNIVERSE_TIMELINE=0
       export RUN_VCP_FUNNEL_CLOSE=0
-      export RUN_STOCK_DAILY_LENS=0
-      export RUN_SUPABASE_RESEARCH_SYNC=0
-      export RUN_SUPABASE_LENS_SYNC=0
-      export RUN_STRATEGY_PERF_SYNC=0
-      export RUN_SUPABASE_SIGNAL_SYNC=0
-      log_line "SYNC_PROFILE=slim（僅 ingest + Facts + Regime；策略軌與 Lens 關閉）"
+      log_line "SYNC_PROFILE=slim（僅 ingest + Facts + Regime；策略軌關閉）"
       ;;
     full)
       log_line "SYNC_PROFILE=full（沿用 .env RUN_* 預設）"
@@ -634,14 +628,6 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
   else
     log_line "--- market probe radar ---"
     log_line "  SKIP（RUN_MARKET_PROBE_RADAR=0）"
-  fi
-
-  if [[ "${RUN_STOCK_DAILY_LENS:-0}" != "0" ]]; then   # 預設關：lens 核心會讀已停用的 Supabase（2026-08-18 踩坑）
-    run_step_optional "stock_daily_lens + lens_daily_alert" \
-      "$PYTHON" "${ROOT}/scripts/run_stock_daily_lens.py" || true
-  else
-    log_line "--- stock_daily_lens ---"
-    log_line "  SKIP（RUN_STOCK_DAILY_LENS=0）"
   fi
 fi
 
