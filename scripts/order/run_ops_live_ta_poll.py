@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
                 # 盤中每輪重算 + 推「持倉穩定度分級」卡片（非致命，失敗不中斷 poll）
                 if not args.dry_run:
                     try:
-                        from ops_console_sync import insert_snapshot, supabase_ops_configured
+                        from ops_console_sync import insert_snapshot
                         from ops_holdings_stability import build_holdings_stability_payload
 
                         if supabase_ops_configured():

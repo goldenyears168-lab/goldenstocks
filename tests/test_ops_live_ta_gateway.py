@@ -68,3 +68,15 @@ class WithGatewayTest(_Reset):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PollScriptScopeTest(unittest.TestCase):
+    def test_main_does_not_shadow_module_level_supabase_check(self):
+        """回歸：main() 內重複 import supabase_ops_configured 會讓第 125 行 UnboundLocalError。"""
+        import symtable
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "order" / "run_ops_live_ta_poll.py"
+        top = symtable.symtable(path.read_text(encoding="utf-8"), str(path), "exec")
+        main = next(c for c in top.get_children() if c.get_name() == "main")
+        self.assertNotIn("supabase_ops_configured", main.get_locals())
