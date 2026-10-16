@@ -21,6 +21,7 @@ import threading
 import time
 
 import futures_flow as FF
+from biglot import mtx_retail_proxy as MP
 from stock_db import DATA_DIR
 
 CACHE = DATA_DIR.parent / "cache"
@@ -264,9 +265,31 @@ def share_diff(w, g1="B", g2="R"):
     return (n(g1) - n(g2)) / w["amt"] * 100
 
 
+def _now():
+    return dt.datetime.now()
+
+
+STALE_SEC = 90
+
+
+def freshness(last_ts, in_session, now=None):
+    """資料新鮮度(最新資料的年齡,與管線是否成功分開):
+    ('idle'|'missing'|'fresh'|'stale', 年齡秒)。非交易時段一律 idle;交易時段沒有資料=missing;超過 STALE_SEC=stale。"""
+    now = now or _now()
+    if not in_session:
+        return "idle", None
+    if not last_ts:
+        return "missing", None
+    try:
+        age = (now - dt.datetime.fromisoformat(last_ts[:19])).total_seconds()
+    except ValueError:
+        return "missing", None
+    return ("stale" if age > STALE_SEC else "fresh"), age
+
+
 def market_status(now=None):
     """依時鐘判斷盤別狀態(日盤 08:45~13:45、夜盤 15:00~次日 05:00,週一至週五;不含國定假日)。"""
-    now = now or dt.datetime.now()
+    now = now or _now()
     m = now.hour * 60 + now.minute
     wd = now.weekday()
     if wd < 5 and 8 * 60 + 45 <= m < 13 * 60 + 45:
@@ -278,7 +301,7 @@ def market_status(now=None):
 
 def _is_active(key, now=None):
     """盤別 key=(stype, T) 此刻是否正在交易(日盤:當天 08:45~13:45;夜盤:開始日 15:00 起到次日 05:00)。"""
-    now = now or dt.datetime.now()
+    now = now or _now()
     status, ok = market_status(now)
     if not ok:
         return False
@@ -549,31 +572,32 @@ def _body(root, sel):
     cur = want or order[-1]
     S = summarize(sessions[cur])
     pct = percentiles(sessions[cur], cur, sessions, order)
-    status, in_session = market_status()
+    now = _now()
+    status, in_session = market_status(now)
     is_latest = cur == order[-1]
-    now = dt.datetime.now()
     live = in_session and is_latest            # 最新盤別、且正在交易時段:不論是預設頁或固定網址都每秒更新
     o = []
-    o.append(f"<h3>期貨 大單−散戶 · {FUT_NAME[root]} <span class='meta'>{now:%H:%M:%S}</span>"
+    o.append(f"<h3>期貨 大單−散戶 · {FUT_NAME[root]} <span class='meta ffclk'>{now:%H:%M:%S}</span>"
              f"<span class='chip {'on' if in_session else 'off'}'>{html_mod.escape(status)}</span></h3>")
     o.append("<div>" + "".join(f"<a class='tab{' on' if r == root else ''}' href='/futflow?root={r}'>{FUT_NAME[r]}</a>" for r in ROOTS) + "</div>")
     o.append("<div>" + "".join(f"<a class='tab{' on' if k == cur else ''}' href='/futflow?root={root}&s={k[0]}|{k[1]}' title='{html_mod.escape(_sess_title(*k))}'>{html_mod.escape(_sess_label(*k))}</a>"
                                for k in reversed(order[-8:])) + "</div>")
     chg = (S["close"] / S["open"] - 1) * 100 if S["open"] else 0
     flags = []
-    if is_latest and in_session and last_ts:
-        try:
-            age = (now - dt.datetime.fromisoformat(last_ts[:19])).total_seconds()
-            if age > 90:
-                flags.append(f"<span class='warnv'>⚠ 最新成交已 {age:.0f} 秒前,資料可能中斷</span>")
-        except ValueError:
-            pass
+    if is_latest:
+        fr, age = freshness(last_ts, in_session, now)
+        if fr == "stale":
+            flags.append(f"<span class='warnv'>⚠ 資料過舊:最新成交已 {age:.0f} 秒前,可能中斷</span>")
+        elif fr == "missing":
+            flags.append("<span class='warnv'>⚠ 交易時段內沒有資料</span>")
     if S["vol"] < _min_vol(root) or S["minutes"] < 15:
         flags.append("<span class='warnv'>⚠ 樣本不足(本盤未滿 15 分鐘或成交量太少),占比會劇烈跳動</span>")
     o.append(f"<div class='meta'>{html_mod.escape(_sess_title(*cur))} · 開 {S['open']:,.0f} 高 {S['hi']:,.0f} 低 {S['lo']:,.0f} 收／現 {S['close']:,.0f} "
              f"(<span class='{_cls(chg)}'>{chg:+.2f}%</span>) · 成交 {S['vol']:,} 口 · 成交額 {S['amt'] / 1e8:,.1f} 億 {' '.join(flags)}</div>")
     o.append("<div class='sect'>本盤／5分／30分 主動買賣</div>")
     o.append(_summary_table(S, pct))
+    if root == "MXF":                              # 小台持倉估計:只對應期交所 MTX,微台沒有校準
+        o.append(MP.render_block(MP.estimate(sessions), html_mod.escape))
     o.append("<div class='sect'>價格與累計淨額(疊圖)</div>")
     o.append(_overlay_svg(S))
     o.append("<div class='sect'>逐 5 分鐘(新→舊)</div>")
@@ -595,6 +619,7 @@ def _body(root, sel):
 
 
 _JS = """<div id='fftip' style='position:fixed;display:none;z-index:9;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:3px 7px;font-size:11px;pointer-events:none'></div>
+<script src='/assets/live.js?v=1'></script>
 <script>(function(){
 var el=document.getElementById('ffapp');
 function bind(){document.querySelectorAll('svg.ffsvg').forEach(function(s){
@@ -605,12 +630,9 @@ function bind(){document.querySelectorAll('svg.ffsvg').forEach(function(s){
   t.innerHTML=b[1]+' 價 '+b[2].toLocaleString()+'<br><span style="color:#ff7b72">大單 '+b[3].toLocaleString()+'萬</span> <span style="color:#8b949e">中單 '+b[4].toLocaleString()+'萬</span> <span style="color:#58a6ff">散戶 '+b[5].toLocaleString()+'萬</span>';
   t.style.left=(e.clientX+12)+'px';t.style.top=(e.clientY+12)+'px';t.style.display='block'};
  s.onmouseleave=function(){document.getElementById('fftip').style.display='none'}})}
-bind();
-if(el.dataset.live!=='1')return;
-async function tick(){try{var sc=[].map.call(el.querySelectorAll('.wrap'),function(w){return w.scrollLeft});
- var r=await fetch(el.dataset.u+'&_='+Date.now());if(!r.ok)return;var h=await r.text();
- el.innerHTML=h;el.querySelectorAll('.wrap').forEach(function(w,i){if(sc[i])w.scrollLeft=sc[i]});bind()}catch(e){}}
-setInterval(tick,1000)})();</script>"""
+bind();LiveClock('.ffclk');
+if(el.dataset.live==='1')LiveFrag({el:el,url:el.dataset.u,interval:1000,onSwap:bind});
+})();</script>"""
 
 
 def render_futflow_frag(root="MXF", sel=""):
