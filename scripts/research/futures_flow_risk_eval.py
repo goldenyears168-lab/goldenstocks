@@ -55,7 +55,7 @@ def collect(root):
             continue
         w = windows(stype, rows)
         if len(w) >= MIN_WINDOWS:
-            per[T >= FREEZE_FIRST_CONFIRM].append((T, w))
+            per[T >= FREEZE_FIRST_CONFIRM].append(((stype, T), w))
     return per
 
 
@@ -78,7 +78,7 @@ def evaluate(sessions, beta):
         "R1": np.array([abs(w[0] - beta * w[2]) for _, w in rec]),
         "R2": np.array([-w[0] * w[1] for _, w in rec]),
     }
-    Ts = np.array([T for T, _ in rec])
+    Ts = np.array([f"{k[0]}|{k[1]}" for k, _ in rec])   # session = (盤別, 日期);日夜盤同日不可合併
     res = {}
     for h, f in feats.items():
         cs = []
