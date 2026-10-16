@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from order.signal_radar_holdings import install as install_radar_holdings
 from project_dotenv import load_project_dotenv
 from stock_db import DEFAULT_DB_PATH, connect
 from strategy_signal_radar import print_sell_radar_log, run_sell_signal_radar, write_radar_report
@@ -71,4 +72,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    install_radar_holdings()  # 雷達不再 import order.*，由入口注入唯讀持倉查詢
     raise SystemExit(main())

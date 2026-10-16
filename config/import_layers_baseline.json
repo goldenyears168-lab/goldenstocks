@@ -1,9 +1,6 @@
 {
  "edges": {
-  "R1": [
-   "strategy_signal_radar -> order.fubon_orders",
-   "strategy_signal_radar -> order.fubon_session"
-  ],
+  "R1": [],
   "R3": [
    "buy_observation -> research.backtest.rrg_mono_backtest",
    "buy_observation -> research.backtest.rrg_mono_intraday_ab",
@@ -39,6 +36,6 @@
    "tmf_channel.causal_engine -> research.intraday_direction_thermometer"
   ]
  },
- "lazy_only_edges": 218,
+ "lazy_only_edges": 217,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }

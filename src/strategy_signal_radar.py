@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, time as dt_time
 from pathlib import Path
@@ -444,6 +445,17 @@ def lookup_stock_name(conn: sqlite3.Connection, stock_id: str) -> str:
     return ""
 
 
+# 富邦持倉讀取注入點（依賴反轉）：本模組不 import `order.*`（R1）；
+# 由入口腳本經 `order.signal_radar_holdings.install()` 注入。未注入 ＝ 不碰券商，
+# load_sell_radar_holdings 依既有降級路徑改讀 order_holdings_snapshot。唯讀（inventories），不送單。
+_HOLDINGS_FETCHER: Callable[[], dict[str, int]] | None = None
+
+
+def install_holdings_fetcher(fetcher: Callable[[], dict[str, int]] | None) -> None:
+    global _HOLDINGS_FETCHER
+    _HOLDINGS_FETCHER = fetcher
+
+
 def fetch_fubon_holdings() -> tuple[dict[str, int], str | None]:
     """Return (symbol→shares, error). Graceful fail when credentials missing."""
     override = os.environ.get("SIGNAL_RADAR_HOLDINGS_OVERRIDE", "").strip()
@@ -459,12 +471,11 @@ def fetch_fubon_holdings() -> tuple[dict[str, int], str | None]:
 
     if not _env_flag("SIGNAL_RADAR_USE_FUBON", "1"):
         return {}, "SIGNAL_RADAR_USE_FUBON=0"
+    fetcher = _HOLDINGS_FETCHER
+    if fetcher is None:
+        return {}, "holdings fetcher not installed"
     try:
-        from order.fubon_session import connect_fubon
-        from order.fubon_orders import holdings_shares_by_symbol
-
-        session = connect_fubon(realtime=False)
-        return holdings_shares_by_symbol(session), None
+        return fetcher(), None
     except Exception as exc:
         return {}, str(exc)
 

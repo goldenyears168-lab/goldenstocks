@@ -2,7 +2,7 @@
 """src/ import 層級棘輪檢查（ratchet）：現有違規記在 baseline，只許減、不許增。
 
 規則（SSOT 說明見 docs/src-map.md「依賴規則」）：
-  R1 非下單層模組不得 import order.* / tmf_channel*          （baseline 容許既有）
+  R1 非下單層模組不得 import order.* / tmf_channel*          （嚴格；2026-10 已清零，baseline 必為空）
   R2 L3 收盤主線不得 import research.* 或 order.*             （嚴格，baseline 必為空）
   R3 平坦 L4 模組不得 import research.*                       （baseline 容許既有）
   R4 下單層不得 import research.*                             （baseline 容許既有）
@@ -169,7 +169,7 @@ def analyse(src: Path) -> dict:
     }
 
 
-STRICT = {"R2"}
+STRICT = {"R1", "R2"}
 
 
 def compare(cur: dict, base: dict) -> tuple[list[str], list[str]]:
@@ -214,7 +214,7 @@ def main(argv=None) -> int:
         if errors:
             print("有新違規，拒絕更新 baseline：", *errors, sep="\n  ")
             return 1
-        for rule in ("R1", "R3", "R4"):
+        for rule in ("R3", "R4"):
             base["edges"][rule] = sorted(set(base["edges"].get(rule, [])) & set(cur["edges"][rule]))
         base["lazy_only_edges"] = min(base.get("lazy_only_edges", cur["lazy_only_edges"]), cur["lazy_only_edges"])
         a.baseline.write_text(json.dumps(base, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

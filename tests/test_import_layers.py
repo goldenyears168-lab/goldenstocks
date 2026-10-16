@@ -37,10 +37,17 @@ class DetectionTest(unittest.TestCase):
                           "research/backtest/x.py": ""})
         self.assertTrue(any(e.startswith("R2") for e in errs))
 
-    def test_strategy_importing_order_flagged_then_baselined(self):
+    def test_strategy_importing_order_is_strict_even_if_baselined(self):
         files = {"radar.py": "from order.fubon import x\n", "order/__init__.py": "", "order/fubon.py": ""}
         self.assertTrue(any(e.startswith("R1") for e in self._run(files)))
         base = {"edges": {"R1": ["radar -> order.fubon"]}, "lazy_only_edges": 0}
+        self.assertTrue(any(e.startswith("R1") for e in self._run(files, base)))
+
+    def test_flat_importing_research_can_be_baselined(self):
+        files = {"brief.py": "from research.backtest.x import y\n", "research/__init__.py": "",
+                 "research/backtest/__init__.py": "", "research/backtest/x.py": ""}
+        self.assertTrue(any(e.startswith("R3") for e in self._run(files)))
+        base = {"edges": {"R3": ["brief -> research.backtest.x"]}, "lazy_only_edges": 0}
         self.assertEqual(self._run(files, base), [])
 
     def test_top_level_cycle_flagged(self):
