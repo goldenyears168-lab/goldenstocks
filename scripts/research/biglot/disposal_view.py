@@ -200,7 +200,7 @@ def _shell(active: str, asof: str, body: str) -> str:
     table.dz th{position:sticky;top:0;background:#1a1a1a;color:#8b949e;padding:5px 7px;text-align:right;white-space:nowrap}
     table.dz td{padding:4px 7px;border-bottom:1px solid #222;text-align:right;white-space:nowrap}
     table.dz td.l,table.dz th.l{text-align:left}
-    .r3{color:#ff6b6b;font-weight:700}.r2{color:#ffa657}.r1{color:#d2cf6b}.rj{color:#8b949e}
+    .r3{color:var(--status-error,#f85149);font-weight:700}.r2{color:#ffa657}.r1{color:#d2cf6b}.rj{color:#8b949e}
     .note{color:#8b949e;font-size:11px;line-height:1.7;margin:10px 0;padding:8px 10px;background:#141414;border-left:3px solid #333}
     </style>"""
     return (f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>處置監測</title>"

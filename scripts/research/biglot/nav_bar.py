@@ -12,6 +12,7 @@ MAIN = (
 )
 TOOLS = (
     ("處置監測", "/disposal", ("/disposal",)),
+    ("期貨大戶−散戶", "/futflow", ("/futflow",)),
     ("紙上模擬", "/paper", ("/paper",)),
     ("圖形總覽", "/grid", ("/grid",)),
     ("歷史回放", "/timeline", ("/timeline",)),
@@ -19,9 +20,10 @@ TOOLS = (
     ("故事", "/stories", ("/stories",)),
     ("欄位說明", "/help", ("/help",)),
 )
-SKIP = {"/frag", "/gridfrag", "/agentfrag", "/timelinefrag", "/stockfrag", "/agentsig", "/agentjs"}
+SKIP = {"/assets/ui.css", "/frag", "/gridfrag", "/agentfrag", "/timelinefrag", "/stockfrag", "/agentsig", "/agentjs", "/futflowfrag"}
 
 CSS = (
+    '<link rel="stylesheet" href="/assets/ui.css?v=1">'   # 設計代幣(docs/ui-standard.md);頁面以 var(--名稱,備援值) 引用
     "<style>"
     ".gnav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;margin:-2px 0 8px;padding:6px 10px;"
     "background:#161b22;border:1px solid #30363d;border-radius:8px;font-size:12px}"

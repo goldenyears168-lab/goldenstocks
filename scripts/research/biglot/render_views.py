@@ -139,7 +139,7 @@ html,body{height:100%;margin:0;background:#0d1117;color:#c9d1d9;font:11px/1.35 -
 .cell:hover{border-color:#58a6ff}
 .ch{flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cc{flex:1 1 auto;min-height:0}
-.up{color:#ff7b72}.dn{color:#3fb950}.dim{color:#484f58}.sigup{color:#ff7b72;margin-left:4px}.sigdn{color:#3fb950;margin-left:4px}
+.up{color:var(--price-up,#ff7b72)}.dn{color:var(--price-down,#3fb950)}.dim{color:var(--text-dim,#484f58)}.sigup{color:var(--price-up,#ff7b72);margin-left:4px}.sigdn{color:var(--price-down,#3fb950);margin-left:4px}
 #gtip{position:fixed;display:none;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:11px;color:#e6edf3;pointer-events:none;z-index:9;white-space:nowrap}
 #gline{position:fixed;display:none;width:1px;background:#8b949e;pointer-events:none;z-index:8}
 </style></head><body>

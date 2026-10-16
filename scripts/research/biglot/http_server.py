@@ -23,11 +23,13 @@ import sys
 import threading
 import time
 import urllib.parse as urllib_parse
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import biglot_dashboard
 from biglot import nav_bar
 from biglot.disposal_view import render_disposal
+from biglot.futflow_view import render_futflow, render_futflow_frag
 from biglot.day_views import render_history, render_day, snapshot_day
 from biglot.timeline_snap import render_timeline_page, render_timeline_frag, save_timeline_slot_if_due
 from biglot.stock_meta import render_help
@@ -43,6 +45,19 @@ from biglot.reference_loaders import _refresh_vol_risk_if_needed
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         path, _, qs = self.path.partition("?")
+        if path == "/assets/ui.css":                 # 設計代幣(docs/ui-standard.md);純靜態,不注入導覽列
+            try:
+                data = (Path(__file__).resolve().parent / "static" / "ui.css").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/css; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "public, max-age=300")
+                self.end_headers()
+                self.wfile.write(data)
+            except OSError:
+                self.send_response(404)
+                self.end_headers()
+            return
         if path == "/frag":
             body = biglot_dashboard.PAGE["frag"].encode("utf-8")
         elif path == "/history":
@@ -123,6 +138,12 @@ class H(BaseHTTPRequestHandler):
         elif path == "/disposal":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_disposal(str(q.get("tab", "all"))[:10]).encode("utf-8")
+        elif path == "/futflowfrag":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = render_futflow_frag(str(q.get("root", "MXF"))[:4], str(q.get("s", ""))[:20]).encode("utf-8")
+        elif path == "/futflow":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = render_futflow(str(q.get("root", "MXF"))[:4], str(q.get("s", ""))[:20]).encode("utf-8")
         elif path == "/timeline":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             date, hhmm = str(q.get("date", ""))[:10] or None, str(q.get("hhmm", ""))[:5] or None
