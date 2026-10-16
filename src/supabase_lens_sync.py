@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from stock_db import load_lens_daily_alert
-from supabase_research_sync import (
+from supabase_client import (
     _headers,
     _supabase_url,
     allow_scheduled_supabase_push,

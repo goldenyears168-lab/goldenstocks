@@ -643,26 +643,6 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
     log_line "--- stock_daily_lens ---"
     log_line "  SKIP（RUN_STOCK_DAILY_LENS=0）"
   fi
-
-  if [[ "${RUN_SUPABASE_RESEARCH_SYNC:-0}" == "1" ]]; then
-    run_step_optional "Supabase research sync (1300 briefs · VCP close)" \
-      "$PYTHON" "${ROOT}/scripts/sync_research_to_supabase.py" --slot 1300 || true
-    run_step_optional "Supabase research sync (1630 briefs)" \
-      "$PYTHON" "${ROOT}/scripts/sync_research_to_supabase.py" --slot 1630 || true
-  else
-    log_line "--- Supabase research sync (1300 / 1630) ---"
-    log_line "  SKIP（RUN_SUPABASE_RESEARCH_SYNC=0）"
-  fi
-
-  if [[ "${RUN_STRATEGY_PERF_SYNC:-0}" == "1" ]]; then
-    run_step_optional "Supabase strategy_performance_yearly sync" \
-      "$PYTHON" "${ROOT}/scripts/sync_strategy_performance.py" || true
-  fi
-
-  if [[ "${RUN_SUPABASE_SIGNAL_SYNC:-0}" != "0" ]] && [[ "${RUN_SUPABASE_RESEARCH_SYNC:-0}" == "1" ]]; then
-    run_step_optional "Supabase stock_signal_hits index" \
-      "$PYTHON" -c "from project_dotenv import load_project_dotenv; load_project_dotenv(); from supabase_signal_sync import maybe_sync_signal_hits; n=maybe_sync_signal_hits(); print(f'stock_signal_hits: {n} rows')" || true
-  fi
 fi
 
 if [[ "$SHOW_REPORT" -eq 1 ]]; then

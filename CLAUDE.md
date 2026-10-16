@@ -36,7 +36,6 @@ scripts/1630收盤雷達.command                                  # 完整收盤
 
 # 健檢
 PYTHONPATH=src .venv/bin/python src/pipeline_gates.py list-mismatches   # registry vs RUN_* 不一致
-PYTHONPATH=src .venv/bin/python scripts/supabase_health_check.py        # 收盤產物是否 stale
 ```
 
 手寫腳本一律 `PYTHONPATH=src .venv/bin/python scripts/...`（`src/` 是 flat import root，不是 package）。

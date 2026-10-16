@@ -19,7 +19,7 @@ from research.backtest.rrg_mono_backtest import run_breadth_zone_comparison
 from research.backtest.slot_backtest_summary import SlotBacktestConfig
 from research.backtest.slot_portfolio_metrics import portfolio_metrics_for_periods
 from stock_db import DEFAULT_DB_PATH, connect, load_copytrade_signal_days_for_run
-from supabase_research_sync import _headers, supabase_configured
+from supabase_client import _headers, supabase_configured
 
 _TPE = ZoneInfo("Asia/Taipei")
 _BENCHMARK = "IX0001"
@@ -419,7 +419,7 @@ def load_strategy_performance(
 
 
 def _performance_rest_url() -> str:
-    from supabase_research_sync import _supabase_url
+    from supabase_client import _supabase_url
 
     base = _supabase_url().rstrip("/")
     if not base:

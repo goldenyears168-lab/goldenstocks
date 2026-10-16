@@ -30,7 +30,6 @@ scripts/1630收盤雷達.command
 **健康檢查**（registry 與 `RUN_*` 不一致時 WARN）：
 
 ```bash
-PYTHONPATH=src .venv/bin/python scripts/supabase_health_check.py
 PYTHONPATH=src .venv/bin/python src/pipeline_gates.py list-mismatches
 ```
 
@@ -84,17 +83,13 @@ PYTHONPATH=src .venv/bin/python src/pipeline_gates.py list-mismatches
 | `rrg_universe_scores` | RRG 成分股象限（`intraday` / `close`） | 13:00 / 16:30（Python 內建） | `RUN_SUPABASE_RESEARCH_SYNC` |
 | `stock_daily_lens` · `lens_daily_alert` | 跨層 Lens · 當日 headline | 16:30 `daily_sync` | `RUN_SUPABASE_LENS_SYNC`（launchd 預設 1） |
 | `site_content` | 六層靜態頁 · 策略 registry · 採納報告 · catalog 長文 | Readdy 直連 Supabase · authoring 見 [readdy-regime-strategy-lineage.md §7.4](../archives/RETIRED_readdy-regime-strategy-lineage.md) | — |
-| `strategy_performance_yearly` | 已採納策略分年績效 | **手動** `scripts/sync_strategy_performance.py` 或 `RUN_STRATEGY_PERF_SYNC=1` | `RUN_STRATEGY_PERF_SYNC` |
+| `strategy_performance_yearly` | 已採納策略分年績效 | **已移除**（2026-10 Supabase 清理；`strategy_performance_yearly` 僅留計算邏輯供 unified backtest 使用） | `RUN_STRATEGY_PERF_SYNC` |
 
 > `daily_briefs.snapshot_json`：`regime_daily` → `regime-snapshot-v1` · `etf_daily` → **`etf-daily-v1`**（Readdy 直讀，勿 parse MD）。`content_html` 不再 sync。
 
 > Migration **013**（registry 欄位）已部署 · 驗證 SQL 見 [readdy-regime-strategy-lineage.md §7.0](../archives/RETIRED_readdy-regime-strategy-lineage.md)。
 
-**收盤後健康檢查**（公開站是否 stale）：
-
-```bash
-PYTHONPATH=src .venv/bin/python scripts/supabase_health_check.py --notify
-```
+**收盤後健康檢查**：`supabase_health_check` 已於 2026-10 移除（公開站與 Supabase 已退役）。
 
 檢查：`daily_briefs`（1300/1630）· `stock_daily_highlight` · `daily_highlight_alert` · 五軌 `site_content` registry · `RUN_*` 開關 · **pipeline registry 對齊**。FAIL 時 exit 1；`--notify` 送 macOS 通知。
 

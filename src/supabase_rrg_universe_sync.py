@@ -12,7 +12,7 @@ import requests
 
 from market_benchmark import is_trading_date
 from stock_db import load_rrg_universe_scores
-from supabase_research_sync import (
+from supabase_client import (
     _headers,
     _supabase_url,
     allow_scheduled_supabase_push,
