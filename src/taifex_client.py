@@ -4,6 +4,7 @@
   * fetch_futures_institutional(day, futures_id)  三大法人-區分各期貨契約(成交口數 + 未平倉口數)
   * fetch_market_oi_total(day, commodity_id)      期貨每日交易行情『小計』列的全月份未沖銷契約量
   * fetch_vix_ticks(day)                          臺指選擇權波動率指數(VIXTWN)當日 15 秒逐筆(日盤 09:00~13:45)
+  * fetch_futures_daily(day, id, session)         期貨每日交易行情(各到期月):'position'=一般時段、'after_market'=盤後
 
 頁面是 UTF-8 的伺服器端表格,不是正式 API,格式改版時解析會回 None(呼叫端須視為『無資料』而不是 0)。
 請求之間請自行節流(建議 >= 1 秒)。
@@ -206,3 +207,63 @@ def fetch_vix_ticks(day: date, archive_dir=None, timeout: float = 40.0) -> list[
     if day.strftime("%Y%m") < date.today().strftime("%Y%m"):
         return _vix_from_zip(day, archive_dir, timeout)
     return None
+
+
+def _num(tok: str) -> float | None:
+    tok = tok.strip().replace(",", "")
+    return float(tok) if re.fullmatch(r"-?\d+(?:\.\d+)?", tok) else None
+
+
+def parse_futures_daily(text: str, commodity_id: str, day: date, session: str) -> list[dict]:
+    """解析『期貨每日交易行情』主表(各到期月一列),輸出與 FinMind TaiwanFuturesDaily 同形的欄位。
+
+    session='position'(一般時段 08:45~13:45):欄位 開高低收、漲跌、漲跌%、盤後量、一般量、合計量、結算價、未沖銷…
+    session='after_market'(盤後):開高低收、漲跌、漲跌%、成交量、結算價(-)、未沖銷(-)…
+    盤後頁以『交易量歸屬日期』查詢:queryDate=D 的盤後 = D-1 日 15:00 ~ D 日 05:00,與 FinMind 的 date 語意相同。
+    價差列(`202610/202611`)與週契約不收;沒有成交(收盤 '-')的列略過。
+    """
+    i = text.find(f"( {commodity_id} ) 行情表")
+    if i < 0:
+        return []
+    seg = text[i:]
+    j = seg.find("小計:|")
+    seg = seg[: j if j > 0 else len(seg)]
+    out = []
+    row_start = re.compile(r"\|%s \|(\d{6}) \|" % re.escape(commodity_id))
+    starts = list(row_start.finditer(seg))
+    for k, m in enumerate(starts):                  # 依列起點切段(不能讓正規式吃到下一列的開頭)
+        end = starts[k + 1].start() if k + 1 < len(starts) else len(seg)
+        cells = seg[m.end():end].split("|")
+        close = _num(cells[3])
+        if not close:
+            continue
+        pct = re.search(r"-?[\d.]+", cells[5] or "")
+        sign = -1.0 if "▼" in (cells[5] or "") else 1.0
+        vol_idx = 7 if session == "position" else 6
+        vol = _num(cells[vol_idx]) if len(cells) > vol_idx else None
+        out.append(
+            {
+                "date": day.isoformat(),
+                "futures_id": commodity_id,
+                "contract_date": m.group(1),
+                "open": _num(cells[0]),
+                "max": _num(cells[1]),
+                "min": _num(cells[2]),
+                "close": close,
+                "spread_per": sign * float(pct.group(0)) if pct else None,
+                "volume": int(vol) if vol is not None else 0,
+                "trading_session": session,
+            }
+        )
+    return out
+
+
+def fetch_futures_daily(day: date, commodity_id: str, session: str) -> list[dict]:
+    mc = "0" if session == "position" else "1"
+    text = _post(
+        "futDailyMarketReport",
+        {"queryType": "2", "marketCode": mc, "dateaddcnt": "", "commodity_id": commodity_id,
+         "commodity_id2": "", "queryDate": day.strftime("%Y/%m/%d"), "MarketCode": mc,
+         "commodity_idt": commodity_id},
+    )
+    return parse_futures_daily(text, commodity_id, day, session)

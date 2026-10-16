@@ -72,6 +72,27 @@ class TaifexClientTests(unittest.TestCase):
             T.fetch_vix_ticks(date(2026, 8, 7), archive_dir=d)
             self.assertEqual(len(calls), n + 1)                                    # 第二次只再嘗試逐日檔,壓縮檔不重下載
 
+    def test_parse_futures_daily_after_market_keeps_every_row(self):
+        from datetime import date
+        txt = ("|( TX ) 行情表|2026/10/15 15:00~次日05:00 盤後交易時段行情表|契約|"
+               "TX |202610 |46926|47417|46456|47366|▲435|▲0.93%|41283|-|- |47332|47367|50265|39852|"
+               "TX |202611 |47079|47556|46620|47451|▲336|▲0.71%|1018|-|- |47484|47526|50440|44435|"
+               "TX |202612 |-|-|-|-|-|-|0|-|- |47629|47677|50560|27382|"
+               "小計:|42344|*|價差行情表|TX |202610/202611 |169|169|148|148|")
+        rows = T.parse_futures_daily(txt, "TX", date(2026, 10, 16), "after_market")
+        self.assertEqual([(r["contract_date"], r["close"], r["volume"]) for r in rows],
+                         [("202610", 47366.0, 41283), ("202611", 47451.0, 1018)])      # 無成交列與價差列不收
+        self.assertAlmostEqual(rows[0]["spread_per"], 0.93)
+        self.assertTrue(all(r["trading_session"] == "after_market" and r["date"] == "2026-10-16" for r in rows))
+
+    def test_parse_futures_daily_position_uses_regular_session_volume(self):
+        from datetime import date
+        txt = ("|( TX ) 行情表|TX |202610 |47228|47634|47140|47242|▲311|▲0.66%|41283|63312|104595|47284|97247|47245|47256|50265|39852|"
+               "TX |202703 |48300|48300|48266|48266|▼328|▼0.68%|7|2|9|48110|125|48099|48121|51041|32400|小計:|1|")
+        rows = T.parse_futures_daily(txt, "TX", date(2026, 10, 16), "position")
+        self.assertEqual([r["volume"] for r in rows], [63312, 2])                       # 一般時段量,不是盤後量也不是合計
+        self.assertAlmostEqual(rows[1]["spread_per"], -0.68)
+
 
 if __name__ == "__main__":
     unittest.main()

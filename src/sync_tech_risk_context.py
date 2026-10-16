@@ -4,7 +4,7 @@
 
   1. TSM ADR（Yahoo）— 日報酬、相對 MA5/MA10 位置
   2. 費半 ^SOX / 備援 SMH（Yahoo）— 全球半導體 beta
-  3. 台指期 TX、電子期 TE（FinMind TaiwanFuturesDaily）— 相對 IX0001 現貨 gap
+  3. 台指期 TX、電子期 TE（2026-10 起改期交所『期貨每日交易行情』一般/盤後頁；原 FinMind TaiwanFuturesDaily）— 相對 IX0001 現貨 gap
 
 寫入：
   daily_bars（TSM_ADR / SOX / SMH 日線）
@@ -22,6 +22,9 @@ import pandas as pd
 import requests
 import yfinance as yf
 
+import time
+
+import taifex_client
 from finmind_client import fetch_finmind
 from stock_db import DEFAULT_DB_PATH, connect, upsert_daily_bars, upsert_tech_risk_daily_snapshots
 
@@ -122,8 +125,29 @@ def ma_and_position(series: pd.Series, on_date: str, window: int) -> tuple[float
     return ma, vs_pct, above
 
 
+FUTURES_WINDOW_DAYS = 8       # 期交所頁面一次一天;開盤前缺口只需當日盤後與前一日盤後,所以只抓近幾個交易日
+
+
 def fetch_finmind_futures(futures_id: str, start: date, end: date) -> list[dict]:
+    """舊路徑(FinMind 已停用,僅保留給手動/歷史對照)。"""
     return fetch_finmind("TaiwanFuturesDaily", futures_id, start, end)
+
+
+def futures_window_start(start: date, end: date) -> date:
+    return max(start, end - timedelta(days=FUTURES_WINDOW_DAYS))
+
+
+def fetch_futures_rows(futures_id: str, start: date, end: date, delay: float = 1.2) -> list[dict]:
+    """期交所:近 FUTURES_WINDOW_DAYS 日的一般(position)與盤後(after_market)行情,欄位與 FinMind 同形。"""
+    rows: list[dict] = []
+    day = futures_window_start(start, end)
+    while day <= end:
+        if day.weekday() < 5:
+            for session in ("after_market", "position"):
+                rows.extend(taifex_client.fetch_futures_daily(day, futures_id, session))
+                time.sleep(delay)
+        day += timedelta(days=1)
+    return rows
 
 
 def _is_near_contract(contract_date: str) -> bool:
@@ -411,11 +435,14 @@ def sync_tech_risk(
 
         futures_by_id: dict[str, list[dict]] = {}
         for fid in FUTURES_IDS:
-            futures_by_id[fid] = fetch_finmind_futures(fid, start, end)
+            futures_by_id[fid] = fetch_futures_rows(fid, start, end)
 
         if not dry_run:
             upsert_daily_bars(conn, bar_rows)
         session_dates = list_tw_session_dates(conn, session_limit)
+        # 期貨資料只抓近幾日:更早的 session 若重算會把已存的 TX/TE 欄位洗成空值,所以只更新窗口內的快照
+        fut_lo = (futures_window_start(start, end) + timedelta(days=2)).isoformat()
+        session_dates = [d for d in session_dates if d >= fut_lo]
         if not session_dates:
             session_dates = [end.isoformat()]
         today_iso = end.isoformat()
@@ -448,7 +475,7 @@ def sync_tech_risk(
         print(f"    {format_snapshot_line(latest)}")
         print(
             f"    說明：TX gap = 期貨價 vs 前日 {TW_SPOT_CODE} 收盤；"
-            "TE o/n = 電子期 FinMind spread_per（盤後/近月）"
+            "TE o/n = 電子期盤後/近月漲跌%（期交所）"
         )
     return count
 
