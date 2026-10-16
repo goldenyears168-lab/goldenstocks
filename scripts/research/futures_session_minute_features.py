@@ -32,10 +32,15 @@ try:
 except Exception:  # 沒有 src 路徑時退回環境變數/預設
     STATE_ROOT = pathlib.Path(os.environ.get("GOLDENSTOCKS_DATA_DIR", os.path.expanduser("~/goldenstocks-data")))
 
-PV = {"mxf": 50, "tmf": 10}
+PV = {"txf": 200, "mxf": 50, "tmf": 10}
 TIERS = ["S", "M1", "M2", "L", "XL"]
+LOT_TIERS = ["1", "2_4", "5_9", "10p"]       # 口數級(跨商品同一套;2026-10-16 起新增,附加在舊欄位之後,不影響既有評估)
 EDGES_M = [0, 2.5, 5, 12, 25]
 DAY0, DAY1 = 8 * 3600 + 45 * 60, 13 * 3600 + 45 * 60
+
+
+def lot_tier(v):
+    return "1" if v <= 1 else ("2_4" if v <= 4 else ("5_9" if v <= 9 else "10p"))
 
 
 def tier_of(notional_m):
@@ -111,7 +116,8 @@ def process(root, files):
                 px, b, a = r["price"], r.get("bid"), r.get("ask")
                 m = int(sec // 60)
                 bk = bars.setdefault((stype, T, m), {"o": px, "h": px, "l": px, "c": px, "vol": 0, "n": 0, "spr_sum": 0.0, "spr_n": 0,
-                                                     **{f"{d}_{t}": 0 for d in ("b", "s") for t in TIERS}, **{f"nb_{t}": 0 for t in TIERS}})
+                                                     **{f"{d}_{t}": 0 for d in ("b", "s") for t in TIERS}, **{f"nb_{t}": 0 for t in TIERS},
+                                                     **{f"{d}l_{t}": 0 for d in ("b", "s") for t in LOT_TIERS}})
                 bk["h"] = max(bk["h"], px)
                 bk["l"] = min(bk["l"], px)
                 bk["c"] = px
@@ -138,6 +144,7 @@ def process(root, files):
             bk = bars[(stype, T, m)]
             bk[("b_" if d > 0 else "s_") + t] += v
             bk["nb_" + t] += 1
+            bk[("bl_" if d > 0 else "sl_") + lot_tier(v)] += v
     return bars, sess
 
 
@@ -145,6 +152,7 @@ def write(root, bars, sess, outdir):
     outdir.mkdir(parents=True, exist_ok=True)
     cols = ["root", "session", "T", "hhmm", "open", "high", "low", "close", "vol", "trades", "spread_bps"]
     cols += [f"b_{t}" for t in TIERS] + [f"s_{t}" for t in TIERS] + [f"nb_{t}" for t in TIERS]
+    cols += [f"bl_{t}" for t in LOT_TIERS] + [f"sl_{t}" for t in LOT_TIERS]
     with gzip.open(outdir / f"{root}_minute.csv.gz", "wt", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)
@@ -152,7 +160,8 @@ def write(root, bars, sess, outdir):
             b = bars[(stype, T, m)]
             spr = round(b["spr_sum"] / b["spr_n"], 3) if b["spr_n"] else ""
             w.writerow([root, stype, T, "%02d:%02d" % (m // 60 % 24, m % 60), b["o"], b["h"], b["l"], b["c"], b["vol"], b["n"], spr]
-                       + [b[f"b_{t}"] for t in TIERS] + [b[f"s_{t}"] for t in TIERS] + [b[f"nb_{t}"] for t in TIERS])
+                       + [b[f"b_{t}"] for t in TIERS] + [b[f"s_{t}"] for t in TIERS] + [b[f"nb_{t}"] for t in TIERS]
+                       + [b[f"bl_{t}"] for t in LOT_TIERS] + [b[f"sl_{t}"] for t in LOT_TIERS])
     rows = []
     for (stype, T), s in sorted(sess.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         span = (s["last_cum"] - s["first_cum"]) if s["first_cum"] is not None else None
@@ -164,7 +173,7 @@ def write(root, bars, sess, outdir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", choices=["mxf", "tmf"], required=True)
+    ap.add_argument("--root", choices=["txf", "mxf", "tmf"], required=True)
     ap.add_argument("--since", default="2026-08-20", help="只處理此日期(含)之後的檔;8/20 之前收集器有連線洩漏,資料不可靠")
     a = ap.parse_args()
     files = [f for f in sorted(glob.glob(str(STATE_ROOT / "cache" / f"{a.root}_trades" / f"{a.root}_trades_*.jsonl")))
