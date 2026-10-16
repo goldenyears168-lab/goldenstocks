@@ -174,3 +174,92 @@ class FutFlowCheckpointTests(unittest.TestCase):
         self.assertIsNone(F.Book.from_state("MXF", dict(st, rules=999)))     # 規則版本不符
         self.assertIsNone(F.Book.from_state("MXF", dict(st, schema=0)))
         self.assertIsNone(F.Book.from_state("MXF", {"schema": F.CKPT_SCHEMA}))   # 結構殘缺
+
+
+class FutFlowFreshnessTests(unittest.TestCase):
+    def test_freshness_levels(self):
+        now = dt.datetime(2026, 10, 14, 10, 0, 0)
+        self.assertEqual(F.freshness("2026-10-14T09:59:30.000+08:00", True, now), ("fresh", 30.0))
+        self.assertEqual(F.freshness("2026-10-14T09:58:00.000+08:00", True, now), ("stale", 120.0))
+        self.assertEqual(F.freshness("", True, now), ("missing", None))
+        self.assertEqual(F.freshness("2026-10-14T09:00:00.000+08:00", False, now), ("idle", None))     # 非交易時段不算過舊
+        self.assertEqual(F.freshness("壞掉的時間", True, now), ("missing", None))
+
+
+def _synthetic_session(k, minutes=30):
+    """確定性的合成盤別(不用亂數),k 讓各盤別略有不同。"""
+    bars = {}
+    for i in range(minutes):
+        px = 47000 + (i * 7 + k * 13) % 90
+        b = F._new_bar(px)
+        b["h"], b["l"], b["c"] = px + 4, px - 4, px + (1 if i % 2 else -1)
+        b["vol"], b["t"], b["amt"] = 20 + i % 5, 10, (20 + i % 5) * 50 * px
+        for g, mult in (("B", 3), ("M", 2), ("R", 1)):
+            b["bl"][g] = (i + k) % 4 * mult
+            b["sl"][g] = (i * 2 + k) % 4 * mult
+            b["bn"][g] = b["bl"][g] * 50 * px
+            b["sn"][g] = b["sl"][g] * 50 * px
+        bars[540 + i] = b
+    return bars
+
+
+class FutFlowGoldenTests(unittest.TestCase):
+    """凍結時間與合成資料,整段頁面片段與 tests/golden 逐字比對:改 HTML/CSS 結構時會失敗,迫使你有意識地更新基準(UPDATE_GOLDEN=1)。"""
+
+    GOLDEN = Path(__file__).resolve().parent / "golden" / "futflow_mxf_body.html"
+
+    def setUp(self):
+        import os
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()                          # 隔離:不讀真實成交檔、不寫真實檢查點
+        self._saved = (F._BOOKS.copy(), dict(F._LOADING), F._now, F._files, F.CKPT_DIR)
+        F._files = lambda root: []
+        F.CKPT_DIR = Path(self._tmp.name)
+        self._csv = F.MP.CSV_PATH                                          # 小台持倉估計讀的基準檔也要隔離,否則輸出會隨正式機檔案與日期變動
+        F.MP.CSV_PATH = Path(self._tmp.name) / "mtx_retail_ratio.csv"
+        F.MP.CSV_PATH.write_text("date,total_oi,inst_net_oi\n2026-10-07,40000,-8000\n", encoding="utf-8")
+        import types
+        self._bd = sys.modules.get("biglot_dashboard")                     # 以空殼取代,避免 import 整個儀表板(會載入資料、約 27 秒)
+        sys.modules["biglot_dashboard"] = types.SimpleNamespace(TABLE_CSS="body{}")
+        book = F.Book("MXF")
+        for d in range(1, 8):
+            book.sessions[("day", f"2026-10-{d:02d}")] = _synthetic_session(d)
+        book.last_ts = "2026-10-07T09:29:50.000+08:00"
+        F._BOOKS.clear(); F._BOOKS["MXF"] = book
+        F._LOADING.update({"started": True, "done": True, "err": ""})
+        F._now = lambda: dt.datetime(2026, 10, 7, 9, 30, 0)                 # 週三 09:30,日盤進行中
+        self._upd = os.environ.get("UPDATE_GOLDEN") == "1"
+
+    def tearDown(self):
+        F._BOOKS.clear(); F._BOOKS.update(self._saved[0]); F._LOADING.clear(); F._LOADING.update(self._saved[1])
+        F._now, F._files, F.CKPT_DIR = self._saved[2], self._saved[3], self._saved[4]
+        F.MP.CSV_PATH = self._csv
+        self._tmp.cleanup()
+        if self._bd is None:
+            sys.modules.pop("biglot_dashboard", None)
+        else:
+            sys.modules["biglot_dashboard"] = self._bd
+
+    def test_body_matches_golden(self):
+        html, live = F._body("MXF", "")
+        self.assertTrue(live)
+        self.assertIn("日盤進行中", html)
+        self.assertIn("P", html)                                                   # 有百分位欄
+        if self._upd or not self.GOLDEN.exists():
+            self.GOLDEN.write_text(html, encoding="utf-8")
+        self.assertEqual(html, self.GOLDEN.read_text(encoding="utf-8"))
+
+    def test_health_shape(self):
+        from biglot import health as H
+        h = H.health()
+        self.assertEqual(h["market"], "日盤進行中")
+        self.assertEqual(h["futflow"]["MXF"]["freshness"], "fresh")
+        self.assertEqual(h["futflow"]["MXF"]["sessions_loaded"], 7)
+        self.assertEqual(h["futflow"]["TMF"]["freshness"], "missing")             # TMF 沒載入=交易時段內沒有資料
+        self.assertEqual(h["overall"], "missing")
+
+    def test_page_wires_live_js_only_when_live(self):
+        page = F.render_futflow("MXF", "")
+        self.assertIn("/assets/live.js", page)
+        self.assertIn("data-live='1'", page)
+        self.assertIn("data-live='0'", F.render_futflow("MXF", "day|2026-10-03"))   # 固定看歷史盤別不輪詢

@@ -30,6 +30,7 @@ import biglot_dashboard
 from biglot import nav_bar
 from biglot.disposal_view import render_disposal
 from biglot.futflow_view import render_futflow, render_futflow_frag
+from biglot.health import health_json
 from biglot.day_views import render_history, render_day, snapshot_day
 from biglot.timeline_snap import render_timeline_page, render_timeline_frag, save_timeline_slot_if_due
 from biglot.stock_meta import render_help
@@ -42,14 +43,26 @@ from biglot.paper_trading import _paper_settle
 from biglot.reference_loaders import _refresh_vol_risk_if_needed
 
 
+ASSETS = {"/assets/ui.css": "text/css; charset=utf-8", "/assets/live.js": "application/javascript; charset=utf-8"}
+
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         path, _, qs = self.path.partition("?")
-        if path == "/assets/ui.css":                 # 設計代幣(docs/ui-standard.md);純靜態,不注入導覽列
+        if path == "/health":                        # 資料新鮮度(見 biglot/health.py)
+            data = health_json()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path in ASSETS:                           # 設計代幣與共用前端腳本;純靜態,不注入導覽列
             try:
-                data = (Path(__file__).resolve().parent / "static" / "ui.css").read_bytes()
+                data = (Path(__file__).resolve().parent / "static" / path.rsplit("/", 1)[1]).read_bytes()
                 self.send_response(200)
-                self.send_header("Content-Type", "text/css; charset=utf-8")
+                self.send_header("Content-Type", ASSETS[path])
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Cache-Control", "public, max-age=300")
                 self.end_headers()

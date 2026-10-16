@@ -20,7 +20,7 @@ TOOLS = (
     ("故事", "/stories", ("/stories",)),
     ("欄位說明", "/help", ("/help",)),
 )
-SKIP = {"/assets/ui.css", "/frag", "/gridfrag", "/agentfrag", "/timelinefrag", "/stockfrag", "/agentsig", "/agentjs", "/futflowfrag"}
+SKIP = {"/assets/ui.css", "/assets/live.js", "/health", "/frag", "/gridfrag", "/agentfrag", "/timelinefrag", "/stockfrag", "/agentsig", "/agentjs", "/futflowfrag"}
 
 CSS = (
     '<link rel="stylesheet" href="/assets/ui.css?v=1">'   # 設計代幣(docs/ui-standard.md);頁面以 var(--名稱,備援值) 引用
