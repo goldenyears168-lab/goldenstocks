@@ -71,11 +71,18 @@ jobs:
 
   - label: tmf-channel-poll
     category: order
-    order_capable: true
-    status: enabled
+    order_capable: false
+    status: retired
     enabled_since: "2026-08-05"
-    schedule: "KeepAlive worker · interval≈20s in-window · day 08:45-13:45 + night 15:00-05:00"
-    description: "TMF Final v1.4.0 PV16 normal/dhwv block（O-anchor）· tmf_channel.causal_engine · session-reuse worker · .env 四鎖"
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: >
+      TMF Final v1.x PV16 實彈 worker — **2026-10 實彈部署移除**（使用者確認不再使用）：
+      run_tmf_channel_worker／run_tmf_channel_poll／tmf_cutover.sh、launchd plist／launcher／.command、
+      tmf_channel.worker_loop／blotter、對應測試與安裝腳本項目皆刪，label 進 RETIRED_LABELS。
+      ⚠ 研究層仍依賴 tmf_channel 引擎函式庫與 order.tmf_channel_{config,pv16_book,order,marketdata,
+      ledger,...}（150+ 研究腳本）——該函式庫保留，不會下單。
+      重跑 install-launchd.sh 會卸載常駐 worker；**執行前請先確認期貨無未平倉部位**。
 
   - label: momentum-rotation-poll
     category: order
@@ -331,10 +338,10 @@ jobs:
   - label: tmf-sim-server
     category: notify
     order_capable: false
-    status: enabled
-    enabled_since: "2026-08-06"
-    schedule: "KeepAlive · always-on"
-    description: "TMF paper UI HTTP :8770（live_v6_sim_server · PYTHONPATH=src 走 tmf_channel 引擎）· 不下單"
+    status: retired
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: "TMF paper UI HTTP :8770 — 2026-10 launchd 服務移除（label 進 RETIRED_LABELS）；live_v6_sim_server.py 檔案仍在 reports/research/channel_lab/，需要時可手動執行。"
 
   # --- Notify-only, no order code path (ABC retired) ---
   - label: buy-signal-radar

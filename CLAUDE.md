@@ -129,12 +129,12 @@ Gate 兩層且皆須通過：`config/strategies.yaml` 的 `enabled`（registry g
 
 `config/job_registry.yaml` 是「裝了什麼、能不能送單」的唯一 SSOT，勿只信 `docs/daily-operations.md` 舊表。
 
-現況（2026-08-06）：**唯一 live order-capable job**＝`tmf-channel-poll`（launchd enabled · 實彈靠 `.env` 四鎖；plist 內仍是 fail-closed 預設，勿誤讀成永遠 dry）。架構為 **KeepAlive 常駐 worker**（非 StartInterval 冷啟動）：`scripts/order/run_tmf_channel_worker.py` → `src/tmf_channel/worker_loop.py`，重用單一 Fubon session、窗內每 ≈20s 對帳一次；引擎 SSOT＝`src/tmf_channel/causal_engine.py`（新人先讀 `src/tmf_channel/README.md`）。改完程式要讓 worker 吃到新碼＝跑 `scripts/order/tmf_cutover.sh`（preflight → kickstart → 驗首輪對帳），**不要**手動 kill。其餘 2 支（`songshan-copytrade-poll`／`expert-pool-staged-gate`）仍三重鎖住（`leading-dip-poll`／`detach-gate` 已於 2026-10 整條移除，label 在 `RETIRED_LABELS`）——
+現況（2026-10）：**目前沒有任何 live order-capable job**。`tmf-channel-poll`（TMF 實彈 worker）與 `tmf-sim-server` 已於 2026-10 隨使用者確認「不再使用」而整套部署移除（launchd／入口腳本／worker／blotter／測試；label 在 `RETIRED_LABELS`）。⚠ `src/tmf_channel/` 引擎函式庫與 `src/order/tmf_channel_*` 仍保留——150+ 研究腳本依賴它們（config／PV16 spec／回測引擎），它們**不下單、無排程**。其餘 2 支（`songshan-copytrade-poll`／`expert-pool-staged-gate`）仍三重鎖住（`leading-dip-poll`／`detach-gate` 已於 2026-10 整條移除）——
 1. `.env` 旗標本身安全（`ORDER_*_DRY_RUN=1` / `ORDER_*_ENABLED=0`）
 2. `launchctl disable`（重開機／重裝不復活）
-3. `.env` 總開關 `ORDER_MASTER_ENABLED`（TMF 實盤時為 1；其餘袖仍各自 disabled／dry）
+3. `.env` 總開關 `ORDER_MASTER_ENABLED`（各袖仍各自 disabled／dry）
 
-改動下單相關程式時**維持 dry-run／disabled 為預設**：plist template 與 launcher template 內的 `ORDER_*_DRY_RUN` 一律 `1`、`ORDER_*_AUTO_SUBMIT` 一律 `0`，實彈只由 mini 的 `.env` 開。TMF **禁止**另起 nohup／手動 daemon（會與 launchd 雙跑）。恢復其他袖送單能力必須是使用者明確直接的指示。
+改動下單相關程式時**維持 dry-run／disabled 為預設**：plist template 與 launcher template 內的 `ORDER_*_DRY_RUN` 一律 `1`、`ORDER_*_AUTO_SUBMIT` 一律 `0`，實彈只由 mini 的 `.env` 開。恢復任何袖的送單能力必須是使用者明確直接的指示。
 
 **ABC Order 軌已退役**（2026-07-16）；`buy-signal-radar` 只寄信、不送單。
 **C18acc 排程已退役**（2026-08-04 · 策略不再採用 · 主要動機是不再收它的失敗信）。安靜是靠三層，**不是**靠改程式：

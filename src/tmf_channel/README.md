@@ -1,3 +1,7 @@
+> ⚠ **2026-10：實彈部署已移除。** launchd `tmf-channel-poll`／`tmf-sim-server`、`run_tmf_channel_worker.py`、
+> `tmf_cutover.sh`、`worker_loop.py`、`blotter.py` 皆已刪除（使用者確認不再使用）。本套件現在僅作為**研究引擎函式庫**
+> （150+ 研究腳本依賴；不下單、無排程）。下文的部署／cutover／worker 說明為歷史記錄，請勿照做。
+
 # `src/tmf_channel/` — TMF 微型台指通道策略・凍結執行套件
 
 TMF（微型臺指期）micro-channel 策略的**凍結套件**：live simulate 的 SSOT。

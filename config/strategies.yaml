@@ -217,7 +217,7 @@ strategies:
     title: TMF 微型臺指 · Channel Final v1.6.0 PV16 cell-tune v2 + 台美1分鐘MA偏離差閘門
     layer: strategy
     kind: research_adopted
-    enabled: true
+    enabled: false  # 2026-10 實彈引擎部署已移除（launchd／入口腳本皆刪；規格與研究層保留）
     env_flag: ORDER_TMF_CHANNEL_ENABLED
     description: >
       微型臺指近月 channel · Order futopt · Final v1.6.0：16-cell cell-tune v2

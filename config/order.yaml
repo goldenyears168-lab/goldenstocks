@@ -1171,6 +1171,7 @@ strategies:
     # · C18ACC_PRIOR_5D_RET_MAX · C18ACC_ALLOW_POOL_OVERRIDE · C18ACC_NO_TRADE_BEFORE
     # · C18ACC_CONFIRM_BARS
 
+  # ⚠ 2026-10：TMF 實彈引擎部署（launchd／worker）已移除，以下規格僅供研究層引用與 git 歷史還原。
   # TMF 微型臺指 · Channel Final v1.3.0（PV16 cell-tune v2 · O-anchor · engine=tmf_channel.causal_engine）
   # Research SSOT: docs/tmf-micro-channel-final-v1-1-prd.md · tmf-hang-hi-day-tighten
   # Adapter: src/order/fubon_futopt_orders.py · reconciler: tmf_channel_order.py

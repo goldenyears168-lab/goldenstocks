@@ -23,8 +23,6 @@ GUI_DOMAIN="gui/${UID_NUM}"
 LABELS=(
   com.jackm4.goldenstocks.buy-signal-radar
   com.jackm4.goldenstocks.songshan-copytrade-poll
-  com.jackm4.goldenstocks.tmf-channel-poll
-  com.jackm4.goldenstocks.tmf-sim-server
   com.jackm4.goldenstocks.expert-pool-staged-gate
   com.jackm4.goldenstocks.nightly-expert-digest
   com.jackm4.goldenstocks.chip-daily-brief
@@ -51,8 +49,6 @@ LABELS=(
 TEMPLATES=(
   com.jackm4.goldenstocks.buy-signal-radar.plist.template
   com.jackm4.goldenstocks.songshan-copytrade-poll.plist.template
-  com.jackm4.goldenstocks.tmf-channel-poll.plist.template
-  com.jackm4.goldenstocks.tmf-sim-server.plist.template
   com.jackm4.goldenstocks.expert-pool-staged-gate.plist.template
   com.jackm4.goldenstocks.nightly-expert-digest.plist.template
   com.jackm4.goldenstocks.chip-daily-brief.plist.template
@@ -83,11 +79,9 @@ usage() {
   預設：將 launchd/*.plist.template 渲染後安裝到
         ~/Library/LaunchAgents/ 並 launchctl load。
 
-  現行排程（Order layer · Songshan / TMF；本地時間）：
+  現行排程（Order layer · Songshan；本地時間）：
     buy-signal-radar        週一至五 09:00–13:20 每 5 分（notify；ABC Order 已退役）
     songshan-copytrade-poll 週一至五 09:25–09:40 每 5 分（跟單松山 5d淨比95∩!mega+25m nonfail · 預算制約10萬）
-    tmf-channel-poll        KeepAlive worker（日盤+夜盤 · TMF · 重用 session · 預設 dry-run）
-    tmf-sim-server          KeepAlive（TMF paper UI :8770 · 不下單 · PYTHONPATH=src 用新引擎）
     expert-pool-staged-gate 週一至五 09:00／01／05／25（專家池 gap→05→25 漏斗閘門 · 預設 dry-run）
     nightly-expert-digest  週一至五 20:00（專家池+松山+新店 輕量 digest · 不下單）
     chip-daily-brief       週一至五 21:00（籌碼 v4 偏多/偏空名單 + 今日回顧 + 提醒 · 唯讀 · 不下單
@@ -132,7 +126,6 @@ EOF
 LAUNCHD_COMMANDS=(
   buy-signal-radar
   songshan-copytrade-poll
-  tmf-channel-poll
   expert-pool-staged-gate
   nightly-expert-digest
   second-disp-expert-pool-watch
@@ -244,6 +237,9 @@ RETIRED_LABELS=(
   com.jackm4.goldenstocks.leading-dip-poll
   # 2026-10 退役（Detach Gate 下單袖套不再使用 · launchd／python 一併移除；策略規格與研究層保留）
   com.jackm4.goldenstocks.detach-gate
+  # 2026-10 退役（TMF 實彈引擎與 paper UI 不再使用 · launchd／入口腳本一併移除；研究層函式庫保留）
+  com.jackm4.goldenstocks.tmf-channel-poll
+  com.jackm4.goldenstocks.tmf-sim-server
 )
 
 uninstall_retired_agents() {
@@ -349,7 +345,6 @@ render_template() {
       -e "s|{{HOME}}|${HOME}|g" \
       -e "s|{{BUY_RADAR_LAUNCHER}}|${BUY_RADAR_LAUNCHER}|g" \
       -e "s|{{SONGSHAN_COPYTRADE_LAUNCHER}}|${SONGSHAN_COPYTRADE_LAUNCHER}|g" \
-      -e "s|{{TMF_CHANNEL_LAUNCHER}}|${TMF_CHANNEL_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_LAUNCHER}}|${MOMENTUM_ROTATION_LAUNCHER}|g" \
       -e "s|{{MOMENTUM_ROTATION_WATCH_LAUNCHER}}|${MOMENTUM_ROTATION_WATCH_LAUNCHER}|g" \
       -e "s|{{EP_STAGED_GATE_LAUNCHER}}|${EP_STAGED_GATE_LAUNCHER}|g" \
@@ -430,24 +425,6 @@ install_songshan_copytrade_launcher() {
   APP_SUPPORT="${app_support}"
   render_template "${src}" "${SONGSHAN_COPYTRADE_LAUNCHER}"
   chmod +x "${SONGSHAN_COPYTRADE_LAUNCHER}"
-}
-
-install_tmf_channel_launcher() {
-  local src="${LAUNCHD_SRC}/tmf-channel-poll-launcher.sh.template"
-  local app_support="${HOME}/Library/Application Support/com.jackm4.goldenstocks"
-  TMF_CHANNEL_LAUNCHER="${app_support}/tmf-channel-poll.sh"
-  if [[ ! -f "${src}" ]]; then
-    echo "✗ 缺少 ${src}" >&2
-    exit 1
-  fi
-  if [[ ! -x "${PROJECT_ROOT}/.venv-fubon/bin/python" ]]; then
-    echo "✗ tmf-channel-poll 需要 ${PROJECT_ROOT}/.venv-fubon/bin/python" >&2
-    exit 1
-  fi
-  mkdir -p "${app_support}"
-  APP_SUPPORT="${app_support}"
-  render_template "${src}" "${TMF_CHANNEL_LAUNCHER}"
-  chmod +x "${TMF_CHANNEL_LAUNCHER}"
 }
 
 install_momentum_rotation_launcher() {
@@ -929,7 +906,6 @@ install_agents() {
   ensure_launchd_commands
   BUY_RADAR_LAUNCHER=""
   SONGSHAN_COPYTRADE_LAUNCHER=""
-  TMF_CHANNEL_LAUNCHER=""
   MOMENTUM_ROTATION_LAUNCHER=""
   MOMENTUM_ROTATION_WATCH_LAUNCHER=""
   EP_STAGED_GATE_LAUNCHER=""
@@ -965,7 +941,6 @@ install_agents() {
   sync_order_env_mirror
   install_buy_radar_launcher
   install_songshan_copytrade_launcher
-  install_tmf_channel_launcher
   install_futopt_fill_listener_launcher
   install_futopt_books_collect_launcher
   install_momentum_rotation_launcher
@@ -1026,10 +1001,6 @@ install_agents() {
     echo "✓ ${label}"
   done
 
-  # TMF is the live order sleeve · enable so reboot/reinstall does not leave it disabled
-  launchctl enable "${GUI_DOMAIN}/com.jackm4.goldenstocks.tmf-channel-poll" 2>/dev/null || true
-  launchctl kickstart -k "${GUI_DOMAIN}/com.jackm4.goldenstocks.tmf-channel-poll" 2>/dev/null || true
-
   mkdir -p "${HOME}/Library/Logs/com.jackm4.goldenstocks"
 
   echo ""
@@ -1038,7 +1009,6 @@ install_agents() {
   echo "完成。檢查："
   echo "  launchctl list | grep jackm4"
   echo "  # launchd stdout（避開 Documents TCC）：~/Library/Logs/com.jackm4.goldenstocks/"
-  echo "  # TMF tick log：\${GOLDENSTOCKS_DATA_DIR:-~/goldenstocks-data}/logs/intraday/tmf_channel_live_\$(date +%Y%m%d).log"
   echo "  # 業務 tick log 仍在：${PROJECT_ROOT}/logs/intraday/"
 }
 

@@ -527,9 +527,9 @@ strategies:
     launchd_label: com.jackm4.goldenstocks.tmf-channel-poll
     schedule_time: "day 08:45–13:45 + night 15:00–05:00 · poll 1–5m"
     env_flag: ORDER_TMF_CHANNEL_ENABLED
-    enabled: true
+    enabled: false  # 2026-10 實彈引擎部署已移除（須與 strategies.yaml 一致）
     module: order.tmf_channel_order
-    screen_script: scripts/order/run_tmf_channel_worker.py  # live 常駐入口；手動除錯用 run_tmf_channel_poll.py --json
+    screen_script: scripts/order/run_tmf_channel_worker.py  # 已移除 2026-10  # live 常駐入口；手動除錯用 run_tmf_channel_poll.py --json
     research_topic: tmf-pv16-specialized
     config_ref: config/order.yaml
     description: >
