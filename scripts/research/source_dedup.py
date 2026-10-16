@@ -45,7 +45,7 @@ SOURCE_PRIORITY: dict[str, tuple[str, ...]] = {
     "stock_daytrade_daily": ("twse_twtb4u", "finmind"),
     "stock_holding_dispersion_weekly": ("tdcc", "finmind"),
     "stock_short_interest_daily": ("twse",),
-    "stock_block_trade": ("finmind",),
+    "stock_block_trade": ("twse_block", "tpex_block", "finmind"),          # 2026-10 新增官方鉅額(上市 BFIAUU / 櫃買 openapi)
     "stock_shareholding_daily": ("twse_qfiis", "tpex_qfiis", "finmind"),     # 2026-10 新增官方外資持股統計(上市/上櫃)
 }
 

@@ -54,6 +54,32 @@ class ForeignHoldingTests(unittest.TestCase):
         self.assertEqual(SOURCE_PRIORITY["stock_shareholding_daily"][:2], ("twse_qfiis", "tpex_qfiis"))
 
 
+class BlockTradeTests(unittest.TestCase):
+    def test_twse_block_aggregates_per_stock_and_drops_total_row(self):
+        payload = {"stat": "OK", "data": [
+            ["1513", "中興電", "配對交易", "165.75", "126,153", "20,909,860"],
+            ["1513", "中興電", "配對交易", "165.72", "171,847", "28,478,485"],
+            ["總計", "", "", "", "300,000", "49,388,345"]]}
+        rows = S.parse_block_twse(payload, date(2026, 10, 16))
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual((r["stock_id"], r["block_volume"], r["block_amount"], r["block_count"], r["source"]),
+                         ("1513", 298000.0, 49388345.0, 2, "twse_block"))
+
+    def test_tpex_block_maps_names_sums_transactions_and_filters_day(self):
+        rows = [
+            {"TradingDate": "1150924", "Name": "穩懋           ", "NumberOfSharesTraded": "2000", "TradingValue": "40300290", "NumberOfTransactions": "2"},
+            {"TradingDate": "1150924", "Name": "不存在的公司", "NumberOfSharesTraded": "1", "TradingValue": "1", "NumberOfTransactions": "1"},
+            {"TradingDate": "1150923", "Name": "穩懋", "NumberOfSharesTraded": "9", "TradingValue": "9", "NumberOfTransactions": "1"},
+        ]
+        out = S.parse_block_tpex(rows, date(2026, 9, 24), {"穩懋": "3105"})
+        self.assertEqual([(r["stock_id"], r["block_volume"], r["block_amount"], r["block_count"], r["source"]) for r in out],
+                         [("3105", 2000.0, 40300290.0, 2, "tpex_block")])
+
+    def test_priority_registered(self):
+        self.assertEqual(SOURCE_PRIORITY["stock_block_trade"][:2], ("twse_block", "tpex_block"))
+
+
 class BetaUniverseTests(unittest.TestCase):
     def test_company_lists_four_digit_only_and_markets(self):
         import sync_stock_beta as B

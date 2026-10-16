@@ -10,6 +10,8 @@
   上市當沖    TWSE TWTB4U          → stock_daytrade_daily    source='twse_twtb4u'
   上市法人    TWSE T86             → stock_institutional_daily source='twse_t86'
   上櫃法人    櫃買 insti/dailyTrade → stock_institutional_daily source='tpex_insti'
+  上市鉅額    TWSE BFIAUU          → stock_block_trade       source='twse_block'(逐筆成交依股票/日加總)
+  上櫃鉅額    櫃買 openapi tpex_daily_trading_block → source='tpex_block'(只有名稱沒有代號:用櫃買公司簡稱對代號)
   上市外資持股 TWSE MI_QFIIS       → stock_shareholding_daily  source='twse_qfiis'(外資尚可投資比率,詳情頁讀這欄)
   上櫃外資持股 櫃買 insti/qfii      → stock_shareholding_daily  source='tpex_qfiis'
 上櫃當沖暫無可用端點,未涵蓋。
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import sys
 import time
 from datetime import date, timedelta
@@ -39,8 +42,13 @@ TPEX_MARGIN_SOURCE = "tpex_margn"
 TWSE_QFIIS_URL = "https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?date={d}&selectType=ALLBUT0999&response=json"
 TPEX_QFIIS_URL = "https://www.tpex.org.tw/www/zh-tw/insti/qfii?date={d}&id=&response=json"
 QFIIS_SOURCES = {"twse": "twse_qfiis", "tpex": "tpex_qfiis"}
+TWSE_BLOCK_URL = "https://www.twse.com.tw/rwd/zh/block/BFIAUU?date={d}&selectType=S&response=json"
+TPEX_BLOCK_URL = "https://www.tpex.org.tw/openapi/v1/tpex_daily_trading_block"
+TPEX_COMPANY_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+BLOCK_SOURCES = {"twse": "twse_block", "tpex": "tpex_block"}
+_CACHE: dict = {}      # 同一次執行內:櫃買鉅額(整年一個清單)與公司簡稱→代號只抓一次
 
-PARTS = ("margin_twse", "margin_tpex", "daytrade_twse", "inst", "foreign_twse", "foreign_tpex")
+PARTS = ("margin_twse", "margin_tpex", "daytrade_twse", "inst", "foreign_twse", "foreign_tpex", "block_twse", "block_tpex")
 INST_PARTS = ("inst_twse", "inst_tpex")        # 也可只指定其中一邊(例如只修復櫃買法人)
 
 
@@ -129,6 +137,80 @@ def parse_qfiis_tpex(payload: dict, day: date) -> list[dict]:
     return out
 
 
+def parse_block_twse(payload: dict, day: date) -> list[dict]:
+    """BFIAUU 逐筆成交(代號、名稱、交易別、價、股數、金額)→ 依股票加總:股數、金額、筆數(列數)。"""
+    if not payload or payload.get("stat") != "OK":
+        return []
+    agg: dict[str, list[float]] = {}
+    for r in payload.get("data") or []:
+        if len(r) < 6 or not re.fullmatch(r"[0-9A-Z]{4,6}", str(r[0]).strip()):      # 排除『總計』等合計列
+            continue
+        shares, amount = _num(r[4]), _num(r[5])
+        if shares is None or amount is None:
+            continue
+        a = agg.setdefault(str(r[0]).strip(), [0.0, 0.0, 0])
+        a[0] += shares
+        a[1] += amount
+        a[2] += 1
+    return [{"stock_id": k, "trade_date": day.isoformat(), "block_volume": v[0], "block_amount": v[1], "block_count": int(v[2]),
+             "source": BLOCK_SOURCES["twse"]} for k, v in agg.items()]
+
+
+def parse_block_tpex(rows: list[dict], day: date, name_to_code: dict[str, str]) -> list[dict]:
+    """櫃買鉅額(整年一個清單,日期為民國 YYYMMDD、只有名稱)→ 取該日、用公司簡稱對代號、加總股數/金額/成交筆數。"""
+    roc = f"{day.year - 1911}{day:%m%d}"
+    agg: dict[str, list[float]] = {}
+    for r in rows or []:
+        if str(r.get("TradingDate", "")).strip() != roc:
+            continue
+        code = name_to_code.get(str(r.get("Name", "")).strip())
+        shares, value = _num(r.get("NumberOfSharesTraded")), _num(r.get("TradingValue"))
+        if not code or shares is None or value is None:
+            continue
+        a = agg.setdefault(code, [0.0, 0.0, 0])
+        a[0] += shares
+        a[1] += value
+        a[2] += int(_num(r.get("NumberOfTransactions")) or 1)
+    return [{"stock_id": k, "trade_date": day.isoformat(), "block_volume": v[0], "block_amount": v[1], "block_count": int(v[2]),
+             "source": BLOCK_SOURCES["tpex"]} for k, v in agg.items()]
+
+
+def upsert_block(conn, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    from stock_db.util import utc_now_iso
+
+    at = utc_now_iso()
+    conn.executemany(
+        """
+        INSERT INTO stock_block_trade (stock_id, trade_date, block_volume, block_amount, block_count, source, synced_at)
+        VALUES (:stock_id, :trade_date, :block_volume, :block_amount, :block_count, :source, :synced_at)
+        ON CONFLICT(stock_id, trade_date, source) DO UPDATE SET
+            block_volume=excluded.block_volume, block_amount=excluded.block_amount,
+            block_count=excluded.block_count, synced_at=excluded.synced_at
+        """,
+        [{**r, "synced_at": at} for r in rows],
+    )
+    conn.commit()
+    return len(rows)
+
+
+def _tpex_block_rows(bm) -> tuple[list[dict], dict[str, str]]:
+    if "tpex_block" not in _CACHE:
+        import json
+        import urllib.request
+
+        def get(url):
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (goldenstocks)"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.loads(r.read().decode("utf-8"))
+
+        comp = get(TPEX_COMPANY_URL)
+        names = {str(r.get("CompanyAbbreviation", "")).strip(): str(r.get("SecuritiesCompanyCode", "")).strip() for r in comp}
+        _CACHE["tpex_block"] = (get(TPEX_BLOCK_URL), names)
+    return _CACHE["tpex_block"]
+
+
 def upsert_shareholding(conn, rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -189,6 +271,12 @@ def sync_day(conn, day: date, parts=PARTS, *, sleep: float = 1.5, mods=None, for
     run("foreign_tpex", "stock_shareholding_daily", (QFIIS_SOURCES["tpex"],),
         lambda: parse_qfiis_tpex(bm._get(TPEX_QFIIS_URL.format(d=f"{day:%Y}%2F{day:%m}%2F{day:%d}")), day),
         lambda rows: upsert_shareholding(conn, rows))
+    run("block_twse", "stock_block_trade", (BLOCK_SOURCES["twse"],),
+        lambda: parse_block_twse(bm._get(TWSE_BLOCK_URL.format(d=day.strftime("%Y%m%d"))), day),
+        lambda rows: upsert_block(conn, rows))
+    run("block_tpex", "stock_block_trade", (BLOCK_SOURCES["tpex"],),
+        lambda: (lambda rn: parse_block_tpex(rn[0], day, rn[1]))(_tpex_block_rows(bm)),
+        lambda rows: upsert_block(conn, rows))
     # 法人:上市(T86)與上櫃(insti)各自判斷,不要因為一邊已有就跳過另一邊
     inst_want = set(INST_PARTS) if "inst" in parts else set(parts) & set(INST_PARTS)
     if inst_want:
