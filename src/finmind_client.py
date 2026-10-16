@@ -217,6 +217,8 @@ def fetch_tick_snapshots(
 
     FinMind 批次 data_id 若任一代號異常可能整包失敗；改逐檔查詢。
     """
+    if not finmind_enabled():
+        return [], "FinMind 已停用"
     if not finmind_token():
         return [], "未設定 FINMIND_TOKEN"
     rows: list[dict] = []
@@ -251,6 +253,8 @@ def fetch_all_tick_snapshots(*, timeout: float = 30) -> tuple[list[dict], str | 
     比逐檔查詢（見 fetch_tick_snapshots）省下上千次 API 呼叫，適合需要「全市場覆蓋」
     的場景（例如盤前試撮 snapshot 收集器）。若失敗，呼叫端可自行 fallback 回逐檔查詢。
     """
+    if not finmind_enabled():
+        return [], "FinMind 已停用"
     if not finmind_token():
         return [], "未設定 FINMIND_TOKEN"
     try:
@@ -276,6 +280,8 @@ def fetch_futures_snapshots(
 
     FinMind 批次 ``data_id=[A,B]`` 時，若任一代號無資料會整包回空；改為逐一代號查詢再合併。
     """
+    if not finmind_enabled():
+        return [], "FinMind 已停用"
     if not finmind_token():
         return [], "未設定 FINMIND_TOKEN"
     rows: list[dict] = []
