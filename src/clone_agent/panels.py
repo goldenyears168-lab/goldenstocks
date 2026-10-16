@@ -47,7 +47,7 @@ body{padding:10px 12px 40px}
    .pnl-up/.pnl-dn = **損益**,台股慣例 **賺紅賠綠**,跟主儀表板的 .up/.dn 同色
    直接把 .pos 改成紅色是錯的 —— 那會把「批准」「✓命中」一起翻掉。 */
 .ag .pos{color:#3fb950}.ag .neg{color:#ff7b72}.ag .dim{color:#484f58}
-.ag .pnl-up{color:#ff7b72}.ag .pnl-dn{color:#3fb950}
+.ag .pnl-up{color:var(--price-up,#ff7b72)}.ag .pnl-dn{color:var(--price-down,#3fb950)}
 .ag .kpi{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
 .ag .kpi div{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 11px;min-width:96px}
 .ag .kpi b{display:block;font-size:17px;line-height:1.3;font-variant-numeric:tabular-nums}

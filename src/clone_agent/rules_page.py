@@ -20,7 +20,7 @@ CSS = (
     "th{background:#161b22;color:#8b949e;text-align:left;padding:5px 8px;border-bottom:1px solid #30363d}"
     "td{border-bottom:1px solid #21262d;padding:5px 8px;vertical-align:top}"
     "td.c{color:#e6edf3;font-weight:600;white-space:nowrap}td.n{text-align:right;white-space:nowrap}"
-    ".up{color:#ff7b72}.dn{color:#3fb950}.warnv{color:#e3b341}.dim{color:#8b949e}"
+    ".up{color:var(--price-up,#ff7b72)}.dn{color:var(--price-down,#3fb950)}.warnv{color:var(--status-warn,#e3b341)}.dim{color:var(--text-muted,#8b949e)}"
     ".leg{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:12px;max-width:1100px}"
     ".story{background:#0f1b2d;border:1px solid #1f6feb;border-radius:6px;padding:10px 14px;margin:10px 0;font-size:13px;max-width:1100px}"
     ".ver{background:#10201a;border:1px solid #238636;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:13px;max-width:1100px}"

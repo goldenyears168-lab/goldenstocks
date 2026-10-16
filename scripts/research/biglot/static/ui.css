@@ -1,0 +1,33 @@
+/* 設計代幣(design tokens)——docs/ui-standard.md 的單一來源。
+   只放「變數」與極少數通用規則;頁面一律以 var(--名稱, 備援值) 引用,備援值必須與下方相同(測試會比對)。
+   價格色(台股:紅漲綠跌)、狀態色、分組色三族互不混用。 */
+:root{
+  /* 價格色 */
+  --price-up:#ff7b72;
+  --price-down:#3fb950;
+  --price-flat:#484f58;
+  --limit-up-bg:#d1242f;
+  --limit-down-bg:#1a7f37;
+  /* 狀態色(錯誤須搭配 ⚠／⛔ 圖示與文字,不得單獨靠顏色) */
+  --status-ok:#3fb950;
+  --status-warn:#e3b341;
+  --status-error:#f85149;
+  --status-info:#79c0ff;
+  /* 分組色 */
+  --flow-big:#ff7b72;
+  --flow-retail:#58a6ff;
+  --flow-mid:#8b949e;
+  --flow-warrant:#d2a8ff;
+  /* 底色、邊框、文字 */
+  --bg:#0d1117;
+  --surface:#161b22;
+  --border:#30363d;
+  --border-soft:#21262d;
+  --text:#c9d1d9;
+  --text-strong:#e6edf3;
+  --text-muted:#8b949e;
+  --text-dim:#484f58;
+  --link:#79c0ff;
+}
+/* 數字欄一律等寬數字(表格內靠右對齊的欄位) */
+td,th{font-variant-numeric:tabular-nums}
