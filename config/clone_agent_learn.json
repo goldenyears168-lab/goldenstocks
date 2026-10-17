@@ -1,0 +1,19 @@
+{
+ "_doc": "複製人每日學習迴圈設定(scripts/research/clone_agent_learn.py 讀)。challengers 一經登記(verdicts.jsonl 的 register 列)就凍結;改 filter 必須換新 id。",
+ "champion": {"id": "CA-R1-live", "filter": "in_list and stars >= 4 and time >= '10:00:00' and time < '12:00:00'"},
+ "metric": "ex60",
+ "oos_from": "2026-10-06",
+ "walk_forward": {"window_days": 20, "shrink_k": 20},
+ "anti_overfit": {"max_structural_adopt_per_week": 1, "bh_alpha": 0.05, "power": 0.8, "max_verdicts_per_challenger": 1},
+ "challengers": [
+  {"id": "C1-star3", "registered": "2026-10-08", "structural": true, "effect_bps": 15,
+   "hypothesis": "放寬到 ★3 以上(同窗 10:00–12:00)後,每筆成本後 60 分超額不低於冠軍;若成立,送單量可放大而不稀釋邊際",
+   "filter": "in_list and stars >= 3 and time >= '10:00:00' and time < '12:00:00'"},
+  {"id": "C2-skip1030", "registered": "2026-10-08", "structural": true, "effect_bps": 15,
+   "hypothesis": "10:00–10:30 仍屬開盤後最弱時段(21 天 997 卡:首半小時最弱),砍掉後每筆成本後 60 分超額提高",
+   "filter": "in_list and stars >= 4 and time >= '10:30:00' and time < '12:00:00'"},
+  {"id": "C3-spread20", "registered": "2026-10-08", "structural": true, "effect_bps": 15,
+   "hypothesis": "訊號當下期貨買賣價差 >20bps 的卡,價差吃掉邊際(價差 16.7bps > 選股優勢 8.2bps),排除後每筆成本後 60 分超額提高",
+   "filter": "in_list and stars >= 4 and time >= '10:00:00' and time < '12:00:00' and spread_entry_bps <= 20"}
+ ]
+}
