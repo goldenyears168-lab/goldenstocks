@@ -68,3 +68,15 @@
 - 停用期間 FinMind 才有的**完整分點底稿**（每檔股票約 800 個分點）從 2026-10-16 起無法重建。
 - 官方各頁面格式改版時，解析會回 `None`（視為無資料而非 0），並由測試與對帳腳本抓出。
 - `computed` VIXTWN 自 10/01 停更是在這次遷移之前就已存在的問題。
+
+## 五、2026-10-17 最終稽核：啟用中的 job 都不再依賴 FinMind
+
+**防線（三層）**：(1) `finmind_client` 預設停用（`FINMIND_ENABLED` 未設為 1 就不連線）；(2) `.env` 的 `FINMIND_TOKEN` 已註解（備份 `.env.bak-20261017-pre-token`），連直接呼叫 API 的腳本也拿不到 token；(3) 依賴 FinMind 的 job 已停用。
+
+**已改官方／富邦**：期貨法人、VIXTWN（日線＋分鐘）、TX／TE 缺口（tech_risk）、早盤期貨快照（`sync_morning_futures`）、台指期夜盤缺口（`morning_gate_brief`）、融資券／當沖／法人、外資持股、鉅額、Beta 股票清單、`chip-daily-brief` 產業分類、分點（專家池＋持倉＋`/chips`＋詳情頁集中度）、日線覆蓋率斷言。
+
+**已停用（launchctl bootout + disable，登錄表標記）**：`capitulation-oos-accumulate`（retired）、`tape-bars-backfill`、`chip-loud-accum-track`、`ops-console-evening-sync`（disabled）、`finmind-branch-probe-onetime`（retired，plist 已刪）。復原：`launchctl enable gui/$(id -u)/com.jackm4.goldenstocks.<label>` 後 `launchctl bootstrap`。
+
+**程式碼仍含 FinMind 呼叫、但在啟用中的 job 裡走不到**：`order/dayflip_short_signal.resolve_futures_symbol`（僅已退役的 dayflip 使用，且包 `try/except`）、`refresh_dayflip_futures_daily_cache`（僅已退役的席位週更）、`stock_universe`（僅 `sync_stock_market_daily` 使用，入口已 SKIP）、`build_hivol_futures_universe`（手動產生器）、`run_expert_pool_watch.refresh_stock_tape` 的 FinMind 分支（停用時走富邦）。
+
+**已知缺口**：上櫃當沖；詳情頁「本益比同族群」的 EPS 快照（2026-09-25，原由 FinMind 財報產生，無法自動更新）；RRG／VCP／Lens 與 25 個讀 `source='finmind'` 日線的檔案停在 10/15；每檔完整約 800 個分點的底稿。
