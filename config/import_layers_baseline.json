@@ -10,6 +10,6 @@
    "vcp_funnel_specs_daily -> research.backtest.chunge_funnel_backtest"
   ]
  },
- "lazy_only_edges": 146,
+ "lazy_only_edges": 160,
  "note": "只許減不許增；新增違規請先修依賴方向，不要改這個檔。"
 }
