@@ -36,7 +36,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stock_db import DEFAULT_DB_PATH  # noqa: E402
 
-SOURCE = "finmind"
+# 2026-10-17 FinMind 不續約:日線新日期只來自官方(twse_mi_index/tpex_daily)、分點 tape 來自富邦。
+# 斷言改成『跨來源去重』計數(DISTINCT stock_id),歷史上各來源並存的日子也不會重複計。
+BARS_SOURCES = ("finmind", "twse_mi_index", "tpex_daily")
+TAPE_SOURCES = ("finmind", "fubon")
+_BP = ",".join("?" * len(BARS_SOURCES))
+_TP = ",".join("?" * len(TAPE_SOURCES))
 DEFAULT_LOOKBACK = 20
 DEFAULT_MIN_RATIO = 0.90
 DEFAULT_BRANCH = "9217"
@@ -52,9 +57,9 @@ def connect_ro(db: Path) -> sqlite3.Connection:
 
 def recent_trade_dates(conn: sqlite3.Connection, n: int) -> list[str]:
     rows = conn.execute(
-        "SELECT DISTINCT trade_date FROM stock_daily_bars "
-        "WHERE source=? ORDER BY trade_date DESC LIMIT ?",
-        (SOURCE, n),
+        f"SELECT DISTINCT trade_date FROM stock_daily_bars "
+        f"WHERE source IN ({_BP}) AND close>0 ORDER BY trade_date DESC LIMIT ?",
+        (*BARS_SOURCES, n),
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -65,29 +70,29 @@ def priced_counts(conn: sqlite3.Connection, dates: list[str]) -> dict[str, int]:
     ph = ",".join("?" * len(dates))
     rows = conn.execute(
         f"SELECT trade_date, COUNT(DISTINCT stock_id) AS n FROM stock_daily_bars "
-        f"WHERE source=? AND close>0 AND trade_date IN ({ph}) GROUP BY trade_date",
-        (SOURCE, *dates),
+        f"WHERE source IN ({_BP}) AND close>0 AND trade_date IN ({ph}) GROUP BY trade_date",
+        (*BARS_SOURCES, *dates),
     ).fetchall()
     return {r["trade_date"]: int(r["n"]) for r in rows}
 
 
 def branch_price_coverage(conn: sqlite3.Connection, branch_id: str, asof: str) -> dict:
     """該分點當日 tape 觸及的標的中，有多少比例查得到當日價格。"""
-    base = """
+    base = f"""
         FROM stock_broker_branch_daily b
-        WHERE b.source=? AND b.securities_trader_id=? AND b.trade_date=?
+        WHERE b.source IN ({_TP}) AND b.securities_trader_id=? AND b.trade_date=?
           AND length(b.stock_id)=4 AND b.stock_id GLOB '[0-9][0-9][0-9][0-9]'
           AND b.stock_id NOT GLOB '00*'
     """
     tape = conn.execute(
-        f"SELECT COUNT(DISTINCT b.stock_id) {base}", (SOURCE, branch_id, asof)
+        f"SELECT COUNT(DISTINCT b.stock_id) {base}", (*TAPE_SOURCES, branch_id, asof)
     ).fetchone()[0]
     priced = conn.execute(
         f"""SELECT COUNT(DISTINCT b.stock_id) {base}
               AND EXISTS (SELECT 1 FROM stock_daily_bars p
                           WHERE p.stock_id=b.stock_id AND p.trade_date=b.trade_date
-                            AND p.source=? AND p.close>0)""",
-        (SOURCE, branch_id, asof, SOURCE),
+                            AND p.source IN ({_BP}) AND p.close>0)""",
+        (*TAPE_SOURCES, branch_id, asof, *BARS_SOURCES),
     ).fetchone()[0]
     return {
         "branch_id": branch_id,
@@ -109,16 +114,16 @@ def stale_active_cohort(conn: sqlite3.Connection, dates: list[str]) -> list[dict
         SELECT b.stock_id,
                COUNT(DISTINCT b.trade_date) AS tape_days,
                (SELECT MAX(p.trade_date) FROM stock_daily_bars p
-                 WHERE p.stock_id=b.stock_id AND p.source=?) AS last_bar
+                 WHERE p.stock_id=b.stock_id AND p.source IN ({_BP})) AS last_bar
         FROM stock_broker_branch_daily b
-        WHERE b.source=? AND b.trade_date IN ({ph})
+        WHERE b.source IN ({_TP}) AND b.trade_date IN ({ph})
           AND length(b.stock_id)=4 AND b.stock_id GLOB '[0-9][0-9][0-9][0-9]'
           AND b.stock_id NOT GLOB '00*'
         GROUP BY b.stock_id
         HAVING last_bar IS NOT NULL AND last_bar < ?
         ORDER BY tape_days DESC, last_bar ASC, b.stock_id
         """,
-        (SOURCE, SOURCE, *recent, cutoff),
+        (*BARS_SOURCES, *TAPE_SOURCES, *recent, cutoff),
     ).fetchall()
     return [dict(r) for r in rows]
 
