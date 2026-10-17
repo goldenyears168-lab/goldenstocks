@@ -479,7 +479,8 @@ jobs:
   - label: tape-bars-backfill
     category: collect
     order_capable: false
-    status: enabled
+    status: disabled
+    disabled_since: "2026-10-17"  # FinMind 不續約;分點 tape 活躍標的的日線補檔靠 FinMind,官方全市場日線(twse_mi_index/tpex_daily)已涵蓋
     schedule: "weekdays 22:30"
     description: >
       分點 tape 活躍標的的 stock_daily_bars 價格補檔（scripts/ops/backfill_active_tape_bars.py）。
@@ -678,7 +679,8 @@ jobs:
   - label: chip-loud-accum-track
     category: research
     order_capable: false
-    status: enabled
+    status: disabled
+    disabled_since: "2026-10-17"  # FinMind 不續約;每日 ~950 檔全分點日報富邦無法重建(只有前 15 名),研究線暫停
     schedule: "weekdays 22:15"
     description: >-
       高調吸貨前瞻紀錄（topic chip-loud-accum-forward · 凍結規格 2026-08-28）：
@@ -1051,7 +1053,8 @@ jobs:
   - label: ops-console-evening-sync
     category: webfeed
     order_capable: false
-    status: enabled
+    status: disabled
+    disabled_since: "2026-10-17"  # FinMind 不續約;內含 FinMind 分點/日線步驟,Supabase 推送本來就關閉(RUN_OPS_CONSOLE_PUSH=0)
     re_enabled_since: "2026-08-18"
     schedule: "weekdays 20:40（Supabase 推送已關閉，只跑本地 tape/panel）"
     description: >

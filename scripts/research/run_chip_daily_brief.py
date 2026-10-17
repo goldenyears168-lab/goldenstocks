@@ -173,8 +173,37 @@ def names() -> dict[str, str]:
     return out
 
 
+IND_NAMES = {
+    "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維", "05": "電機機械", "06": "電器電纜", "08": "玻璃陶瓷",
+    "09": "造紙工業", "10": "鋼鐵工業", "11": "橡膠工業", "12": "汽車工業", "14": "建材營造", "15": "航運業", "16": "觀光餐旅",
+    "17": "金融保險", "18": "貿易百貨", "20": "其他", "21": "化學工業", "22": "生技醫療", "23": "油電燃氣", "24": "半導體業",
+    "25": "電腦及週邊設備業", "26": "光電業", "27": "通信網路業", "28": "電子零組件業", "29": "電子通路業", "30": "資訊服務業",
+    "31": "其他電子業", "35": "綠能環保", "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "91": "存託憑證",
+}
+
+
+def _official_industry() -> pd.DataFrame:
+    """官方公司基本資料的『產業別』代碼(TWSE openapi t187ap03_L、櫃買 openapi mopsfin_t187ap03_O)→ stock_id/ind。"""
+    import json
+    import urllib.request
+
+    def get(url):
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (goldenstocks)"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    rows = []
+    for r in get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L"):
+        code = str(r.get("產業別", "")).strip()
+        rows.append((str(r.get("公司代號", "")).strip(), IND_NAMES.get(code, code or "未分類")))
+    for r in get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"):
+        code = str(r.get("SecuritiesIndustryCode", "")).strip()
+        rows.append((str(r.get("SecuritiesCompanyCode", "")).strip(), IND_NAMES.get(code, code or "未分類")))
+    return pd.DataFrame(rows, columns=["stock_id", "ind"]).drop_duplicates("stock_id")
+
+
 def industry() -> pd.DataFrame:
-    """stock_id → 產業別（FinMind TaiwanStockInfo，快取於 DATA_DIR）。
+    """stock_id → 產業別（官方公司基本資料；2026-10-17 起不再用 FinMind TaiwanStockInfo；快取於 DATA_DIR）。
 
     產業分類極少變動，故快取 30 天。抓不到時回空表 → 呼叫端自動退回全市場排序。
     """
@@ -185,13 +214,7 @@ def industry() -> pd.DataFrame:
         if age < IND_CACHE_DAYS:
             return pd.read_parquet(cache)
     try:
-        import requests
-        r = requests.get("https://api.finmindtrade.com/api/v4/data",
-                         params={"dataset": "TaiwanStockInfo",
-                                 "token": os.environ.get("FINMIND_TOKEN", "")}, timeout=120)
-        r.raise_for_status()
-        df = pd.DataFrame(r.json()["data"])[["stock_id", "industry_category"]]
-        df = df.drop_duplicates("stock_id").rename(columns={"industry_category": "ind"})
+        df = _official_industry()
         cache.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(cache)
         return df
