@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""早盤即時期貨 gap（TX vs IX0001 昨收 · TE vs 前日 TE 結算）→ morning_risk_snapshot。"""
+"""早盤期貨 gap（TX vs IX0001 昨收 · TE vs 前日 TE 結算）→ morning_risk_snapshot。
+
+2026-10-17 起資料來源由 FinMind 即時快照改為期交所『期貨每日交易行情』盤後(夜盤)頁:取當日盤後近月收盤與漲跌%,
+與 tech_risk 的 TX/TE 缺口參考價是同一份資料(開盤前的夜盤收盤就是最好的開盤參考)。
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from finmind_client import fetch_futures_snapshots
+import taifex_client
 from stock_db import (
     DEFAULT_DB_PATH,
     connect,
@@ -21,6 +25,18 @@ TW_SPOT_CODE = "IX0001"
 TZ = ZoneInfo("Asia/Taipei")
 DEFAULT_TX_SNAPSHOT_ID = "TXF"
 DEFAULT_TE_SNAPSHOT_ID = "EXF"
+# 快照代號(沿用 FinMind 時期設定,env 可覆蓋)→ 期交所商品代號
+TAIFEX_ID = {"TXF": "TX", "EXF": "TE", "TX": "TX", "TE": "TE"}
+
+
+def fetch_taifex_snapshot_rows(day, tx_id: str, te_id: str) -> list[dict]:
+    """期交所盤後行情 → 與 FinMind 快照同形的列(futures_id 改回快照代號,pick_snapshot_row 才認得)。"""
+    rows: list[dict] = []
+    for snap_id in (tx_id, te_id):
+        fid = TAIFEX_ID.get(snap_id.upper(), snap_id.upper())
+        got = taifex_client.fetch_futures_daily(day, fid, "after_market")
+        rows.extend({**r, "futures_id": snap_id} for r in got if "/" not in str(r.get("contract_date", "")))
+    return rows
 
 
 def _snapshot_ids() -> tuple[str, str]:
@@ -219,11 +235,9 @@ def sync_morning_futures(
     today = trade_date or datetime.now(TZ).date().isoformat()
     captured_at = datetime.now(TZ).replace(microsecond=0).isoformat()
 
-    rows, err = fetch_futures_snapshots([tx_id, te_id])
-    if err:
-        raise RuntimeError(err)
+    rows = fetch_taifex_snapshot_rows(datetime.fromisoformat(today).date(), tx_id, te_id)
     if not rows or pick_snapshot_row(rows, tx_id) is None:
-        raise RuntimeError(f"FinMind 期貨 snapshot 無資料（{tx_id}）")
+        raise RuntimeError(f"期交所盤後行情無資料（{tx_id}）")
 
     conn = connect(db_path)
     try:
@@ -234,6 +248,7 @@ def sync_morning_futures(
             snapshot_rows=rows,
             tx_id=tx_id,
             te_id=te_id,
+            source="taifex_after_market",
         )
         if payload is None:
             raise RuntimeError("無法組裝 morning_risk_snapshot（缺 IX0001 昨收或期貨價）")

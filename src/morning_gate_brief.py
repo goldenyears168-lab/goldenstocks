@@ -164,30 +164,33 @@ def compute_gap_bias(
 def _tx_night_gap(session: str) -> float | None:
     """台指期夜盤 05:00 收相對前一日日盤收的隔夜缺口%（TW 自身隔夜，最準的缺口預測子）。
 
-    週二～五可用；週一無夜盤或 FinMind after_market 08:30 前未更新 → 回 None（build_brief 自動退回 NQ）。
+    2026-10-17 起資料來源改期交所『期貨每日交易行情』(盤後頁 + 前一交易日一般頁);原 FinMind TaiwanFuturesDaily 已停用。
+    夜盤收盤 05:00 後才有資料;週一無夜盤、或前一日一般頁抓不到 → 回 None（build_brief 自動退回 NQ）。
     """
     try:
         from datetime import date, timedelta
 
-        from finmind_client import fetch_finmind
+        import taifex_client
         sess = date.fromisoformat(session)
-        rows = fetch_finmind("TaiwanFuturesDaily", "TX", sess - timedelta(days=7), sess)
-        rows = rows if isinstance(rows, list) else (rows.get("data") or [])
-        best: dict = {}
-        for r in rows:
-            if "/" in str(r.get("contract_date", "")):   # 排除 spread 合約
-                continue
-            k = (r["date"], r["trading_session"])
-            if r["volume"] > best.get(k, (-1, None))[0]:
-                best[k] = (r["volume"], r)
-        am = best.get((session, "after_market"))
-        pos_dates = sorted({d for (d, s) in best if s == "position" and d < session})
-        if not am or not pos_dates:
+
+        def near_month_close(rows: list[dict]) -> float | None:
+            rows = [r for r in rows if "/" not in str(r.get("contract_date", "")) and r.get("close")]   # 排除 spread 合約
+            return max(rows, key=lambda r: r.get("volume") or 0)["close"] if rows else None
+
+        am_close = near_month_close(taifex_client.fetch_futures_daily(sess, "TX", "after_market"))
+        if not am_close:
             return None
-        prev_close = best[(pos_dates[-1], "position")][1]["close"]
+        prev_close = None
+        for back in range(1, 8):                          # 往前找最近一個有一般時段行情的交易日(跳過週末/假日)
+            d = sess - timedelta(days=back)
+            if d.weekday() >= 5:
+                continue
+            prev_close = near_month_close(taifex_client.fetch_futures_daily(d, "TX", "position"))
+            if prev_close:
+                break
         if not prev_close:
             return None
-        return (am[1]["close"] / prev_close - 1) * 100
+        return (am_close / prev_close - 1) * 100
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] 台指期夜盤缺口抓取失敗（退回 NQ）: {type(exc).__name__}: {exc}")
         return None
