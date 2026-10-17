@@ -211,3 +211,32 @@ def in_tmf_trade_window(hm: str | None = None, *, weekday: int | None = None) ->
     if hm < "05:00":
         return 1 <= weekday <= 5  # Tue-Sat tail continues Mon-Fri's night open
     return False
+
+
+def resolve_live_futures_symbol(session: FubonSession, root: str) -> tuple[str, str] | None:
+    """即時解析富邦／Fugle 行情＋下單用的完整月合約代碼（如 CYFH6）。
+
+    ⚠️ 這不是 FinMind 式代碼（CYF）——兩者是不同商業體系。Fugle marketdata 的
+    intraday.candles/quote 對 FinMind 式代碼一律 404，必須先用 tickers(product=root)
+    查出當下真正在交易的完整月合約代碼。參數化任意 2 碼根代碼。
+    """
+    _ensure_realtime_once(session)
+    fut = session.sdk.marketdata.rest_client.futopt
+    data = fut.intraday.tickers(type="FUTURE", exchange="TAIFEX", product=root)
+    rows = data if isinstance(data, list) else (data.get("data") or data.get("tickers") or [])
+    today = datetime.now(tz=_TZ).strftime("%Y-%m-%d")
+    cands = []
+    for r in rows or []:
+        sym = str(r.get("symbol") or "")
+        end = str(r.get("endDate") or r.get("end_date") or "")[:10]
+        name = str(r.get("name") or sym)
+        if not sym.startswith(root):
+            continue
+        if end and end < today:
+            continue
+        cands.append((end or "9999-99-99", sym, name))
+    if not cands:
+        return None
+    cands.sort()
+    _end, sym, name = cands[0]
+    return sym, name

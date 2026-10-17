@@ -389,7 +389,7 @@ def _resolve_live_symbol(session: FubonSession, sid: str, state: LedgerState) ->
     cached = state.live_symbols.get(sid)
     if cached:
         return cached
-    from order.dayflip_short_order import resolve_live_futures_symbol
+    from order.tmf_channel_marketdata import resolve_live_futures_symbol
 
     root = FUTURES_ROOT.get(sid)
     if not root:
@@ -457,7 +457,7 @@ def _feed_new_bars(
         # relz30:index 是訊號的一部分;micro30:index 只供 idx_5m 觀測欄位
         idx_symbol = state.live_symbols.get("_v3_index")
         if not idx_symbol:
-            from order.dayflip_short_order import resolve_live_futures_symbol
+            from order.tmf_channel_marketdata import resolve_live_futures_symbol
 
             resolved = resolve_live_futures_symbol(session, V3_INDEX_ROOT)
             if resolved:

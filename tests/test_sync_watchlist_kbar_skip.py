@@ -7,7 +7,7 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from rrg_mono_swap_accel_screen import sync_watchlist_kbar
+from watchlist_kbar import sync_watchlist_kbar
 from stock_db.kbar import upsert_stock_kbar_5m
 
 
@@ -64,7 +64,7 @@ class TestSyncWatchlistKbarSkip(unittest.TestCase):
         self.conn.close()
 
     @patch.dict(os.environ, {"C18ACC_KBAR_SYNC": "1", "KBAR_SYNC_SKIP_FRESH": "1"})
-    @patch("rrg_mono_swap_accel_screen.fetch_tw_intraday_kbar_rows")
+    @patch("watchlist_kbar.fetch_tw_intraday_kbar_rows")
     def test_skips_fresh_ids_only_fetches_stale(
         self,
         mock_fetch,
@@ -98,7 +98,7 @@ class TestSyncWatchlistKbarSkip(unittest.TestCase):
         self.assertGreater(n, 0)
 
     @patch.dict(os.environ, {"C18ACC_KBAR_SYNC": "1", "KBAR_SYNC_SKIP_FRESH": "0"})
-    @patch("rrg_mono_swap_accel_screen.fetch_tw_intraday_kbar_rows")
+    @patch("watchlist_kbar.fetch_tw_intraday_kbar_rows")
     def test_skip_fresh_disabled_fetches_all(
         self,
         mock_fetch,

@@ -11,11 +11,15 @@ from typing import Any, Literal
 
 from research.backtest.archive.c18acc_kinematic_exit_sweep import load_kinematic_cache
 from research.backtest.w3_rv_hl_winner_profile import _mean, _median
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    GapLogic,
+    GapRv3Params,
+    Rv3Mode,
+    _gap_ok,
+)
 
 SCHEMA = "c18acc_kinematic_gap_rv3-v1"
 
-GapLogic = Literal["or", "and", "w20_w5_only", "w5_w3_only"]
-Rv3Mode = Literal["none", "drv", "poll_drop", "drv_and_poll", "drv_or_poll", "below_entry"]
 
 GW5_GRID = (5.0, 6.0, 7.0, 8.0)
 GW3_GRID = (1.0, 1.5, 2.0, 2.5)
@@ -26,33 +30,6 @@ EXPAND_GRID = (0.0, 3.0, 4.0, 5.0)
 CONSECUTIVE_GRID = (1, 2)
 DIST_GRID = (0.0, 8.0)
 PULLBACK_GRID = (False, True)
-
-
-@dataclass(frozen=True)
-class GapRv3Params:
-    gap_logic: GapLogic
-    gw5_min: float
-    gw3_min: float
-    gap_expand_min: float
-    rv3_mode: Rv3Mode
-    drv3_min: float
-    dmv3_min: float
-    min_ret_pct: float
-    require_pullback: bool
-    dist_min: float
-    consecutive: int
-
-    @property
-    def variant_id(self) -> str:
-        pb = "pb1" if self.require_pullback else "pb0"
-        rv = self.rv3_mode
-        dmv = int(self.dmv3_min * 100) if self.dmv3_min else 0
-        exp = int(self.gap_expand_min) if self.gap_expand_min else 0
-        return (
-            f"GR_{self.gap_logic}_g5{int(self.gw5_min)}_g3{self.gw3_min:g}_x{exp}"
-            f"_rv{rv}_d{int(self.drv3_min*100)}_mv3{dmv}"
-            f"_r{int(self.min_ret_pct)}_{pb}_dist{int(self.dist_min)}_c{self.consecutive}"
-        )
 
 
 Leg = dict[str, Any]
@@ -92,35 +69,6 @@ def _rv3_ok(
             and float(w3) < float(ent_w3) - 1e-9
         )
     return False
-
-
-def _gap_ok(
-    snap: dict[str, Any],
-    entry: dict[str, Any],
-    params: GapRv3Params,
-) -> bool:
-    g5 = snap.get("gap_mv_w20_w5")
-    g3 = snap.get("gap_mv_w5_w3")
-    w5_ok = g5 is not None and float(g5) >= params.gw5_min - 1e-9
-    w3_ok = g3 is not None and float(g3) >= params.gw3_min - 1e-9
-    if params.gap_logic == "or":
-        gap = w5_ok or w3_ok
-    elif params.gap_logic == "and":
-        gap = w5_ok and w3_ok
-    elif params.gap_logic == "w20_w5_only":
-        gap = w5_ok
-    else:
-        gap = w3_ok
-    if params.gap_expand_min > 0:
-        eg5 = entry.get("gap_mv_w20_w5")
-        eg3 = entry.get("gap_mv_w5_w3")
-        ex = False
-        if g5 is not None and eg5 is not None and float(g5) - float(eg5) >= params.gap_expand_min - 1e-9:
-            ex = True
-        if g3 is not None and eg3 is not None and float(g3) - float(eg3) >= params.gap_expand_min - 1e-9:
-            ex = True
-        gap = gap and ex
-    return gap
 
 
 def _snap_ok(

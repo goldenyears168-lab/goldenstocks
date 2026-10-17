@@ -239,7 +239,6 @@ def run_intraday_watch(
     ):
         try:
             from rrg_universe_snapshot import persist_intraday_universe_from_panels
-            from supabase_rrg_universe_sync import maybe_sync_rrg_universe_to_supabase
 
             n_rows = persist_intraday_universe_from_panels(
                 conn,
@@ -250,7 +249,6 @@ def run_intraday_watch(
                 etf_codes=codes,
             )
             print(f"RRG universe intraday: session={session} rows={n_rows} tick={tick_n}")
-            maybe_sync_rrg_universe_to_supabase(conn, session, "intraday")
         except Exception as exc:
             print(f"RRG universe intraday persist warn: {exc}")
 

@@ -98,17 +98,7 @@ def main() -> int:
         print(f"錯誤：無法讀取 intent — {exc}", file=sys.stderr)
         return 1
 
-    # P6：拒絕殘留失敗／已送／placeholder 意圖的手動 --submit
-    try:
-        raw_payload = json.loads(intent_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        raw_payload = {}
-    from abc_v3_f1_intent_bridge import intent_manual_submit_block_reason
-
-    block = intent_manual_submit_block_reason(raw_payload if isinstance(raw_payload, dict) else {})
-    if block and args.submit:
-        print(f"錯誤：{block}（請用 --dry-run 檢視；勿手動重送已標記 intent）", file=sys.stderr)
-        return 3
+    # P6：拒絕 quarantine 目錄意圖的手動 --submit
     if "quarantine" in intent_path.parts and args.submit:
         print("錯誤：intent_submit_blocked:quarantine_dir", file=sys.stderr)
         return 3

@@ -12,7 +12,6 @@ from copytrade_l1h9_daily import (
     build_copytrade_l1h9_markdown,
     signals_for_date,
 )
-from copytrade_snapshot_json import build_copytrade_snapshot_json
 
 
 class TestCopytradeL1h9Daily(unittest.TestCase):
@@ -55,31 +54,6 @@ class TestCopytradeL1h9Daily(unittest.TestCase):
         self.assertIn("加碼", md)
         self.assertEqual(meta["signal_count"], 1)
         self.assertEqual(meta["strategy_id"], "00981a-l1h9")
-
-    def test_copytrade_snapshot_has_plain_language_fields(self) -> None:
-        conn = MagicMock(spec=sqlite3.Connection)
-        sig = CopytradeSignal(
-            signal_date="2026-06-20",
-            stock_id="2330",
-            stock_name="台積電",
-            action="加码",
-            share_delta=1000.0,
-            weight_delta=0.5,
-        )
-        with (
-            patch(
-                "copytrade_snapshot_json.signals_for_date",
-                return_value=("2026-06-18", "2026-06-20", [sig]),
-            ),
-            patch(
-                "copytrade_snapshot_json._consensus_add_set",
-                return_value={"2330"},
-            ),
-        ):
-            snapshot = build_copytrade_snapshot_json(conn, "2026-06-20")
-        self.assertIn("summary_zh", snapshot)
-        self.assertEqual(snapshot["empty_reason_zh"], None)
-        self.assertIn("1 檔", snapshot["summary_zh"])
 
     def test_write_reports_defaults_to_session_trade_date(self) -> None:
         conn = MagicMock(spec=sqlite3.Connection)

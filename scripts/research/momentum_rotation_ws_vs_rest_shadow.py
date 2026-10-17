@@ -35,7 +35,7 @@ sys.path.insert(0, "src")
 
 os.environ["ORDER_MOMENTUM_ROTATION_WS_MARKETDATA_ENABLED"] = "1"
 
-from order.dayflip_short_order import resolve_live_futures_symbol  # noqa: E402
+from order.tmf_channel_marketdata import resolve_live_futures_symbol  # noqa: E402
 from order.fubon_session import connect_fubon  # noqa: E402
 from order.momentum_rotation_order import in_momentum_rotation_trade_window  # noqa: E402
 from order.momentum_rotation_signal import FUTURES_ROOT, UNIVERSE  # noqa: E402

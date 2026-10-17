@@ -444,24 +444,6 @@ th{{background:#8881}} small{{color:#999}}
     return md_txt, html, state
 
 
-def push_ops_console() -> None:
-    """Best-effort push of the chip_macro snapshot to Supabase ops_snapshots.
-
-    Done directly here (not only via evening-sync) because evening-sync runs at the
-    same 20:00 slot -> pushing here guarantees the console shows today's fresh state.
-    """
-    try:
-        from ops_console_sync import insert_snapshot, supabase_ops_configured
-        from ops_console_snapshots import build_chip_macro_payload
-        if not supabase_ops_configured():
-            print("(ops-console: Supabase 未設定，略過推送)")
-            return
-        insert_snapshot(kind="chip_macro", payload=build_chip_macro_payload())
-        print("(ops-console: chip_macro snapshot 已推送)")
-    except Exception as e:  # never fail the tracker on ops-console issues
-        print(f"(ops-console 推送略過: {type(e).__name__}: {e})")
-
-
 def append_history(state: dict):
     row = pd.DataFrame([state])
     if HIST.exists():
@@ -547,7 +529,7 @@ def main():
     ap.add_argument("--no-maint", action="store_true", help="skip 融資維持率 fetch (斷頭底監控燈)")
     ap.add_argument("--no-vix", action="store_true", help="skip VIX 恐慌 gate fetch (L0 風控燈)")
     ap.add_argument("--no-rev", action="store_true", help="skip L1 大型股營收動能多頭傾斜燈")
-    ap.add_argument("--no-ops", action="store_true", help="skip Supabase ops-console push")
+    ap.add_argument("--no-ops", action="store_true", help="(deprecated no-op; Supabase ops-console 已移除，僅保留相容)")
     args = ap.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
@@ -577,8 +559,6 @@ def main():
         print(f"⚠️ 資料落後 {stale['stale_bdays']} 交易日 (panel as-of {stale['panel_asof']}, "
               f"最近應為 {stale['expected']}) — 燈號可能過期")
     print(f"隔日驗證: backfill 新填 {filled} 個前瞻報酬格")
-    if not args.no_ops:
-        push_ops_console()
     print("\n" + md)
     print(f"\n-> {OUT/'daily_dashboard.md'}\n-> {OUT/'daily_dashboard.html'}\n-> {HIST}")
 

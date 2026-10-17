@@ -43,11 +43,6 @@ _DAILY_SYNC_STEPS: dict[str, dict[str, Any]] = {
         "run_env": "RUN_RRG_MONO_DAILY",
         "run_default": "1",
     },
-    "rrg_mono_swap_accel_daily": {
-        "strategy_ids": ("rrg-mono-swap-accel",),
-        "run_env": "RUN_RRG_MONO_SWAP_ACCEL_DAILY",
-        "run_default": "1",
-    },
     "copytrade_l1h9_daily": {
         "strategy_ids": ("00981a-l1h9",),
     },
@@ -56,11 +51,6 @@ _DAILY_SYNC_STEPS: dict[str, dict[str, Any]] = {
         "match": "any",
         "run_env": "RUN_VCP_FUNNEL_CLOSE",
         "run_default": "1",
-    },
-    "rrg_improving_watch_daily": {
-        "strategy_ids": (),
-        "run_env": "RUN_RRG_IMPROVING_WATCH",
-        "run_default": "0",
     },
 }
 

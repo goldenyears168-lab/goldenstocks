@@ -24,6 +24,10 @@ from rrg_universe_intraday_panel import (
     intraday_poll_minutes,
 )
 from rrg_universe_snapshot import kbar_close_at_minute
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    _build_stock_frame_maps,
+    _price_at,
+)
 
 ROUND_TRIP_COST_PCT = 0.585  # 0.1425*2 + 0.3
 DEFAULT_POLL_END = "13:30"
@@ -293,25 +297,6 @@ def _matches_entry(p: dict[str, Any], ep: EntryParams) -> bool:
     return sig == ep.signal
 
 
-def _price_at(
-    conn: sqlite3.Connection,
-    bench: pd.Series,
-    stock_id: str,
-    trade_date: str,
-    minute: str,
-) -> tuple[float | None, float | None]:
-    px = kbar_close_at_minute(conn, stock_id, trade_date, minute)
-    if px is None or px <= 0:
-        px = stock_close(conn, stock_id, trade_date)
-    bpx = kbar_close_at_minute(conn, "IX0001", trade_date, minute)
-    if bpx is None or bpx <= 0:
-        if trade_date in bench.index:
-            bpx = float(bench.at[trade_date])
-        else:
-            bpx = None
-    return px, bpx
-
-
 def _hold_nd_frame_idx(
     entry_idx: int,
     frames: list[dict[str, str]],
@@ -427,18 +412,6 @@ def _exit_frame_idx_w20_leading_or_legacy(
         max_forward=max_forward,
         aligned_max=aligned_max,
     )
-
-
-def _build_stock_frame_maps(
-    trajectories: list[dict[str, Any]],
-    frames: list[dict[str, str]],
-) -> dict[str, list[dict[str, Any] | None]]:
-    frame_ids = [f["id"] for f in frames]
-    out: dict[str, list[dict[str, Any] | None]] = {}
-    for t in trajectories:
-        by_id = {p["frame_id"]: p for p in t["points"]}
-        out[t["stock_id"]] = [by_id.get(fid) for fid in frame_ids]
-    return out
 
 
 def _collect_events(

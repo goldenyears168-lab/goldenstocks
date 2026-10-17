@@ -22,8 +22,6 @@ omit = [
     "src/backfill_*.py",
     "src/rrg_mono_intraday_watch.py",
     "src/vcp_intraday_watch.py",
-    "src/vcp_tm/calculators/forward_outcome.py",
-    "src/vcp_tm/tw_data_adapter.py",
 ]
 
 [tool.coverage.report]

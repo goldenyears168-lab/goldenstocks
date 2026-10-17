@@ -19,6 +19,8 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Ruff (syntax / undefined names)
         run: ruff check src tests
+      - name: Import layer ratchet (src/ 跨層依賴只許減不許增)
+        run: python3 scripts/check_import_layers.py
       - name: Unit tests + coverage
         run: |
           PYTHONPATH=src coverage run -m unittest discover -s tests -q

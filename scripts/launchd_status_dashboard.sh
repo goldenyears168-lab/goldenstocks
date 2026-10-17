@@ -17,15 +17,11 @@ NOW_HM="$(date '+%H:%M')"
 NOW_TS="$(date '+%Y-%m-%d %H:%M:%S')"
 
 # label|顯示名|排程說明|log 檔（相對 ROOT）|適用日（1-5=週一至五,7=週日,0=全部）
-# 現行 = Order layer（Leading Dip / Songshan / sell / detach）；digest / evening / VCP / exit-gate 等已退役
+# 現行 = Order layer（Songshan / TMF）；digest / evening / VCP / exit-gate 等已退役
 # ABC Order 已退役 2026-07-15 · C18acc poll 已退役 2026-08-04（策略不再採用）
 JOBS=(
   "com.jackm4.goldenstocks.order-wake|下單防睡眠|週一至五 08:55|logs/launchd_order-wake.log|1-5"
   "com.jackm4.goldenstocks.order-chase-open|開盤追價|週一至五 09:00–09:04 每分鐘|logs/launchd_order-chase-open.log|1-5"
-  "com.jackm4.goldenstocks.buy-signal-radar|Buy signal radar|週一至五 09:00–13:20 每 5 分|logs/intraday/launchd_buy-signal-radar.log|1-5"
-  "com.jackm4.goldenstocks.sell-signal-radar|Sell signal radar|週一至五 09:06–13:20 每 5 分|logs/intraday/launchd_sell-signal-radar.log|1-5"
-  "com.jackm4.goldenstocks.detach-gate|Detach Gate 台美脫鉤|週一至五 09:40–12:30 每 5 分|logs/intraday/launchd_detach-gate.log|1-5"
-  "com.jackm4.goldenstocks.leading-dip-poll|Leading Dip Order|週一至五 09:05–13:25 每 5 分|logs/intraday/launchd_leading-dip-poll.log|1-5"
   "com.jackm4.goldenstocks.songshan-copytrade-poll|跟單松山 Order|週一至五 09:25–09:40 每 5 分|logs/intraday/launchd_songshan-copytrade-poll.log|1-5"
 )
 
@@ -342,11 +338,6 @@ print_today_timeline() {
 }
 
 print_log_hints() {
-  printf '\n%b快速追 log%b\n' "$(c "1")" "$(reset)"
-  printf '  tail -f %s/logs/intraday/launchd_buy-signal-radar.log\n' "${ROOT}"
-  printf '  tail -f %s/logs/intraday/launchd_sell-signal-radar.log\n' "${ROOT}"
-  printf '  tail -f %s/logs/intraday/launchd_detach-gate.log\n' "${ROOT}"
-  printf '  tail -f %s/logs/intraday/launchd_leading-dip-poll.log\n' "${ROOT}"
   printf '\n%b維護%b\n' "$(c "1")" "$(reset)"
   printf '  安裝/重載：scripts/install-launchd.sh\n'
   printf '  狀態：    scripts/install-launchd.sh --status\n'
