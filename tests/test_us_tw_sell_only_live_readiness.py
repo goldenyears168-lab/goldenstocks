@@ -5,13 +5,21 @@ from __future__ import annotations
 
 import pandas as pd
 
-from order.us_tw_5m_sell_gate import YELLOW
 from research.backtest.us_tw_sell_only_live_readiness_study import (
     SellSpec,
     _confidence_verdict_5m,
     _detach_mask,
     frozen_sell_gate_spec,
     score_sell,
+)
+
+
+# 原定義於 order.us_tw_5m_sell_gate（該下單袖套 2026-10 已移除）；測試自帶一份同值的 YELLOW。
+YELLOW = SellSpec(
+    strategy_id="yellow_w-0.6_c2",
+    panel="5m30",
+    win_thr=-0.6,
+    confirm_polls=2,
 )
 
 

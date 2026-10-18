@@ -17,9 +17,6 @@ track_adapters:
   rrg-mono-hold7:
     source: slot_periods_native
     n_slots: 3
-  rrg-mono-swap-accel:
-    source: slot_periods_native
-    n_slots: 3
   vcp-pivot-gate:
     source: slot_periods_native
     n_slots: 5
@@ -44,13 +41,11 @@ track_adapters:
 # 跨原生 + 市集編隊（比較層 · 共用 comparison_notional_ntd / cost_model / IX0001）
 ensemble_teams:
   team_native_super:
-    label: 原生強者編隊 · swap+hold7+vcp
+    label: 原生強者編隊 · hold7+vcp
     window_id: cmp_max_common
     n_slots: 5
     pool_mode: shared_pool_yield_priority
     members:
-      - strategy_id: rrg-mono-swap-accel
-        priority: 0
       - strategy_id: rrg-mono-hold7
         priority: 1
       - strategy_id: vcp-coil-close
@@ -59,13 +54,11 @@ ensemble_teams:
         priority: 3
 
   team_native_finmind:
-    label: 原生+市集 · swap+TX+低P/S
+    label: 原生+市集 · TX+低P/S+vcp
     window_id: cmp_max_common
     n_slots: 5
     pool_mode: shared_pool_yield_priority
     members:
-      - strategy_id: rrg-mono-swap-accel
-        priority: 0
       - strategy_id: finmind-tx-foreign-net-long-3d
         priority: 1
       - strategy_id: finmind-low-ps-growth
@@ -180,7 +173,6 @@ meta_router:
         momentum_z_min: 0.75
         vol_decile_min: 7
       priority_boost:
-        rrg-mono-swap-accel: 0
         finmind-ma20-breakout-volume: 2
         vcp-pivot-gate: 3
     - type_id: mean_reversion_day
@@ -195,8 +187,7 @@ meta_router:
       label: 無優勢日
       rules:
         all_axes_z_max: -0.5
-      priority_boost:
-        rrg-mono-swap-accel: 0
+      priority_boost: {}
       slot_cap_scale: 0.6
     - type_id: mom_q4_day
       label: 動能Q4
@@ -205,7 +196,6 @@ meta_router:
         vol_decile_min: 6
       priority_boost:
         finmind-ma20-breakout-volume: 1
-        rrg-mono-swap-accel: 2
     - type_id: mrev_q4_day
       label: 均值回歸Q4
       rules:
@@ -228,7 +218,6 @@ meta_router:
         structure_quartile_min: 4
         mean_reversion_quartile_max: 2
       priority_boost:
-        rrg-mono-swap-accel: 0
         finmind-tx-foreign-net-long-3d: 2
     - type_id: neutral
       label: 中性

@@ -74,7 +74,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, "src")
 
-from order.dayflip_short_order import resolve_live_futures_symbol  # noqa: E402
+from order.tmf_channel_marketdata import resolve_live_futures_symbol  # noqa: E402
 from order.fubon_session import connect_fubon  # noqa: E402
 from stock_db import DATA_DIR  # noqa: E402
 

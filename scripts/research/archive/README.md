@@ -14,3 +14,5 @@ PYTHONPATH=src .venv/bin/python scripts/research/archive/run_triple_wma_pullback
 ```
 
 Pipeline / strategy daily runner 見 `scripts/run_*.py`（25 支）與 `config/pipeline_scripts.yaml`。
+
+- 2026-10-16：新增 12 支證偽 topic 腳本（tdcc／street-canon／foreign-branch／umc-branch），清單與結論見 `docs/research-script-inventory.md` 末段；ROOT 為 `parents[3]`。

@@ -17,8 +17,6 @@
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
 		<key>PYTHONPATH</key>
 		<string>{{PROJECT_ROOT}}/src</string>
-		<key>RUN_OPS_DIGEST_SYNC</key>
-		<string>1</string>
 	</dict>
 	<key>StartCalendarInterval</key>
 	<array>

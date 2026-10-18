@@ -41,66 +41,20 @@ from flow_returns import exit_close_date_from_entry
 from research.backtest.abc_v3_f1_entry_structure_sweep import _split_dates_is_oos
 from research.backtest.finpilot_local_backtest import load_price_panels
 from research_config import load_research_splits
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    ConditionKind,
+    Leg,
+    PyramidCondition,
+    _cond_ok,
+    _stable_ok,
+    default_pyramid_conditions,
+    find_add_idx,
+)
 
 SCHEMA = "abc_v3_f1_structural_pyramid-v1"
 
-Leg = dict[str, Any]
-
-ConditionKind = Literal[
-    "any_underwater",
-    "underwater_stable",
-    "underwater_rebound",
-    "underwater_gap_intact",
-    "underwater_stable_rebound",
-]
 
 BASELINE_B_ID = "baseline_b_any_underwater"
-
-
-@dataclass(frozen=True)
-class PyramidCondition:
-    id: str
-    label: str
-    kind: ConditionKind
-    dmv_w5_floor: float = -0.35
-    rebound_min: float = 0.3
-    gap_converge_max: float = 1.0
-
-    def spec(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "kind": self.kind,
-            "dmv_w5_floor": self.dmv_w5_floor,
-            "rebound_min": self.rebound_min,
-            "gap_converge_max": self.gap_converge_max,
-        }
-
-
-def default_pyramid_conditions() -> tuple[PyramidCondition, ...]:
-    """3-4 preregistered candidates (RP-2 §4.1) + unconditional baseline B."""
-    return (
-        PyramidCondition(
-            id="underwater_stable",
-            label="ret<0 · w5_quad∈{leading,improving} · dmv_w5>-0.35",
-            kind="underwater_stable",
-        ),
-        PyramidCondition(
-            id="underwater_rebound",
-            label="ret<0 · W3 RV rebound from in-hold trough ≥0.3",
-            kind="underwater_rebound",
-        ),
-        PyramidCondition(
-            id="underwater_gap_intact",
-            label="ret<0 · gap_mv_w20_w5 converged <1.0 vs entry",
-            kind="underwater_gap_intact",
-        ),
-        PyramidCondition(
-            id="underwater_stable_rebound",
-            label="ret<0 · stable(w5 quad+dmv) AND rv3 rebound≥0.3",
-            kind="underwater_stable_rebound",
-        ),
-    )
 
 
 def baseline_b_condition() -> PyramidCondition:
@@ -109,75 +63,6 @@ def baseline_b_condition() -> PyramidCondition:
         label="ret<0 · unconditional averaging-down (first underwater poll)",
         kind="any_underwater",
     )
-
-
-def _stable_ok(snap: dict[str, Any], cond: PyramidCondition) -> bool:
-    quad = str(snap.get("w5_quad") or "").lower()
-    if quad not in ("leading", "improving"):
-        return False
-    dmv5 = snap.get("dmv_w5")
-    return dmv5 is not None and float(dmv5) > cond.dmv_w5_floor + 1e-9
-
-
-def _cond_ok(
-    snap: dict[str, Any],
-    cond: PyramidCondition,
-    *,
-    entry_gap_w20_w5: float | None,
-    rv3_rebound: float | None,
-) -> bool:
-    if cond.kind == "any_underwater":
-        return True
-    if cond.kind == "underwater_stable":
-        return _stable_ok(snap, cond)
-    if cond.kind == "underwater_rebound":
-        return rv3_rebound is not None and rv3_rebound >= cond.rebound_min - 1e-9
-    if cond.kind == "underwater_gap_intact":
-        gap = snap.get("gap_mv_w20_w5")
-        if gap is None or entry_gap_w20_w5 is None:
-            return False
-        return float(gap) >= float(entry_gap_w20_w5) - cond.gap_converge_max - 1e-9
-    if cond.kind == "underwater_stable_rebound":
-        return (
-            _stable_ok(snap, cond)
-            and rv3_rebound is not None
-            and rv3_rebound >= cond.rebound_min - 1e-9
-        )
-    return False
-
-
-def find_add_idx(leg: Leg, cond: PyramidCondition) -> int | None:
-    """First poll where ``cond`` holds while underwater.
-
-    Only information available at poll i is used: ret_from_entry_pct,
-    w5_quad, dmv_w5 (drawdown from *running* MV peak), gap_mv_w20_w5 vs the
-    entry snapshot, and the running W3-RV trough over snaps 0..i.  The add
-    must happen strictly after entry (i>=1) and strictly before the final
-    exit snap (i<=len-2).
-    """
-    timeline = leg.get("timeline") or []
-    if len(timeline) < 3:
-        return None
-    entry = leg.get("entry_t0") or timeline[0]
-    entry_gap = entry.get("gap_mv_w20_w5")
-
-    trough: float | None = None
-    for i, snap in enumerate(timeline):
-        rv3 = snap.get("w3_rv")
-        rebound: float | None = None
-        if rv3 is not None:
-            rv3 = float(rv3)
-            if trough is None or rv3 < trough:
-                trough = rv3
-            rebound = round(rv3 - trough, 4)
-        if i == 0 or i > len(timeline) - 2:
-            continue
-        ret = snap.get("ret_from_entry_pct")
-        if ret is None or float(ret) >= 0.0 - 1e-12:
-            continue
-        if _cond_ok(snap, cond, entry_gap_w20_w5=entry_gap, rv3_rebound=rebound):
-            return i
-    return None
 
 
 @dataclass

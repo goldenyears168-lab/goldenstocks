@@ -5,7 +5,6 @@
 #      （每天 18:00 由 etf-holdings-sync 以 --etf-holdings-only 收；16:35 daily-sync 傳 --skip-holdings-fetch 略過）
 #   3. TSM ADR / SOX / 台指期 gap → tech_risk_daily_snapshot
 #   4. 持股 changes + 跨 ETF 共識（≥2 snapshot_date）
-#   5. 16:30 尾段：stock_daily_lens + lens_daily_alert → Supabase（RUN_STOCK_DAILY_LENS）
 # 選用：ENABLE_FINMIND_SIGNAL=1 才跑法人（需 FinMind 權限；403 時請勿開啟）
 
 set -euo pipefail
@@ -84,16 +83,9 @@ _apply_sync_profile() {
       export RUN_RRG_UNIVERSE_CLOSE=0
       export RUN_XQ_STYLE_METRICS=0
       export RUN_RRG_MONO_DAILY=0
-      export RUN_RRG_MONO_SWAP_ACCEL_DAILY=0
-      export RUN_RRG_IMPROVING_WATCH=0
       export RUN_RRG_UNIVERSE_TIMELINE=0
       export RUN_VCP_FUNNEL_CLOSE=0
-      export RUN_STOCK_DAILY_LENS=0
-      export RUN_SUPABASE_RESEARCH_SYNC=0
-      export RUN_SUPABASE_LENS_SYNC=0
-      export RUN_STRATEGY_PERF_SYNC=0
-      export RUN_SUPABASE_SIGNAL_SYNC=0
-      log_line "SYNC_PROFILE=slim（僅 ingest + Facts + Regime；策略軌與 Lens 關閉）"
+      log_line "SYNC_PROFILE=slim（僅 ingest + Facts + Regime；策略軌關閉）"
       ;;
     full)
       log_line "SYNC_PROFILE=full（沿用 .env RUN_* 預設）"
@@ -551,24 +543,6 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
     log_line "  SKIP（RUN_RRG_MONO_DAILY=0）"
   fi
 
-  if [[ "${RUN_RRG_MONO_SWAP_ACCEL_DAILY:-1}" != "0" ]]; then
-    run_step_if_pipeline_enabled "rrg_mono_swap_accel_daily" \
-      "RRG mono swap-accel (C18acc) daily diagnostic brief" \
-      "$PYTHON" "${ROOT}/scripts/run_rrg_mono_swap_accel_daily_brief.py" || true
-  else
-    log_line "--- RRG mono swap-accel (C18acc) daily diagnostic brief ---"
-    log_line "  SKIP（RUN_RRG_MONO_SWAP_ACCEL_DAILY=0）"
-  fi
-
-  if [[ "${RUN_RRG_IMPROVING_WATCH:-0}" != "0" ]]; then
-    run_step_if_pipeline_enabled "rrg_improving_watch_daily" \
-      "RRG Improving lifecycle watch daily brief" \
-      "$PYTHON" "${ROOT}/scripts/run_rrg_improving_watch_daily.py" || true
-  else
-    log_line "--- RRG Improving lifecycle watch daily brief ---"
-    log_line "  SKIP（RUN_RRG_IMPROVING_WATCH=0）"
-  fi
-
   if [[ "${RUN_RRG_UNIVERSE_TIMELINE:-1}" != "0" ]]; then
     run_step_if_pipeline_enabled "rrg_universe_timeline_daily" \
       "RRG Universe 全檔互動時間軸 HTML (WMA20)" \
@@ -680,34 +654,6 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
   else
     log_line "--- market probe radar ---"
     log_line "  SKIP（RUN_MARKET_PROBE_RADAR=0）"
-  fi
-
-  if [[ "${RUN_STOCK_DAILY_LENS:-1}" != "0" ]]; then
-    run_step_optional "stock_daily_lens + lens_daily_alert" \
-      "$PYTHON" "${ROOT}/scripts/run_stock_daily_lens.py" || true
-  else
-    log_line "--- stock_daily_lens ---"
-    log_line "  SKIP（RUN_STOCK_DAILY_LENS=0）"
-  fi
-
-  if [[ "${RUN_SUPABASE_RESEARCH_SYNC:-0}" == "1" ]]; then
-    run_step_optional "Supabase research sync (1300 briefs · VCP close)" \
-      "$PYTHON" "${ROOT}/scripts/sync_research_to_supabase.py" --slot 1300 || true
-    run_step_optional "Supabase research sync (1630 briefs)" \
-      "$PYTHON" "${ROOT}/scripts/sync_research_to_supabase.py" --slot 1630 || true
-  else
-    log_line "--- Supabase research sync (1300 / 1630) ---"
-    log_line "  SKIP（RUN_SUPABASE_RESEARCH_SYNC=0）"
-  fi
-
-  if [[ "${RUN_STRATEGY_PERF_SYNC:-0}" == "1" ]]; then
-    run_step_optional "Supabase strategy_performance_yearly sync" \
-      "$PYTHON" "${ROOT}/scripts/sync_strategy_performance.py" || true
-  fi
-
-  if [[ "${RUN_SUPABASE_SIGNAL_SYNC:-1}" != "0" ]] && [[ "${RUN_SUPABASE_RESEARCH_SYNC:-0}" == "1" ]]; then
-    run_step_optional "Supabase stock_signal_hits index" \
-      "$PYTHON" -c "from project_dotenv import load_project_dotenv; load_project_dotenv(); from supabase_signal_sync import maybe_sync_signal_hits; n=maybe_sync_signal_hits(); print(f'stock_signal_hits: {n} rows')" || true
   fi
 fi
 

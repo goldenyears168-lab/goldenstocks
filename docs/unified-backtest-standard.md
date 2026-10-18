@@ -68,7 +68,8 @@
 
 | 軌 | 現狀 | 接入比較層需要做的事 |
 |----|------|----------------------|
-| `rrg-mono-hold7` / `rrg-mono-swap-accel` / `vcp-pivot-gate` / `vcp-coil-close` | 已用 `simulate_slot_portfolio` | 無需改動，直接複用 periods |
+| `rrg-mono-hold7` / `vcp-pivot-gate` / `vcp-coil-close` | 已用 `simulate_slot_portfolio` | 無需改動，直接複用 periods |
+| ~~`rrg-mono-swap-accel`~~ | **2026-10 起比較層不再支援**（C18acc 已退役；adapter、編隊成員、`priority_boost` 皆已移除）。要重現舊結果請 checkout 此變更之前的 commit | — |
 | `00981a-l1h9` | 用 `simulate_fixed_slots`（無逐日 NAV） | 訊號腿餵進 `simulate_slot_portfolio` · `comparison_notional_ntd` |
 
 輸出統一 schema（tidy long format，每軌每日一行）：

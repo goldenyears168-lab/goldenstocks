@@ -118,7 +118,7 @@ def load_backtest_standard_config(path: Path | None = None) -> BacktestStandardC
             members.append(
                 EnsembleMemberSpec(
                     strategy_id=str(m.get("strategy_id") or ""),
-                    priority=int(m.get("priority") or 99),
+                    priority=int(m["priority"]) if m.get("priority") is not None else 99,
                 )
             )
         ensemble_teams[tid] = EnsembleTeamSpec(

@@ -58,9 +58,6 @@ class PoolHandoverTest(unittest.TestCase):
             self.assertFalse(second.sdk.logged_out)
         mod.reset_session_pool()
 
-    def test_dayflip_pool(self):
-        self._run("order.dayflip_short_session_pool")
-
     def test_momentum_pool(self):
         self._run("order.momentum_rotation_session_pool")
 

@@ -354,7 +354,7 @@ def _sync_intraday_rrg_impl(
     holding_ids: list[str] | None = None,
 ) -> tuple[int, int, int, str | None]:
     from rrg_mono_intraday_watch import BENCH_TICK_IDS
-    from rrg_mono_swap_accel_screen import sync_watchlist_kbar
+    from watchlist_kbar import sync_watchlist_kbar
     from rrg_universe_snapshot import run_intraday_universe_snapshot
 
     price_mode = "kbar" if _holdings_pulse_rrg_kbar_enabled() else "tick"
@@ -474,11 +474,22 @@ def _load_portfolio_exit_state(
     trade_date: str,
 ) -> tuple[bool | None, bool]:
     try:
-        from order.intraday_structural_exit import load_portfolio_exit_mode
-
-        return load_portfolio_exit_mode(conn, trade_date)
+        row = conn.execute(
+            """
+            SELECT event FROM order_intraday_exit_log
+            WHERE trade_date = ? AND phase = 'gate'
+              AND event IN ('gate_on', 'gate_off', 'gate_skip')
+            ORDER BY checked_at DESC LIMIT 1
+            """,
+            (trade_date,),
+        ).fetchone()
     except Exception:  # noqa: BLE001
         return None, False
+    if not row:
+        return None, False
+    if row[0] == "gate_skip":
+        return None, True
+    return row[0] == "gate_on", True
 
 
 def _load_holdings_stress(

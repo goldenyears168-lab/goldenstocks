@@ -48,6 +48,7 @@ intent:
 strategies:
   # Leading Dip · Strategy 採納 2026-07-16（coverage 主軌 + mid 衛星）
   # Spec SSOT: config/strategy.yaml · Order: src/order/leading_dip_order.py
+  # ⚠ 2026-10：下單袖套程式／launchd 已整條移除，以下規格僅留存（git 歷史可還原）。
   # Dual-sleeve: coverage 昨收錨 + mid ≥10:00 今開錨 · 預算 2 萬/筆 · live
   leading-dip:
     pool_id: leading-dip
@@ -1193,6 +1194,7 @@ strategies:
     # · C18ACC_PRIOR_5D_RET_MAX · C18ACC_ALLOW_POOL_OVERRIDE · C18ACC_NO_TRADE_BEFORE
     # · C18ACC_CONFIRM_BARS
 
+  # ⚠ 2026-10：TMF 實彈引擎部署（launchd／worker）已移除，以下規格僅供研究層引用與 git 歷史還原。
   # TMF 微型臺指 · Channel Final v1.3.0（PV16 cell-tune v2 · O-anchor · engine=tmf_channel.causal_engine）
   # Research SSOT: docs/tmf-micro-channel-final-v1-1-prd.md · tmf-hang-hi-day-tighten
   # Adapter: src/order/fubon_futopt_orders.py · reconciler: tmf_channel_order.py
@@ -1293,6 +1295,7 @@ c18acc_pyramid_add:
 # 範圍＝券商全帳戶持倉（非僅策略袖）· confirmed 2026-07-16
 # launchd：com.jackm4.goldenstocks.detach-gate · Mon–Fri 09:40–12:30 / 5m Asia/Taipei
 # Frozen RED：s5_w-0.6_c1_down-0.5_arm0940-1230（research 採納 · sell-only）
+# ⚠ 2026-10：Detach Gate 下單袖套程式／launchd 已整條移除，以下規格僅留存（git 歷史可還原）。
 detach_gate:
   schema: order-detach-gate-v1
   strategy_id: detach-gate

@@ -235,3 +235,24 @@ PYTHONPATH=src .venv/bin/python scripts/run_research_sweep.py \\
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/run_unified_backtest_comparison.py
 ```
+
+---
+
+## 2026-10-16 證偽封存批次（12 支 → `scripts/research/archive/`）
+
+**判準**（三條皆須成立；N = 4 週，截止 2026-09-18）：
+1. `config/research.yaml` topic `status`/`phase` 為 rejected，且其**所有** hypotheses 皆 `rejected`（含 `pending`／`passed`／`mixed` 的 topic 不動）。
+2. 除同批腳本與 `config/research.yaml` 外，無其他 code／launchd／tests／docs 引用；被保留腳本 import 者不動。
+3. 截止日前無修改（淺層 clone 補抓至 2026-08-14，未見修改者視為 ≥ 8 週未動）。
+
+搬移時同步：`parents[2]` → `parents[3]`（archive 慣例）、`config/research.yaml` 的 `run_scripts` 路徑改指 archive。腳本**未刪**，重跑方式見 `archive/README.md`。
+被證偽的是**訊號本身**——看多與看空皆不得援引。
+
+| Topic | 搬入 archive 的腳本 | 一行結論 |
+|-------|--------------------|----------|
+| `tdcc-big-holder-forward` | `tdcc_big_holder_forward_test` · `cache_holding_shares_futures_universe` | 集保大戶比週變化預測前瞻報酬：H-TDCC-1／2 皆 rejected |
+| `chip-street-canon` | `street_canon_a_conc_momentum` · `_b_cost_line` · `_c_midtier` | 三線 14 格全滅；先驗最高的 C 線（中實戶）t 最高僅 0.546 |
+| `foreign-branch-copytrade-full-sweep` | `run_foreign_branch_copytrade_compare` · `_robustness` · `run_foreign_branch_2330_decomposition` | 外資分點「α」＝權值股 beta；條件式優勢 < 45bps 往返成本，非可成交性問題 |
+| `umc-branch-overnight-decision` | `umc_branch_overnight_signal_sweep` · `umc_branch_market_calibrated_sweep` · `branch_overnight_crosssection_sweep` · `branch_netdisp_multihorizon_validation` | H1–H6 全否；分點聚合訊號隔夜幅度 0.1~0.3% ≈ 成本同量級 |
+
+**刻意留在原處**（符合 rejected 但有依賴）：`umc_night_forward_recorder.py`（launchd 常駐）；`scan_quiet_accumulators.py`／`study_whale_9A81_forward_tradeable.py`（被 `whale-branch-position-momentum-2m` 的 9217／9661 腳本 import，該 topic 含 `passed`）。

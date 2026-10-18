@@ -176,7 +176,7 @@ strategies:
     title: Detach Gate · 台美脫鉤閘門
     layer: strategy
     kind: operational
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（order.us_tw_5m_sell_gate／launchd 皆刪；規格與研究層保留）
     env_flag: RUN_DETACH_GATE
     description: >
       TW↔NQ rolling 30m DETACH（5m poll）· trough-first 半倉風控 ·
@@ -190,7 +190,7 @@ strategies:
     title: Leading Dip · coverage · gap∩excess(昨收)
     layer: strategy
     kind: research_adopted
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（order.leading_dip_order／launchd 皆刪；規格與研究層保留）
     env_flag: RUN_LEADING_DIP_POLL
     description: >
       Leading ∧ gap3≤−0.80 ∩ excess(昨收)≤−4 · coverage 含開盤 · hold T+3 ·
@@ -203,7 +203,7 @@ strategies:
     title: Leading Dip mid · ≥10:00 · excess(今開)
     layer: strategy
     kind: research_adopted
-    enabled: true
+    enabled: false  # 2026-10 下單袖套已移除（order.leading_dip_order／launchd 皆刪；規格與研究層保留）
     parent_strategy: leading-dip
     env_flag: RUN_LEADING_DIP_POLL
     description: >
@@ -217,7 +217,7 @@ strategies:
     title: TMF 微型臺指 · Channel Final v1.6.0 PV16 cell-tune v2 + 台美1分鐘MA偏離差閘門
     layer: strategy
     kind: research_adopted
-    enabled: true
+    enabled: false  # 2026-10 實彈引擎部署已移除（launchd／入口腳本皆刪；規格與研究層保留）
     env_flag: ORDER_TMF_CHANNEL_ENABLED
     description: >
       微型臺指近月 channel · Order futopt · Final v1.6.0：16-cell cell-tune v2

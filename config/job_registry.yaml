@@ -26,11 +26,17 @@ jobs:
   # goldenstocks-data/.retired-launchd-backup-20260804-c18acc/
   - label: leading-dip-poll
     category: order
-    order_capable: true
-    status: disabled
+    order_capable: false
+    status: retired
     disabled_since: "2026-07-27"
-    schedule: "weekdays 09:00-13:30, every 5min"
-    description: "Leading Dip satellite sleeve"
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: >
+      Leading Dip satellite sleeve — **2026-10 整條移除**：order.leading_dip_order／_order_config／
+      _ledger、run_leading_dip_poll.py、launchd plist／launcher 模板、安裝腳本項目與測試皆刪除，
+      label 進 install-launchd.sh 的 RETIRED_LABELS（mini 重跑安裝腳本會卸載）。策略規格
+      （strategy.yaml）與研究層（leading_dip_sleeve_validate 等）保留；strategies.yaml 已設
+      enabled:false。要恢復請 git revert 該移除 commit，並須使用者明確直接指示。
 
   - label: songshan-copytrade-poll
     category: order
@@ -50,19 +56,34 @@ jobs:
 
   - label: detach-gate
     category: order
-    order_capable: true
-    status: disabled
+    order_capable: false
+    status: retired
     disabled_since: "2026-07-29"
-    schedule: "weekdays 09:00-13:30, every 5min"
-    description: "TW/US detach risk gate — was flag-safe but job wasn't launchctl-disabled until 07-29 audit"
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: >
+      TW/US Detach Gate（台美脫鉤閘門）— **2026-10 整條移除**：order.detach_gate_order／
+      us_tw_5m_sell_gate、run_detach_gate_poll.py、run_us_tw_5m_sell_gate_poll.py、launchd plist／
+      launcher 模板與 .command、fubon_subprocess 的 detach_half_flatten 分支、安裝腳本項目與測試
+      皆刪除，label 進 RETIRED_LABELS。策略規格（strategy.yaml）與研究層（us_tw_* study、
+      research topic us-tw-rolling-10m-poll）保留；strategies.yaml 已設 enabled:false。
+      要恢復請 git revert 該移除 commit，並須使用者明確直接指示。
 
   - label: tmf-channel-poll
     category: order
-    order_capable: true
-    status: disabled
-    disabled_since: "2026-10-09"
-    schedule: "KeepAlive worker · interval≈20s in-window · day 08:45-13:45 + night 15:00-05:00"
-    description: "⚠ 2026-10-09 對帳：launchctl print-disabled=disabled、未載入、最後 heartbeat 2026-09-29（registry 原寫 enabled 為過期）；何時停用未記錄，恢復需使用者明確指示。TMF Final v1.4.0 PV16 normal/dhwv block（O-anchor）· tmf_channel.causal_engine · session-reuse worker · .env 四鎖"
+    order_capable: false
+    status: retired
+    enabled_since: "2026-08-05"
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: >
+      TMF Final v1.x PV16 實彈 worker — **2026-10 實彈部署移除**（使用者確認不再使用）：
+      run_tmf_channel_worker／run_tmf_channel_poll／tmf_cutover.sh、launchd plist／launcher／.command、
+      tmf_channel.worker_loop／blotter、對應測試與安裝腳本項目皆刪，label 進 RETIRED_LABELS。
+      同期（2026-10）TMF 引擎函式庫（tmf_channel.*、order.tmf_channel_{config,pv16_book,order,broadcast}）
+      與 188 支依賴它的研究腳本／測試一併刪除；僅留 futopt 收集器共用核心
+      （tmf_channel.session_pool、order.tmf_channel_{ledger,marketdata,ws_feed}）。
+      重跑 install-launchd.sh 會卸載常駐 worker；**執行前請先確認期貨無未平倉部位**。
 
   - label: clone-agent-order
     category: order
@@ -366,19 +387,18 @@ jobs:
   - label: tmf-sim-server
     category: notify
     order_capable: false
-    status: enabled
-    enabled_since: "2026-08-06"
-    schedule: "KeepAlive · always-on"
-    description: "TMF paper UI HTTP :8770（live_v6_sim_server · PYTHONPATH=src 走 tmf_channel 引擎）· 不下單"
+    status: retired
+    retired_since: "2026-10"
+    schedule: "(retired)"
+    description: "TMF paper UI HTTP :8770 — 2026-10 launchd 服務移除（label 進 RETIRED_LABELS）；live_v6_sim_server.py 檔案仍在 reports/research/channel_lab/，需要時可手動執行。"
 
   # --- Notify-only, no order code path (ABC retired) ---
   - label: buy-signal-radar
     category: notify
     order_capable: false
-    status: disabled
-    disabled_since: "2026-07-29"
-    schedule: "weekdays 09:00-13:30, every 5min"
-    description: "Buy-signal radar, notify only (ABC order path retired 2026-07-16); paused as non-分點 clutter"
+    status: retired
+    schedule: "(retired)"
+    description: "Buy-signal radar — 2026-10 整條移除（strategy_signal_radar／buy_observation／launchd 模板與 .command 皆刪，label 進 RETIRED_LABELS）。"
 
   - label: sell-signal-radar
     category: notify
@@ -1077,9 +1097,12 @@ jobs:
     status: disabled
     disabled_since: "2026-10-17"  # FinMind 不續約;內含 FinMind 分點/日線步驟,Supabase 推送本來就關閉(RUN_OPS_CONSOLE_PUSH=0)
     re_enabled_since: "2026-08-18"
-    schedule: "weekdays 20:40（Supabase 推送已關閉，只跑本地 tape/panel）"
+    schedule: "weekdays 20:40（只跑本地 tape/panel/日線/Stage 熱力圖）"
     description: >
-      ops.snapshots / sleeve / holdings sync to Supabase for the website。
+      **2026-10：Supabase ops console 整條移除**——launcher 內三個推送步驟
+      （write_ops_console_snapshot／write_ops_sleeve_status／run_ops_holdings_sync）與
+      夜間摘要信（send_ops_evening_summary）已刪，只留本地資料刷新。以下為歷史記錄。
+      （舊）ops.snapshots / sleeve / holdings sync to Supabase for the website。
       **2026-08-18 重新 enable，但 Supabase 推送維持關閉**（`.env` 的
       `RUN_OPS_CONSOLE_PUSH=0`，launcher 內三個推送步驟會 SKIP）。
       恢復原因：2026-08-17 整支停掉後實測 8 席 by-trader 全市場 tape 當天就崩
@@ -1227,21 +1250,9 @@ jobs:
 
 # --- Cloud agents (not mini launchd — Claude Code scheduled routines, separate system) ---
 cloud_routines:
-  - name: daily-foreign-rotation-commentary
-    schedule: "weekdays 21:30 Asia/Taipei"
-    order_capable: false
-    description: "Reads Supabase rotation/risk snapshots + web news, writes AI market commentary back to ops_snapshots (kind=commentary) for the website"
-
-  - name: expert-pool-branch-health-check
-    schedule: "weekdays 21:00 Asia/Taipei"
-    order_capable: false
-    description: "Read-only data-freshness health check on ops.* (holdings/snapshots/digests/live_ta), emails a report. No local/git access — Supabase MCP + Gmail MCP only."
-
-  - name: detach-gate-risk-health-check
-    schedule: "daily 21:30 Asia/Taipei (found 2026-08-01, created 2026-07-30, previously undocumented)"
-    order_capable: false
-    description: "Read-only freshness check on ops_snapshots kind=risk (Detach Gate payload) — catches the specific 'outer asof advances but inner as_of/session_date stuck' stale-poller failure mode seen 2026-07-28~30. Only pushes a notification on 🔴 (stuck); stays quiet on 🟢/🟡."
-
+  # 2026-10：三個依賴 Supabase 的 routine（daily-foreign-rotation-commentary／expert-pool-branch-health-check／
+  # detach-gate-risk-health-check）已自本表移除。detach-gate-risk-health-check 已於 claude.ai 刪除；
+  # 其餘兩個建立方式為 http_api，需在 claude.ai/code/routines 網頁手動刪除（目前皆為 enabled:false）。
   - name: 台股融資盤後監測
     schedule: "daily ~21:40 Asia/Taipei (found 2026-08-01, created 2026-07-30, previously undocumented)"
     order_capable: false

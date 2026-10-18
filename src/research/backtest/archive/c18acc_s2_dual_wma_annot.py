@@ -35,6 +35,9 @@ from rrg_universe_intraday_panel import (
     build_dual_wma_intraday_trajectories,
     classify_dual_wma_trade_signal,
 )
+from abc_v3_f1_kinematics import (  # noqa: F401  (re-export; 2026-10 自本模組搬出)
+    _entry_frame_idx,
+)
 
 S2_MIN_HOLD_DAYS = 5
 
@@ -126,15 +129,6 @@ def _leg_hold_dates(full_dates: list[str], entry: str, exit_d: str) -> list[str]
     if ei > xi:
         return []
     return full_dates[ei : xi + 1]
-
-
-def _entry_frame_idx(frames: list[dict[str, str]], entry_date: str) -> int:
-    for i, f in enumerate(frames):
-        if f["date"] > entry_date:
-            return max(0, i)
-        if f["date"] == entry_date:
-            return i
-    return 0
 
 
 def _exit_frame_idx_for_date(frames: list[dict[str, str]], exit_date: str) -> int:
