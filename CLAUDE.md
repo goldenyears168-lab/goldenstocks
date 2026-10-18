@@ -129,7 +129,7 @@ Gate 兩層且皆須通過：`config/strategies.yaml` 的 `enabled`（registry g
 
 `config/job_registry.yaml` 是「裝了什麼、能不能送單」的唯一 SSOT，勿只信 `docs/daily-operations.md` 舊表。
 
-現況（2026-10）：**目前沒有任何 live order-capable job**。`tmf-channel-poll`（TMF 實彈 worker）與 `tmf-sim-server` 已於 2026-10 整套移除，連同 TMF 引擎函式庫與 188 支研究腳本；僅留 futopt 收集器共用核心（`tmf_channel.session_pool`、`order.tmf_channel_{ledger,marketdata,ws_feed}`），不下單。其餘 2 支（`songshan-copytrade-poll`／`expert-pool-staged-gate`）仍三重鎖住（`leading-dip-poll`／`detach-gate` 已於 2026-10 整條移除）——
+現況（2026-10）：**目前沒有任何實彈中的下單 job**；唯一 order-capable 的是 `clone-agent-order`（複製人，常駐；2026-10-18 實測 `.env` `ORDER_CLONE_AGENT_DRY_RUN=1` 且 `data/order/clone_agent_switch.json` 為 `enabled=false`，即不送單，儀表板 `/agentorderswitch` 可翻開關）。`tmf-channel-poll`（TMF 實彈 worker）與 `tmf-sim-server` 已於 2026-10 整套移除，連同 TMF 引擎函式庫與 188 支研究腳本；僅留 futopt 收集器共用核心（`tmf_channel.session_pool`、`order.tmf_channel_{ledger,marketdata,ws_feed}`），不下單。其餘 2 支（`songshan-copytrade-poll`／`expert-pool-staged-gate`）仍三重鎖住（`leading-dip-poll`／`detach-gate` 已於 2026-10 整條移除）——
 1. `.env` 旗標本身安全（`ORDER_*_DRY_RUN=1` / `ORDER_*_ENABLED=0`）
 2. `launchctl disable`（重開機／重裝不復活）
 3. `.env` 總開關 `ORDER_MASTER_ENABLED`（各袖仍各自 disabled／dry）
