@@ -59,10 +59,10 @@ jobs:
   - label: tmf-channel-poll
     category: order
     order_capable: true
-    status: enabled
-    enabled_since: "2026-08-05"
+    status: disabled
+    disabled_since: "2026-10-09"
     schedule: "KeepAlive worker · interval≈20s in-window · day 08:45-13:45 + night 15:00-05:00"
-    description: "TMF Final v1.4.0 PV16 normal/dhwv block（O-anchor）· tmf_channel.causal_engine · session-reuse worker · .env 四鎖"
+    description: "⚠ 2026-10-09 對帳：launchctl print-disabled=disabled、未載入、最後 heartbeat 2026-09-29（registry 原寫 enabled 為過期）；何時停用未記錄，恢復需使用者明確指示。TMF Final v1.4.0 PV16 normal/dhwv block（O-anchor）· tmf_channel.causal_engine · session-reuse worker · .env 四鎖"
 
   - label: clone-agent-order
     category: order
@@ -79,6 +79,22 @@ jobs:
     enabled_since: "2026-10-06"
     schedule: "KeepAlive 常駐 · weekdays 09:50-13:40 每10分巡檢 + 新送單即時複審 + 13:40 收盤檢討"
     description: "複製人 AI 監督員 shadow 階段(stage 1)· scripts/agent/clone_agent_supervisor.py + src/clone_agent/agent_supervisor.py · 大腦=headless claude -p(無工具)、小腦=Python 觸發器+guard · 只寫 data/agent/ 的 journal/view/state 供儀表板顯示與事後評分;無券商、無撤單、無出場程式路徑;stage≠shadow 時拒絕啟動。config/clone_agent_supervisor.yaml + config/clone_agent_supervisor_prompt.md 為 SSOT"
+
+  - label: clone-agent-signal
+    category: collect
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-10-08"
+    schedule: "KeepAlive 常駐 · 09:00-13:25 每 60s 一輪、盤外自己 sleep、跨日換檔（ThrottleInterval 30s）"
+    description: "複製人訊號生產者 scripts/research/trader_signal_watch.py · 只讀 raw tape/期貨五檔檔、不連券商、不送單 · 寫 data/clone_agent/candidates_{日}.jsonl，即 clone-agent-order 的唯一輸入。2026-10-08 前是手動 nohup，10/7 停電後沒人重啟，10/7–10/8 即時零卡、實單層零輸入；改由 launchd 管（與 clone-agent-jobs-launcher 共用，參數 signal）。改 trader_signal_watch.py 後用 launchctl kickstart -k gui/$(id -u)/com.jackm4.goldenstocks.clone-agent-signal，不要另起 nohup（會雙寫候選檔）。"
+
+  - label: clone-agent-learn
+    category: research
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-10-08"
+    schedule: "weekdays 14:30（休市日 raw tape <10MB 靜默跳過）"
+    description: "複製人每日學習迴圈 scripts/research/clone_agent_learn.py day · 重放凍結規則 → learn/ledger.jsonl（成本後超額）、badcases、影子帳、review_{日}.md、判決帳 · 唯讀研究、不下單 · SSOT config/clone_agent_learn.json（挑戰者登記後凍結、效應量 15bps 維持）。人工指令：check / books / adopt / supervisor。"
 
   - label: biglot-dashboard
     category: serve
@@ -457,7 +473,12 @@ jobs:
     status: enabled
     schedule: "weekdays 16:30 + 18:30"
     description: >
-      分點 tape backfill for POOLS ∪ holdings, so 20:00+ jobs read pure DB。
+      分點 tape backfill for POOLS ∪ holdings ∪ 儀表板42檔, so 20:00+ jobs read pure DB。
+      2026-10-12：補檔後同一 launcher 順帶跑 scripts/research/chip_sop.py（唯讀、冪等）→
+      ${DATA}/chip/chip_sop_latest.json，供 8771 /chips 頁讀；失敗不影響本 job exit。
+      2026-10-16：chip_sop.py 已移出本 job（比當日官方日 K 入庫早，asof 連兩天落後一天），
+      改由 chip-margin-catchup 21:10 尾端執行。
+      法人資料由 daily-sync 16:35 寫入，故以 18:30 那輪為準（16:30 那輪投信可能缺最新日，頁面會標警告）。
       2026-08-10 主排程由 18:30 提前到 16:30：當日一次性探測實測 FinMind
       TaiwanStockTradingDailyReport 於 T 日 16:25 發布（15:00 起每 5 分鐘打，
       16:20 尚無、16:25 found）。18:30 保留為安全網——16:25 僅單日單檔觀測，
@@ -1106,7 +1127,7 @@ jobs:
     description: >-
       Full scripts/daily_sync.sh (not --holdings-only) — constituent stock
       market+institutional (sync_stock_market_daily.py, gated by
-      RUN_STOCK_MARKET_SYNC=1) + chip daily + ETF holdings + tech risk +
+      RUN_STOCK_MARKET_SYNC=1) + chip daily + tech risk +
       RUN_*-gated RRG/VCP/Lens/Supabase steps per .env。
       ⚠️ **2026-08-18 踩到的坑：關掉「寫 Supabase」的旗標不等於關掉「讀 Supabase」。**
       斷開 Supabase 後 daily-sync 仍然 exit=1，查出兩個漏網：
@@ -1140,6 +1161,20 @@ jobs:
       manual refresh; more severe than the stock_daily_bars gap since it
       zeroes out the whole candidate pool, not just pricing).
 
+  - label: etf-holdings-sync
+    category: ingest
+    order_capable: false
+    status: enabled
+    schedule: "daily 18:00"
+    description: >-
+      ETF 持股收集唯一入口（2026-10-08 起）：scripts/daily_sync.sh --quiet
+      --etf-holdings-only → 5 個發行商（EZMoney 00981A/00403A/00988A、KGI
+      00407A、群益 00982A/00992A、野村 00980A/009816、元大 00990A）抓取 →
+      holdings changes → ETF 日報 → 00981A 跟單 L1H9。含週末（持股沒變就
+      skipped_unchanged）。daily-sync 16:35 以 --skip-holdings-fetch 略過這些步驟；
+      18:40 左右的 stock_daily_lens 讀的是這裡寫入的持股。Log：
+      logs/launchd_etf-holdings-sync.log 與 logs/daily_sync_<date>.log。
+
   # --- Local AI agent job (headless Claude Code, not a Python pipeline) ---
   - label: mini-schedule
     category: health
@@ -1154,6 +1189,41 @@ jobs:
       (old hand-installed label com.goldenstocks.mini retired). Criteria SSOT:
       scripts/launchd/mini-schedule-prompt.txt. cwd is GOLDENSTOCKS_DATA_DIR so
       that directory's CLAUDE.md acts as the agent's guardrail.
+
+
+  # --- 2026-10-09 對帳補登（已載入但先前未登錄；皆非 install-launchd.sh LABELS）---
+  - label: chip-margin-catchup
+    category: collect
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-09-18"
+    schedule: "weekdays 21:10"
+    description: "融資/借券/當沖補追同步（主線 16:35 早於 TWSE 融資發布）· scripts/launchd/chip-margin-catchup.command · 冪等 upsert · 2026-10-16 起尾端順帶跑 chip_sop.py（/chips 頁快照；已知限制：投信資料來自 daily_sync 16:35 步驟，當日常只有部分檔，要隔日回補）"
+
+  - label: umc-night-forward-recorder
+    category: research
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-08-10"
+    schedule: "weekdays 08:47 / 16:47"
+    description: "聯電夜盤決策前推紀錄 · 只寫 ledger 永不下單 · 累積 >=40 訊號日前不對規則下論斷"
+
+  - label: setenv
+    category: infra
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-07-29"
+    schedule: "RunAtLoad"
+    description: "launchctl setenv GOLDENSTOCKS_DATA_DIR（讓 GUI 啟動的程式取得資料目錄）"
+
+  - label: finmind-branch-probe-onetime
+    category: research
+    order_capable: false
+    status: retired
+    retired_since: "2026-10-17"  # 一次性 FinMind 分點更新時間探測,FinMind 不續約後無意義
+    enabled_since: "2026-08-07"
+    schedule: "一次性（2026-08-10 當日 15:00 起每 5 分）；已過期"
+    description: "⚠ 待退役：腳本 scripts/research/finmind_branch_update_probe.py 已不存在，plist 殘留於 ~/Library/LaunchAgents；退役 = bootout + 刪 plist（需使用者同意）"
 
 # --- Cloud agents (not mini launchd — Claude Code scheduled routines, separate system) ---
 cloud_routines:

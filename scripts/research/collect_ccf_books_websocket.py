@@ -471,7 +471,10 @@ def _run_once() -> int:
             ws.subscribe({"channel": "trades", "symbol": symbol, "afterHours": False})
             # 2026-09-24:FUTOPT_DAY_ONLY=1 只訂日盤(個股期貨夜盤只有 2330/2303 有交易,其餘 34 檔的夜盤訂閱
             # 純粹佔額度)。36 root × 2 = 72 訂閱,低於曾撞上限的 108;預設(未設)維持日+夜 4 訂閱不變。
-            if os.environ.get("FUTOPT_DAY_ONLY", "").strip() not in ("1", "true", "yes"):
+            # 2026-10-16:FUTOPT_NIGHT_ROOTS=CDF,QFF 讓指定 root 在 DAY_ONLY 下仍訂夜盤(台積電期貨夜盤有量,
+            # 研究「台積電期貨 vs 台指期誰先動」用);其餘 root 不受影響,只多 4 訂閱/root。
+            night_roots = {x.strip().upper() for x in os.environ.get("FUTOPT_NIGHT_ROOTS", "").split(",") if x.strip()}
+            if root in night_roots or os.environ.get("FUTOPT_DAY_ONLY", "").strip() not in ("1", "true", "yes"):
                 ws.subscribe({"channel": "books", "symbol": symbol, "afterHours": True})
                 ws.subscribe({"channel": "trades", "symbol": symbol, "afterHours": True})
                 _log(f"subscribed books+trades (day + afterHours) for {root} {symbol}")

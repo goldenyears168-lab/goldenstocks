@@ -1,5 +1,7 @@
 # Research script inventory · 腳本盤點表
 
+> ⚠ 2026-10-09：本表停在 2026-07-09，已與現況脫節（scripts/research 已清理）；以 `config/job_registry.yaml`、`config/pipeline_scripts.yaml` 為準。
+
 | Field | Value |
 |-------|-------|
 | Version | 2026-07-09 · Phase E |

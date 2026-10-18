@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -525,3 +526,71 @@ class DayflipSessionPoolWiringTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResolveLiveFuturesSymbolTest(unittest.TestCase):
+    """2026-09-02 迴歸：調整後契約（第 3 碼為數字）不得被選中.
+
+    根因：同月到期時 (endDate, symbol) 排序會比字串，'1'(0x31) < 'F'(0x46)，
+    所以 FT1I6 必定排在 FTFI6 前面。實測 FT1I6 全日 13 口 vs FTFI6 6,529 口。
+    """
+
+    def _resolve(self, rows, root):
+        from order import dayflip_short_order as m
+
+        class _Intraday:
+            @staticmethod
+            def tickers(**_kw):
+                return {"data": rows}
+
+        class _Sdk:
+            class marketdata:  # noqa: N801
+                class rest_client:  # noqa: N801
+                    class futopt:  # noqa: N801
+                        intraday = _Intraday()
+
+        # _ensure_realtime_once 是在函式內從 tmf_channel_marketdata import 進來的，
+        # 所以要 patch 在來源模組上，不是 dayflip_short_order 上。
+        from order import tmf_channel_marketdata as tcm
+
+        session = types.SimpleNamespace(sdk=_Sdk())
+        with mock.patch.object(tcm, "_ensure_realtime_once", lambda *_a, **_k: None), \
+             mock.patch.object(m, "_today", lambda: "2026-09-02"):
+            return m.resolve_live_futures_symbol(session, root)
+
+    def test_prefers_standard_over_adjusted_contract(self):
+        rows = [
+            {"symbol": "FT1I6", "endDate": "2026-09-16", "name": "華通期貨096"},
+            {"symbol": "FTFI6", "endDate": "2026-09-16", "name": "華通期貨096"},
+        ]
+        self.assertEqual(self._resolve(rows, "FT")[0], "FTFI6")
+
+    def test_prefers_standard_regardless_of_input_order(self):
+        rows = [
+            {"symbol": "IXFI6", "endDate": "2026-09-16", "name": "景碩期貨096"},
+            {"symbol": "IX1I6", "endDate": "2026-09-16", "name": "景碩期貨096"},
+        ]
+        self.assertEqual(self._resolve(rows, "IX")[0], "IXFI6")
+
+    def test_nearest_expiry_still_wins_over_contract_type(self):
+        """到期月仍是第一排序鍵——不得為了標準契約去選遠月。"""
+        rows = [
+            {"symbol": "FTFJ6", "endDate": "2026-10-21", "name": "華通期貨106"},
+            {"symbol": "FT1I6", "endDate": "2026-09-16", "name": "華通期貨096"},
+        ]
+        self.assertEqual(self._resolve(rows, "FT")[0], "FT1I6")
+
+    def test_index_root_unaffected(self):
+        """指數期根代碼 3 碼，第 4 碼是月份碼，新鍵對它們一律相同、行為不變。"""
+        rows = [
+            {"symbol": "TXFJ6", "endDate": "2026-10-21", "name": "臺股期貨106"},
+            {"symbol": "TXFI6", "endDate": "2026-09-16", "name": "臺股期貨096"},
+        ]
+        self.assertEqual(self._resolve(rows, "TXF")[0], "TXFI6")
+
+    def test_expired_contracts_excluded(self):
+        rows = [
+            {"symbol": "FTFH6", "endDate": "2026-08-19", "name": "華通期貨086"},
+            {"symbol": "FTFI6", "endDate": "2026-09-16", "name": "華通期貨096"},
+        ]
+        self.assertEqual(self._resolve(rows, "FT")[0], "FTFI6")

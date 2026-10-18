@@ -60,7 +60,7 @@ phases:
     implemented_in: scripts/daily_sync.sh
     nodes:
       - id: holdings_ezmoney
-        label: ETF holdings EZMoney (2)
+        label: ETF holdings EZMoney (3)
         module: src/sync_etf_holdings.py
         fail_kind: holdings
 
@@ -76,6 +76,11 @@ phases:
 
       - id: holdings_nomura
         label: ETF holdings Nomura (1)
+        module: src/sync_etf_holdings.py
+        fail_kind: holdings
+
+      - id: holdings_yuanta
+        label: ETF holdings Yuanta (1)
         module: src/sync_etf_holdings.py
         fail_kind: holdings
 

@@ -6969,9 +6969,38 @@ topics:
       LEADERBOARD_w300x_balanced_n / focus7_enriched。未採納。
 
   dayflip-futures-short:
-    title: 隔日沖倒貨對做 · 個股期貨 08:45 放空 Final v1（凍結待前推）
-    status: frozen
-    phase: hypothesis
+    title: 隔日沖倒貨對做 · 個股期貨 08:45 放空 Final v1（2026-09-02 降級 rejected）
+    status: rejected
+    phase: rejected
+    rejected_at: "2026-09-02"
+    rejected_reason: >
+      四路平行研究各自給出否定，死因互不重疊（完整數字見 memory dayflip-short-verdict）：
+      ① 訊號層無增量——拿掉 24 席分點訊號、只留「任何 fgap 7~9% 跳空就放空」的對照母體，
+         報酬幾乎一樣；無偏出場（限價永不成交、全抱到收盤）＋同月分層 permutation 5000 次，
+         六種設定全不顯著（p=0.22~0.50）。賺的是跳空回落母體效應。
+      ② 執行層——21 筆虧損全部貼著「進場價→當日漲停價」的理論距離（誤差 0.1~0.4%），
+         即虧損 100% ＝ 那天鎖漲停，發生率 28.4%。放空回補要買，鎖漲停時只能排隊尾。
+         2/21 有逐筆可查：8299 在 13:40 前後 13 分鐘零成交、2408 全日單一價 09:00 後
+         1.27 口/分。74 趟總損益：回測 +546,212 → T+2 開盤回補 +161,918 → 等鎖死鏈
+         解開 +20,118（每趟 272 元 < 一趟來回手續費 352 元）。
+      ③ 量測層——期貨 08:45 開盤相對現貨 09:00 開盤平均溢價 +0.99%，毛報酬拆解為
+         「印價修正 +0.92% ＋ 真實賣壓 +1.34%」，52% 來自 08:45 印價；拿掉它 mean
+         1.76%→1.35%、median 只剩 0.235%、勝率 52.7%。corr(期貨 fgap, 現貨 sgap)=0.179。
+      ④ 出場層——18 次配對比較＋先前 sweep 約 20 次，Bonferroni 後無任何改善存活；
+         −2% 目標坐在很平的高原頂（2.0/2.5/3.0/4.0 日均差 ±0.09pp、p>0.47）。
+      另：前推門檻 min_signal_days=40 在現行 tape 覆蓋下結構上達不成——
+      stock_broker_branch_daily 於 2026-07-17 斷（上游從一次性全市場 backfill 換成
+      by-stock 的 branch-tape-prewarm，只抓約 44 檔），83 檔標的中 60 檔分點深度從
+      ~780 席掉到 9~10 席，受害 join 在 dayflip_short_signal.py:220-229，不報錯不警告。
+      order.yaml 的兩個 sleeve 已同步 enabled=false / dry_run=true / auto_submit=false，
+      launchd 已卸載並 disable。恢復送單必須是使用者明確直接的指示。
+    do_not_retry: >
+      不得再調任何門檻。fgap floor（6.0/6.5/7.0 + 個股波動自適應）、六種 regime 濾網
+      （美股 VIX 水位／VIX 變動／0050 excess gap／台指期夜盤動能／08:45-09:05 即時台指期）、
+      11 種排序法則、出場目標與時間軸（38 格）合計已測約 90 格，全部否證或打平。
+      若日後要復活，需要的是**資料不是參數**：個股期 08:45 開盤集合競價的委託簿
+      （判定印價吃不吃得到量）與 13:30-13:45 的委託簿（判定鎖漲停能否回補），
+      兩者都只能靠 futopt-books-collect-stocks 前瞻累積、40 個交易日後才有第一份樣本。
     layer: research
     report_dir: reports/research/branch-footprint-screen/dayflip_gapup_short
     spec: reports/research/branch-footprint-screen/dayflip_gapup_short/FROZEN_SPEC_V1.json
@@ -12390,7 +12419,8 @@ topics:
       - scripts/research/branch_features.py               # 分點 2.24 億列 → 每日個股特徵
       - scripts/research/chip_branch_walkforward.py       # 分點增量的 walk-forward（passed）
       - scripts/research/stock_chip_snapshot.py           # 單檔五訊號籌碼全貌（含 S6 分點）
-      - scripts/research/chip_score_daily_track.py        # 每日前瞻紀錄（設計凍結 2026-08-23）
+      - scripts/research/chip_score_daily_track.py        # 每日前瞻彙總（設計凍結 2026-09-04）
+      - scripts/research/chip_brief_list_ledger.py        # 寄出名單逐檔前瞻＋K=5 回填（同凍結日）
       - scripts/research/sbl_fee_cross_section_panel.py   # 2011-2026 全市場面板（含除權息還原）
     report_dir: reports/research/sbl-fee-cross-section
     context: >
@@ -12731,18 +12761,31 @@ topics:
           v2 的 27% 太寬、純連續的 2% 太窄。
       - id: H-CHIP-FORWARD-TRACK
         statement: >
-          設計凍結（2026-08-23）後累積的真正樣本外，能維持 2025-2026 的效果水準
-          ——多空價差的 t 不低於 1.5。
+          設計凍結（2026-09-04）後累積的真正樣本外，能維持 2025-2026 的效果水準
+          ——**簡報實際寄出名單**的多空價差 t 不低於 1.5。
         status: pending
         preregistered_before_run: true
         note: >
           **這是本研究線唯一還乾淨的檢定。** 其餘所有比較都已用過全部歷史資料，
           無法區分「機制真的變了」與「在同一份資料上調參」。
 
-          紀錄工具 ``scripts/research/chip_score_daily_track.py``，輸出
-          ``reports/research/chip-signal-daily-horizon/daily_track.csv``，
-          以 ``regime`` 欄區分 forward／backfill，兩者不可混算。
-          判準：累積 60~120 個 forward 交易日後重測。
+          ⚠️ **2026-09-04 重設凍結日（前次 2026-08-23 作廢，僅累積 9 日）。**
+          舊紀錄不是壞掉，是**量錯對象**，三個都在同一個 commit 修掉：
+          (a) hs_* 欄用「全市場 rank／含 ETF／最極端 5.8%」，而簡報自 2026-08-27
+          起寄的是「同業內 rank／排除 ETF／固定 30 檔」——結算時結算的不是那封信；
+          (b) 權重 ``HS_W_ZP`` 是 import 進來的，2026-08-27 由 0.25 改成 0.50，
+          前 3 列與後 6 列混在同一欄，「凍結」名存實亡；
+          (c) 只記 K=1，而簡報 CAVEATS 第 0 條建議的是 **K=5**（最嚴控制下
+          K=1 −8.66%/年、K=5 +18.43%/年）——跑滿 60 日也驗不到真正的建議。
+          舊列改標記 ``regime='legacy_hs'`` 保留，不得併入 forward。
+
+          紀錄工具 ``scripts/research/chip_score_daily_track.py``（每日彙總，
+          ``list_*`` 欄＝名單口徑）＋ ``scripts/research/chip_brief_list_ledger.py``
+          （逐檔成分與 K=1／K=5 回填，表 ``chip_brief_list_forward``；母體存
+          ``chip_brief_list_universe``，基準用它而非全市場等權，否則名單的
+          電子/半導體曝險會被算成 alpha）。
+          規格指紋 ``list_spec``（權重／同業門檻／檔數）一變即須重新起算。
+          判準：累積 60~120 個 forward 交易日後重測，**以 K=5 為主口徑**。
 
           **單日結果一律不得用來調整看法。** 單日多空價差（收→收）的歷史
           標準差 0.456%、平均僅 +0.115%、**60.5% 的日子為正**——落在 80 百分位

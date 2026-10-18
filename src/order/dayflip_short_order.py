@@ -252,11 +252,20 @@ def resolve_live_futures_symbol(session: FubonSession, root: str) -> tuple[str, 
             continue
         if end and end < today:
             continue
-        cands.append((end or "9999-99-99", sym, name))
+        # 標準契約優先。TAIFEX 個股期貨商品代碼第 3 碼 "F"＝一般契約；標的做過
+        # 減資／合併等會發行「調整後契約」，第 3 碼改為數字（FTF→FT1、IXF→IX1）。
+        # 兩者到期月相同，若只用 (endDate, symbol) 排序就會比字串，而 '1'(0x31)
+        # < 'F'(0x46) → **必定**選中幾乎沒有流動性的調整後契約。
+        # 2026-09-02 實測：09-01 清晨還吃快取的 FTFI6 時 cum_volume 到 6,529 口，
+        # 07:08 tickers() 一回話切成 FT1I6 之後全天只有 13 口，同日同根差 500 倍。
+        # 指數期根代碼為 3 碼（TXF/TMF），第 4 碼是月份碼，此鍵對它們一律為 1、
+        # 不影響既有行為。
+        std = 0 if sym[len(root):len(root) + 1] == "F" else 1
+        cands.append((end or "9999-99-99", std, sym, name))
     if not cands:
         return None
     cands.sort()
-    _end, sym, name = cands[0]
+    _end, _std, sym, name = cands[0]
     return sym, name
 
 

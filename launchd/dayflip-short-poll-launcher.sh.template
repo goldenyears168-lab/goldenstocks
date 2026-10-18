@@ -25,18 +25,32 @@ export TZ="${TZ:-Asia/Taipei}"
 export ROOT="${ROOT}"
 export PYTHONPATH="${ROOT}/src:${ROOT}/scripts/research"
 
+# 2026-09-01 修孤兒量產機(同 momentum-rotation launcher):年齡鎖必然過期→每次
+# kickstart 都搶鎖留孤兒;改 PID 存活判定+接手前兩段式收割舊 worker。
 LOCKDIR="${APP_SUPPORT}/dayflip-short-poll.lockdir"
 if ! mkdir "${LOCKDIR}" 2>/dev/null; then
-  age=$(( $(date +%s) - $(stat -f %m "${LOCKDIR}" 2>/dev/null || echo 0) ))
-  if [[ "${age}" -gt 120 ]]; then
-    rm -rf "${LOCKDIR}"
+  holder="$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")"
+  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+    echo "skip: dayflip-short-poll launcher already alive (pid=${holder})"
+    exit 0
   fi
+  rm -rf "${LOCKDIR}"
   if ! mkdir "${LOCKDIR}" 2>/dev/null; then
-    echo "skip: dayflip-short worker already holding lock"
+    echo "skip: lock race lost"
     exit 0
   fi
 fi
-trap 'rmdir "${LOCKDIR}" 2>/dev/null || true' EXIT
+echo "$$" > "${LOCKDIR}/pid"
+trap 'rm -rf "${LOCKDIR}" 2>/dev/null || true' EXIT
+for stale in $(pgrep -f "run_dayflip_short_worker.py" 2>/dev/null || true); do
+  echo "reaping stale worker pid=${stale}"
+  kill -TERM "${stale}" 2>/dev/null || true
+done
+sleep 2
+for stale in $(pgrep -f "run_dayflip_short_worker.py" 2>/dev/null || true); do
+  echo "reaping (KILL) stubborn worker pid=${stale}"
+  kill -KILL "${stale}" 2>/dev/null || true
+done
 
 # 2026-08-19 修 log 日期輪替：本 job 是 KeepAlive 長駐 worker，一個行程會活過好幾天。
 # 舊寫法 STAMP="$(date '+%Y%m%d')" 只在**啟動當下**算一次，跨日之後所有輸出仍寫進啟動

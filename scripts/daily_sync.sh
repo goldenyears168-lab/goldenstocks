@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ETF 核心 daily sync（持股研究為主）：
 #   1. 6 檔已掛牌 ETF + IX0001 + IR0002 → daily_bars（TEJ 優先，FinMind 備援）
-#   2. EZMoney / 凱基 / 群益 / 野村官網持股 → etf_holdings
+#   2. EZMoney / 凱基 / 群益 / 野村 / 元大官網持股 → etf_holdings
+#      （每天 18:00 由 etf-holdings-sync 以 --etf-holdings-only 收；16:35 daily-sync 傳 --skip-holdings-fetch 略過）
 #   3. TSM ADR / SOX / 台指期 gap → tech_risk_daily_snapshot
 #   4. 持股 changes + 跨 ETF 共識（≥2 snapshot_date）
 #   5. 16:30 尾段：stock_daily_lens + lens_daily_alert → Supabase（RUN_STOCK_DAILY_LENS）
@@ -41,13 +42,17 @@ eval "$("$PYTHON" "${SRC}/project_config.py" shell-export)"
 QUIET=0
 SHOW_REPORT=0
 MODE=""
+SKIP_HOLDINGS_FETCH=0
+ETF_HOLDINGS_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --quiet) QUIET=1 ;;
+    --skip-holdings-fetch) SKIP_HOLDINGS_FETCH=1 ;;
+    --etf-holdings-only) ETF_HOLDINGS_ONLY=1 ;;
     --holdings-report) QUIET=1; SHOW_REPORT=1 ;;
     --retry|--market-only|--holdings-only) MODE="$arg" ;;
     * )
-      echo "Usage: $0 [--quiet|--holdings-report] [--retry|--market-only|--holdings-only]" >&2
+      echo "Usage: $0 [--quiet|--holdings-report] [--retry|--market-only|--holdings-only] [--skip-holdings-fetch] [--etf-holdings-only]" >&2
       exit 2
       ;;
   esac
@@ -299,7 +304,7 @@ print_db_summary() {
     SELECT etf_code AS 代號, MAX(snapshot_date) AS 最新日,
            MAX(holding_count) AS 檔數, source AS 來源
     FROM etf_holdings_meta
-    WHERE etf_code IN ('00981A','00403A','009816','00407A','00980A','00982A','00992A')
+    WHERE etf_code IN ('00981A','00403A','009816','00407A','00980A','00982A','00992A','00988A','00990A')
     GROUP BY etf_code, source
     ORDER BY etf_code;
   " 2>/dev/null | pipe_out || true
@@ -351,7 +356,7 @@ print_flow_attribution_readiness() {
 print_repeat_help() {
   log_line "--- 重複按會怎樣 ---"
   log_line "  [1] 日線 TEJ      upsert 覆寫，不會多出一筆；只刷新 synced_at"
-  log_line "  [2] 持股（EZMoney/凱基/群益/野村）官網未更新 → Skip，DB 不變（正常）"
+  log_line "  [2] 持股（EZMoney/凱基/群益/野村/元大）官網未更新 → Skip，DB 不變（正常）"
   log_line "  [3] 科技風險      TSM/SOX 日線 + 台指 gap → tech_risk_daily_snapshot（upsert）"
   log_line "  [3b] 早盤雷達    TX/TE 即時 gap → morning_risk_snapshot（需 FINMIND_TOKEN）"
   log_line "  [4] changes       L1 持股差分；ETF 日報 → reports/daily/etf-daily/"
@@ -364,6 +369,77 @@ if [[ -n "$SYNC_PROFILE" ]]; then
   log_line "=== daily_sync 排程=${SYNC_PROFILE} $(date '+%Y-%m-%dT%H:%M:%S%z') mode=${MODE:-primary} pid=$$ ==="
 else
   log_line "=== daily_sync $(date '+%Y-%m-%dT%H:%M:%S%z') mode=${MODE:-primary} pid=$$ ==="
+fi
+
+# ETF 持股收集（每日 18:00 etf-holdings-sync 呼叫；daily-sync 16:35 傳 --skip-holdings-fetch 略過）
+run_etf_holdings_fetch() {
+  run_step "ETF holdings EZMoney (2)" \
+    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
+    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
+    --etf-codes "$ETF_CODES_EZMONEY" --source ezmoney
+
+  run_step "ETF holdings KGIFund (2)" \
+    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
+    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
+    --etf-codes "$ETF_CODES_KGIFUND" --source kgifund
+
+  run_step "ETF holdings CapitalFund (2)" \
+    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
+    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
+    --etf-codes "$ETF_CODES_CAPITALFUND" --source capitalfund
+
+  run_step "ETF holdings Nomura (1)" \
+    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
+    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
+    --etf-codes "$ETF_CODES_NOMURA" --source nomura
+
+  run_step "ETF holdings Yuanta (1)" \
+    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
+    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
+    --etf-codes "$ETF_CODES_YUANTA" --source yuanta
+}
+
+run_etf_holdings_tail() {
+  CHANGES_CMD=(
+    "$PYTHON" "${SRC}/sync_etf_holdings.py"
+    --etf-codes "$ETF_CODES_HOLDINGS"
+    --changes
+  )
+  if [[ "$SHOW_REPORT" -eq 1 ]]; then
+    CHANGES_CMD+=(--human)
+  fi
+  run_timed_pipe "holdings changes (L1 diff)" \
+    "${CHANGES_CMD[@]}" || true
+
+  ETF_DAILY_ARGS=(
+    "$PYTHON" "${SRC}/etf_daily_report.py"
+    --etf-codes "$ETF_CODES_HOLDINGS"
+    --write-reports
+  )
+  if [[ "$SHOW_REPORT" -eq 1 ]]; then
+    ETF_DAILY_ARGS+=(--human)
+  elif [[ "$QUIET" -eq 1 ]]; then
+    ETF_DAILY_ARGS+=(--quiet)
+  fi
+  run_timed_pipe "ETF 日報" \
+    "${ETF_DAILY_ARGS[@]}" || true
+
+  COPYTRADE_ARGS=(
+    "$PYTHON" "${SRC}/copytrade_l1h9_daily.py"
+    --write-reports
+  )
+  if [[ "$QUIET" -eq 1 ]]; then
+    COPYTRADE_ARGS+=(--quiet)
+  fi
+  run_step_if_pipeline_enabled "copytrade_l1h9_daily" "00981A 跟單 L1H9 篩選" \
+    "${COPYTRADE_ARGS[@]}" || true
+}
+
+if [[ "$ETF_HOLDINGS_ONLY" -eq 1 ]]; then
+  run_etf_holdings_fetch
+  run_etf_holdings_tail
+  log_line "=== etf-holdings-sync finished exit=${FAILED} total=$(( $(date +%s) - SYNC_T0 ))s ==="
+  exit "$FAILED"
 fi
 
 if [[ "$MARKET" -eq 1 ]]; then
@@ -409,25 +485,12 @@ if [[ "$HOLDINGS" -eq 1 && "$MARKET" -eq 0 ]]; then
 fi
 
 if [[ "$HOLDINGS" -eq 1 ]]; then
-  run_step "ETF holdings EZMoney (2)" \
-    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
-    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
-    --etf-codes "$ETF_CODES_EZMONEY" --source ezmoney
-
-  run_step "ETF holdings KGIFund (2)" \
-    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
-    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
-    --etf-codes "$ETF_CODES_KGIFUND" --source kgifund
-
-  run_step "ETF holdings CapitalFund (2)" \
-    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
-    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
-    --etf-codes "$ETF_CODES_CAPITALFUND" --source capitalfund
-
-  run_step "ETF holdings Nomura (1)" \
-    "$PYTHON" "${SRC}/sync_etf_holdings.py" --no-auto-changes \
-    ${PYTHON_QUIET_FLAG:+$PYTHON_QUIET_FLAG} \
-    --etf-codes "$ETF_CODES_NOMURA" --source nomura
+  if [[ "$SKIP_HOLDINGS_FETCH" -eq 0 ]]; then
+    run_etf_holdings_fetch
+  else
+    log_line "--- ETF holdings fetch ---"
+    log_line "  SKIP（--skip-holdings-fetch；由 etf-holdings-sync 18:00 負責）"
+  fi
 
   if [[ "${RUN_STOCK_MARKET_SYNC:-0}" == "1" ]]; then
     STOCK_MKT_ARGS=(
@@ -467,6 +530,14 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
       "$PYTHON" "${ROOT}/scripts/research/disposal_risk_watch.py" --top 15 || true
     run_step_optional "處置風險：歷史統計 disposal_stats.json" \
       "$PYTHON" "${ROOT}/scripts/research/disposal_window_stats.py" --json || true
+    run_step_optional "處置風險：機率表 disposal_prob_table.json" \
+      "$PYTHON" "${ROOT}/scripts/research/disposal_prob_study.py" || true
+    run_step_optional "處置風險：還差多少 disposal_gap.json" \
+      "$PYTHON" "${ROOT}/scripts/research/disposal_gap.py" || true
+    run_step_optional "處置風險：全市場早期預警 disposal_early.json" \
+      "$PYTHON" "${ROOT}/scripts/research/disposal_early.py" || true
+    run_step_optional "處置監測池：儀表板重載（收盤後才動，盤中不換池）" \
+      bash -c 'if [ "$(date +%H)" -ge 14 ] || [ "$(date +%u)" -ge 6 ]; then launchctl kickstart -k "gui/$(id -u)/com.jackm4.goldenstocks.biglot-dashboard"; else echo "盤中，略過重載"; fi' || true
   else
     log_line "--- 處置風險 ---"
     log_line "  SKIP（RUN_DISPOSAL_WATCH=0）"
@@ -568,39 +639,12 @@ if [[ "$HOLDINGS" -eq 1 ]]; then
     log_line "  SKIP（RUN_SCREENER_DATA_SYNC=0；設 1 啟用 screener 增量同步）"
   fi
 
-  CHANGES_CMD=(
-    "$PYTHON" "${SRC}/sync_etf_holdings.py"
-    --etf-codes "$ETF_CODES_HOLDINGS"
-    --changes
-  )
-  if [[ "$SHOW_REPORT" -eq 1 ]]; then
-    CHANGES_CMD+=(--human)
+  if [[ "$SKIP_HOLDINGS_FETCH" -eq 0 ]]; then
+    run_etf_holdings_tail
+  else
+    log_line "--- holdings changes / ETF 日報 / 跟單 L1H9 ---"
+    log_line "  SKIP（--skip-holdings-fetch；由 etf-holdings-sync 18:00 負責）"
   fi
-  run_timed_pipe "holdings changes (L1 diff)" \
-    "${CHANGES_CMD[@]}" || true
-
-  ETF_DAILY_ARGS=(
-    "$PYTHON" "${SRC}/etf_daily_report.py"
-    --etf-codes "$ETF_CODES_HOLDINGS"
-    --write-reports
-  )
-  if [[ "$SHOW_REPORT" -eq 1 ]]; then
-    ETF_DAILY_ARGS+=(--human)
-  elif [[ "$QUIET" -eq 1 ]]; then
-    ETF_DAILY_ARGS+=(--quiet)
-  fi
-  run_timed_pipe "ETF 日報" \
-    "${ETF_DAILY_ARGS[@]}" || true
-
-  COPYTRADE_ARGS=(
-    "$PYTHON" "${SRC}/copytrade_l1h9_daily.py"
-    --write-reports
-  )
-  if [[ "$QUIET" -eq 1 ]]; then
-    COPYTRADE_ARGS+=(--quiet)
-  fi
-  run_step_if_pipeline_enabled "copytrade_l1h9_daily" "00981A 跟單 L1H9 篩選" \
-    "${COPYTRADE_ARGS[@]}" || true
 
   REGIME_ARGS=(
     "$PYTHON" "${SRC}/regime_daily_brief.py"
