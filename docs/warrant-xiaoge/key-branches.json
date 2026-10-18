@@ -1,0 +1,919 @@
+[
+ {
+  "branch": "凱基-松山",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "高手",
+  "stocks": [],
+  "behavior": "人物回憶：小哥轉做現股當沖時認識，當時大四、很猛。無持股/行為資料",
+  "quotes": "所以我才認識凱基松山 那時候他才大四而已",
+  "sources": [
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:03:58"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "9217 凱基松山 在 stock_broker_branch_daily 有資料（2026-10-15 有 67 檔）；另見記憶『松山跟單袖』定案訊號為負"
+ },
+ {
+  "branch": "凱基-東門",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "behavior": "小哥稱為台南分點，可成160~170（殖利率約6%）時已在買；有地緣分點買『通常就跟著買一些、關注一下』",
+  "quotes": "我們就看到有些台南分點已經在買了 什麼凱基東門",
+  "sources": [
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:11:08"
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "none",
+  "repo_match_note": "表中無『凱基東門』。同名『東門』候選：兆豐東門 700H、群益東門 918D、富邦東門 962C、致和東門 7035；字幕為自動轉寫，不硬配"
+ },
+ {
+  "branch": "元大-西門",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "高手",
+  "stocks": [],
+  "behavior": "2014年左右權證造市圈兩大派之一（另一派凱基）；因程式單修理發行商，『跑去別的券商』",
+  "quotes": "一個元大西門 一個另外一個就凱基永和台北",
+  "sources": [
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:01:32"
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "none",
+  "repo_match_note": "表中無任何含『西門』的分點名（元大西門疑已裁撤或轉券商）；無候選"
+ },
+ {
+  "branch": "凱基-永和",
+  "aliases": [
+   "凱基永和台北"
+  ],
+  "granularity": "branch",
+  "role": "高手",
+  "stocks": [],
+  "behavior": "2014年權證圈另一派，『被凱基幫修理』，後面較少看到；字幕歧義，分點對應待核",
+  "quotes": "不過凱基永和台北後面好像就比較少看到",
+  "sources": [
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:01:33"
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "candidate",
+  "repo_match_note": "9207 凱基永和 存在；與下列凱基台北同句，無法確定指哪個（或兩者）"
+ },
+ {
+  "branch": "凱基-台北",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "其他",
+  "stocks": [],
+  "behavior": "(a) 2014年權證圈一派（見凱基永和）(b) 舉例『買超第一名可能是…凱基台北』，看其慣性：連買＝波段多；一買一賣＝今天大買隔天大機率賣",
+  "quotes": "買超第一名可能是 新加坡瑞銀 摩根大通 或是凱基三重 凱基台北 你看一下他的慣性",
+  "sources": [
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:16:37"
+   },
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:01:33"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "9268 凱基台北（註：config/chip_seats.yaml 已把 9268 標為隔日沖席位 flip 0.359, n=635）"
+ },
+ {
+  "branch": "凱基-三重",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "其他",
+  "stocks": [],
+  "behavior": "僅舉例為買超第一名之一，看慣性；無個股",
+  "quotes": "買超第一名可能是 新加坡瑞銀 摩根大通 或是凱基三重 凱基台北",
+  "sources": [
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:16:37"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "9205 凱基三重"
+ },
+ {
+  "branch": "新加坡瑞銀",
+  "aliases": [],
+  "granularity": "broker",
+  "role": "其他",
+  "stocks": [],
+  "behavior": "僅舉例為買超第一名之一，看慣性",
+  "quotes": "買超第一名可能是 新加坡瑞銀 摩根大通",
+  "sources": [
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:16:37"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "candidate",
+  "repo_match_note": "表中有『瑞銀』1650（外資券商，無『新加坡』字樣）；是否同一 id 待核"
+ },
+ {
+  "branch": "摩根大通",
+  "aliases": [],
+  "granularity": "broker",
+  "role": "其他",
+  "stocks": [],
+  "behavior": "僅舉例為買超第一名之一，看慣性",
+  "quotes": "買超第一名可能是 新加坡瑞銀 摩根大通",
+  "sources": [
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:16:37"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "8440 摩根大通（另有 1470 台灣摩根/摩根士丹利，為不同券商）"
+ },
+ {
+  "branch": "國泰-敦南",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "散戶分點",
+  "stocks": [],
+  "behavior": "反指標：買在情緒高點、砍在恐慌低點；小哥當日大賺時此分點大賠",
+  "quotes": "哇國泰敦南又大賠，因為又是他買的，他都會買在那個情緒的高點，砍在恐慌的低點",
+  "sources": [
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:18:45"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "8888 國泰敦南"
+ },
+ {
+  "branch": "元大-館前",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "假主力",
+  "stocks": [
+   "華東(8110)"
+  ],
+  "behavior": "『兇狠隔日沖』風格；華東1/26大買8700張別興奮",
+  "quotes": "元大館前（假主力）：別看到 1/26 大買 8700 張就興奮",
+  "sources": [
+   {
+    "video": "0brmQMUzxCk",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "984K 元大館前（說明欄來源，無時間碼）"
+ },
+ {
+  "branch": "富邦-新店",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "高手",
+  "stocks": [],
+  "behavior": "近期操作非常厲害的高手；與永豐金內湖同時大舉進場代表強勁動能",
+  "quotes": "近期在股票市場上操作非常厲害的高手「富邦新店」與「永豐金內湖」",
+  "sources": [
+   {
+    "video": "HLQ-ksCrkCE",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "9661 富邦新店（說明欄來源；2025-09-12）"
+ },
+ {
+  "branch": "永豐金-內湖",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "高手",
+  "stocks": [],
+  "behavior": "同富邦新店：同時大舉進場＝強勁動能",
+  "quotes": "「富邦新店」與「永豐金內湖」兩大關鍵主力",
+  "sources": [
+   {
+    "video": "HLQ-ksCrkCE",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "9A9g（表中名稱為『永豐內湖』與『永豐金內湖』兩種寫法）"
+ },
+ {
+  "branch": "凱基-城中",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "behavior": "標題稱『股市界角頭狠人，1秒倒貨三萬張』",
+  "quotes": "股市界的角頭狠人！凱基-城中 1 秒倒貨三萬張",
+  "sources": [
+   {
+    "video": "qsuZRS9DN7E",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "9227 凱基城中（chip_seats.yaml flip 0.663, n=98，隔日沖席位）"
+ },
+ {
+  "branch": "富邦-仁愛",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "其他",
+  "stocks": [],
+  "behavior": "標題：貓咪亂按漲停，富邦仁愛大翻車（說明欄為空，內容不明）",
+  "quotes": "貓咪亂按漲停？富邦仁愛「大翻車」！",
+  "sources": [
+   {
+    "video": "PlMRvuGFmI0",
+    "timecode": ""
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "exact",
+  "repo_match_note": "9676 富邦仁愛"
+ },
+ {
+  "branch": "國泰（分點名被截斷）",
+  "aliases": [],
+  "granularity": "broker",
+  "role": "其他",
+  "stocks": [
+   "美德醫療-DR"
+  ],
+  "behavior": "同業跌停、溢價極端的高點，有特定分點（如國泰…）進場接火球；說明欄截斷",
+  "quotes": "在同業跌停、溢價極端的高點，竟然有特定分點（如：國泰",
+  "sources": [
+   {
+    "video": "pcOpwG2mqQw",
+    "timecode": ""
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "none",
+  "repo_match_note": "分點名不完整，國泰有多個分點（敦南8888/館前888A/台中8882等），不配"
+ },
+ {
+  "branch": "土城永寧",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "其他",
+  "stocks": [
+   "嘉晶"
+  ],
+  "behavior": "嘉晶買超第一最難搞",
+  "quotes": "嘉晶土城永寧買超第一最難搞！？",
+  "sources": [
+   {
+    "video": "l_VRkJUusJU",
+    "timecode": "52:50"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "candidate",
+  "repo_match_note": "9875 在表中名為『元大永寧』/『元大土城永』；券商未在說明欄指明，但土城永寧僅元大有，待核"
+ },
+ {
+  "branch": "台灣匯立（疑為永豐匯立）",
+  "aliases": [
+   "台灣匯立",
+   "台灣匯理"
+  ],
+  "granularity": "branch",
+  "role": "外資",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "behavior": "可成140元低檔天天賣；小哥說外資高檔買低檔砍，並否認其為關鍵分點（『哪有人關鍵分點是低檔在賣的』）。另一抽取假設為『台灣匯理』，但表中有『匯立』",
+  "quotes": "這關鍵個頭，哪有人關鍵分點是低檔在賣的",
+  "sources": [
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:06:16"
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "candidate",
+  "repo_match_note": "9A81 永豐匯立／永豐金匯立（名稱含『匯立』，比『匯理』更接近）；是否為外資券商待核"
+ },
+ {
+  "branch": "台人",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "其他",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "behavior": "買在低檔的南部公司派分點，其大賣時為出場訊號；『台人』疑同音誤字",
+  "quotes": "然後你看到台人大賣的時候，那你就要準備出場了",
+  "sources": [
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:11:40"
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "none",
+  "repo_match_note": "無法還原分點名"
+ },
+ {
+  "branch": "兆豐-北高雄",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "behavior": "可成籌碼流到台南人手上；這批關鍵分點已買約十年、非常安定（字幕『用年來講』）",
+  "quotes": "全部都流落到那個台南人手上 台南人 兆豐北高雄",
+  "sources": [
+   {
+    "video": "osngDf737qc",
+    "timecode": "0:25:29"
+   }
+  ],
+  "confidence": "待核",
+  "repo_match": "exact",
+  "repo_match_note": "700I 兆豐北高雄（表中亦有『兆豐北高』寫法）；字幕是單一分點或並列地緣待核"
+ },
+ {
+  "branch": "竹北主力（竹北哥）",
+  "aliases": [],
+  "granularity": "region",
+  "role": "關鍵分點",
+  "stocks": [
+   "晶豪科(3006)"
+  ],
+  "behavior": "晶豪科65元大舉進場，跌到40多元不動搖，獲利破4億尚未大賣；教學案例：看對分點輸在耐心",
+  "quotes": "該竹北主力最初在晶豪科 65 元時大舉進場，隨後股價慘跌至 40 多元",
+  "sources": [
+   {
+    "video": "1yV-QzpTQK4",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "candidate",
+  "repo_match_note": "竹北分點候選：1117:企銀竹北、1117:台企銀竹北、7007:兆豐竹北、9234:凱基竹北、9339:永昌竹北、9339:華南永昌-竹北、9339:華南竹北、9624:富邦-竹北、9624:富邦竹北、981B:元大竹北、9A9P:永豐竹北、9A9P:永豐金-竹北、9A9P:永豐金竹北；未指明券商，不硬配"
+ },
+ {
+  "branch": "台中一哥",
+  "aliases": [],
+  "granularity": "branch",
+  "role": "高手",
+  "stocks": [
+   "美律(2439)"
+  ],
+  "behavior": "標題：跟著台中一哥進場當沖，美律連2天獲利（2019）",
+  "quotes": "當沖損益：+71,000 元！跟著台中一哥進場，美律2439 連續 2 天獲利！",
+  "sources": [
+   {
+    "video": "panE-sfmCpw",
+    "timecode": ""
+   }
+  ],
+  "confidence": "推論",
+  "repo_match": "none",
+  "repo_match_note": "『一哥』非分點名；台中分點有54個，無法對應"
+ },
+ {
+  "branch": "宏遠證券",
+  "aliases": [],
+  "granularity": "broker",
+  "role": "其他",
+  "stocks": [],
+  "behavior": "時間軸僅『宏遠證可轉債』",
+  "quotes": "20:47 宏遠證可轉債",
+  "sources": [
+   {
+    "video": "08zNii4ESYs",
+    "timecode": "20:47"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "exact",
+  "repo_match_note": "1260 宏遠（broker 層級；分點另有 1261 民生、1262 桃園…）"
+ },
+ {
+  "branch": "台南／南部地緣分點（可成）",
+  "aliases": [
+   "台南人",
+   "南部分點",
+   "台南高雄分點"
+  ],
+  "granularity": "region",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "behavior": "可成長期獲利的台南、高雄分點（公司派/內部人）在140~190低檔大買；成本約190，小哥170~180；台南分點十幾年價差賺逾200億（看得到前15名）；營收低點大買、營收創高時出貨；出場看這批分點出脫或殖利率<4%；小哥稱台南人",
+  "quotes": "可成的台南分點 這十幾年來 不算股息 光算價差 在可成賺了兩百多億以上",
+  "sources": [
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:10:59"
+   },
+   {
+    "video": "oqMtFqJDVVM",
+    "timecode": "0:14:05"
+   },
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:14:41"
+   },
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:11:15"
+   },
+   {
+    "video": "osngDf737qc",
+    "timecode": "0:24:10"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "地緣泛稱，非單一 id。表中含台南/高雄/北高雄名稱者共 92 個 id；可成2474個別是哪個分點需另用該股分點明細驗證，不硬配"
+ },
+ {
+  "branch": "桃園人（桃園分點群）",
+  "aliases": [],
+  "granularity": "region",
+  "role": "地緣",
+  "stocks": [],
+  "behavior": "關鍵分點桃園人狂賣、且在布林上通道＝警鐘／是否該空",
+  "quotes": "關鍵分點桃園人狂賣股票就是一個警鐘",
+  "sources": [
+   {
+    "video": "Rv31s_EQLwQ",
+    "timecode": ""
+   },
+   {
+    "video": "KlqddxeavKQ",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "桃園分點候選：102E:合庫-桃園、102E:合庫桃園、111E:企銀桃園、111E:台企銀桃園、1262:宏遠桃園、5385:第一桃園、5385:第一金-桃園、5385:第一金桃園、585H:統一-桃園、585H:統一桃園、6465:大昌-桃園、6465:大昌桃園、700M:兆豐桃園、779r:國票桃園、8565:新光-桃園、8565:新光桃園、884F:玉山-桃園、884F:玉山桃園、8885:國泰-桃園、8885:國泰桃園、9189:群益桃園、9208:凱基-桃園、9208:凱基桃園、9352:永昌桃園、9352:華南桃園、9665:富邦-桃園、9665:富邦桃園、988B:元大桃園、9A9x:永豐桃園、9A9x:永豐金-桃園、9A9x:永豐金桃園、9B2v:台新-桃園、9B2v:台新桃園"
+ },
+ {
+  "branch": "員林人",
+  "aliases": [],
+  "granularity": "region",
+  "role": "地緣",
+  "stocks": [
+   "正新(2105)"
+  ],
+  "behavior": "時間軸：員林人買正新(2105)",
+  "quotes": "58:41 員林人買正新(2105)",
+  "sources": [
+   {
+    "video": "nYvjFGhrruk",
+    "timecode": "58:41"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "員林分點候選：5381:第一員林、5381:第一金員林、585I:統一-員林、585I:統一員林、6114:中銀員林、6114:台中銀員林、700k:兆豐員林、9231:凱基員林、961R:富邦-南員林、961R:富邦南員林、9672:富邦員林、9835:元大-員林中山、9835:元大員林中、9889:元大員林、9A9C:永豐員林、9A9C:永豐金員林"
+ },
+ {
+  "branch": "關鍵分點（泛稱，定義與用法）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)",
+   "怡利電",
+   "晶豪科(3006)",
+   "玉晶光",
+   "統振",
+   "聯發科(2454)",
+   "聯電",
+   "鴻海(2317)"
+  ],
+  "behavior": "行為描述不是公式：長期獲利者、低檔大買、先於主力進場（像內部人）；高檔拼命賣、低檔拼命買，跟著低買高賣；標的需高殖利率(≥約5%)；搭配布林通道（壓縮後突破）勝率高；近期買的偏小型高殖利率股；出場＝關鍵分點出場或殖利率<4%；地板股SOP第4項為加分非必要；低檔在賣者不算關鍵分點；每天整理關鍵分點買賣給訂閱者",
+  "quotes": "我們都是利用布林通道找買賣點 再搭配關鍵分點的進出",
+  "sources": [
+   {
+    "video": "2LxKABeEwR8",
+    "timecode": "0:00:56"
+   },
+   {
+    "video": "2LxKABeEwR8",
+    "timecode": "0:01:46"
+   },
+   {
+    "video": "2LxKABeEwR8",
+    "timecode": "0:11:55"
+   },
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:10:09"
+   },
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:09:51"
+   },
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:05:37"
+   },
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:12:03"
+   },
+   {
+    "video": "oqMtFqJDVVM",
+    "timecode": "0:13:50"
+   },
+   {
+    "video": "oqMtFqJDVVM",
+    "timecode": "0:32:48"
+   },
+   {
+    "video": "osngDf737qc",
+    "timecode": "0:12:16"
+   },
+   {
+    "video": "osngDf737qc",
+    "timecode": "0:24:10"
+   },
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:24:36"
+   },
+   {
+    "video": "l_VRkJUusJU",
+    "timecode": "5:27"
+   },
+   {
+    "video": "I9i5rhmhXkM",
+    "timecode": "12:46"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "泛稱，無對應 id；字幕沒有給挑選公式或名單"
+ },
+ {
+  "branch": "主力（泛稱，籌碼集中度）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "其他",
+  "stocks": [
+   "驊宏資/華經（待核）"
+  ],
+  "behavior": "布林壓縮後第一根突破且主力都在買＝好股；月線陡峭回檔靠月線主力還在買＝買點；高檔出貨股：營收沒跟上、主力狂賣、大戶減散戶增、戶數增加；利多可能是主力發的；營收創高時主力在賣；被ETF剔除股需主力轉買、集中度≥10%且連續",
+  "quotes": "拉第一根的時候 你看到主力都在買 這種就是一個很好的股票",
+  "sources": [
+   {
+    "video": "2LxKABeEwR8",
+    "timecode": "0:03:08"
+   },
+   {
+    "video": "2LxKABeEwR8",
+    "timecode": "0:06:28"
+   },
+   {
+    "video": "2LxKABeEwR8",
+    "timecode": "0:11:21"
+   },
+   {
+    "video": "5YJduOaRdUc",
+    "timecode": "0:00:55"
+   },
+   {
+    "video": "Yb3nuEh2uSA",
+    "timecode": "0:00:28"
+   },
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:12:23"
+   },
+   {
+    "video": "pipw28lcYNU",
+    "timecode": "0:22:51"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "指標型（主力買賣超/集中度），非分點"
+ },
+ {
+  "branch": "隔日沖（席位類型）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "隔日沖",
+  "stocks": [
+   "技嘉",
+   "高檔出貨股池"
+  ],
+  "behavior": "前日爆量漲停/長紅，隔日沖倒貨；試撮漲停但期貨沒大漲＝多半隔日沖所為；今天大買隔日沖＋大賣大股東＝隔天容易黑K；高檔出貨池+今日紅K+確認隔日沖→隔天空；急拉+隔日沖+連次量亮燈易轉折；發行商也抱怨其隔日沖",
+  "quotes": "那就看有沒有隔日沖 有的話隔天空",
+  "sources": [
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:45:20"
+   },
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:02:09"
+   },
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:01:48"
+   },
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:09:09"
+   },
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:12:00"
+   },
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:20:57"
+   },
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:12:26"
+   },
+   {
+    "video": "I9i5rhmhXkM",
+    "timecode": "29:46"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "字幕未點名分點；repo 已有 config/chip_seats.yaml 以數據重建隔日沖席位。注意記憶『連次/連量竭盡判決』與『關鍵分點前選後驗』的否證結論"
+ },
+ {
+  "branch": "假主力／短線客／短線主力",
+  "aliases": [],
+  "granularity": "category",
+  "role": "假主力",
+  "stocks": [],
+  "behavior": "假拉抬真出貨；程式掛單每5秒試搓、最後2~5秒抽單，漲停變跌停；主力賣時讓你想買、買時讓你想賣；十個九個騙人",
+  "quotes": "假拉抬真出貨都短線客",
+  "sources": [
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:00:08"
+   },
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:07:39"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "行為類型，無 id"
+ },
+ {
+  "branch": "停損大戶／違約交割者",
+  "aliases": [],
+  "granularity": "category",
+  "role": "停損大戶",
+  "stocks": [],
+  "behavior": "覆盤看誰把價買上去、哪些分點在停損；別跟著停損，停損光後強力做多；違約交割者多捨不得停損；融資斷頭多殺多",
+  "quotes": "這個停損大戶是來發紅包的，你不要跟他一起停損",
+  "sources": [
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:16:17"
+   },
+   {
+    "video": "dU8-acPjIgg",
+    "timecode": "0:05:05"
+   },
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:03:57"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "行為類型，無 id"
+ },
+ {
+  "branch": "外資／投信／三大法人（泛稱）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "外資",
+  "stocks": [
+   "00632R",
+   "國泰金(2882)",
+   "潤泰全(2915)",
+   "精成科(6191)",
+   "萬海(2615)"
+  ],
+  "behavior": "三大法人不能信，高檔常外資買低檔常砍；外資預判ETF納入先買、投信進場倒給投信、尾盤一次倒；剔除前先賣、剔除時買回；外資買超可能是買反1的00632R；投信盤中批次程式單慢慢買；隔日若無外資投信進場，權證大戶做多股轉弱",
+  "quotes": "你不能因為它們買你就跟著買",
+  "sources": [
+   {
+    "video": "It_9Bq43JbM",
+    "timecode": "0:08:59"
+   },
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:06:00"
+   },
+   {
+    "video": "pipw28lcYNU",
+    "timecode": "0:06:45"
+   },
+   {
+    "video": "pipw28lcYNU",
+    "timecode": "0:13:39"
+   },
+   {
+    "video": "pipw28lcYNU",
+    "timecode": "0:20:09"
+   },
+   {
+    "video": "pipw28lcYNU",
+    "timecode": "0:03:39"
+   },
+   {
+    "video": "osngDf737qc",
+    "timecode": "0:07:41"
+   },
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:12:21"
+   },
+   {
+    "video": "myWp9MOf6_k",
+    "timecode": "0:20:39"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "類別行為，無 id"
+ },
+ {
+  "branch": "權證大戶／權證主力",
+  "aliases": [],
+  "granularity": "category",
+  "role": "高手",
+  "stocks": [
+   "亞翔",
+   "神達",
+   "緯創",
+   "長榮"
+  ],
+  "behavior": "看權證大戶進出當指標：買得愈大勝率愈高（200萬不必跟、4000萬才算）；今日做多前幾名較強，隔日無外資投信進場則轉弱；權證賣壓大時去看籌碼",
+  "quotes": "他買得愈大 你的勝率愈高",
+  "sources": [
+   {
+    "video": "OXHBUl4-Apo",
+    "timecode": "0:23:31"
+   },
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:12:17"
+   },
+   {
+    "video": "JjlZ_zICYKY",
+    "timecode": "0:45:07"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "權證分點非股票分點表；本 repo 無對應表"
+ },
+ {
+  "branch": "散戶分點（ETF買超第一名）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "散戶分點",
+  "stocks": [
+   "00919",
+   "00940"
+  ],
+  "behavior": "00940常買超第一名的是超散戶分點，小哥故意不講名；ETF申購大增＝高點、散戶指標",
+  "quotes": "現在你打開00940，它那種常常買超第一名的分點，都是那個很散戶的分點",
+  "sources": [
+   {
+    "video": "myWp9MOf6_k",
+    "timecode": "0:17:20"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "分點名被刻意隱去；可用 stock_broker_branch_daily 對 00940 做數據反推，但不屬字幕資料"
+ },
+ {
+  "branch": "賣超大分點／大股東（高檔狂賣）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "其他",
+  "stocks": [
+   "網龍"
+  ],
+  "behavior": "高檔有賣超大分點狂賣→後面會跌；大帶寬+主力賣+分點大賣，反彈上軌是賣點；內部人申報轉讓＝賣",
+  "quotes": "高檔的時候你要看一下 有沒有賣超的大分點在狂賣",
+  "sources": [
+   {
+    "video": "tH2RvnwY99g",
+    "timecode": "0:17:06"
+   },
+   {
+    "video": "oqMtFqJDVVM",
+    "timecode": "0:29:50"
+   },
+   {
+    "video": "oqMtFqJDVVM",
+    "timecode": "0:26:09"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "行為類型，無 id"
+ },
+ {
+  "branch": "公司派／老闆／出貨分點",
+  "aliases": [],
+  "granularity": "category",
+  "role": "其他",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "behavior": "營收爛時老闆拚命買、營收爆好時出貨；標題稱可揪出公司派出貨分點避開大跌",
+  "quotes": "可成就是我們說它低檔老闆拚命買，老闆企圖很厲害",
+  "sources": [
+   {
+    "video": "bHQlQD7O3Ls",
+    "timecode": "0:17:44"
+   },
+   {
+    "video": "kUiAiYz0FV8",
+    "timecode": ""
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "行為類型，無 id"
+ },
+ {
+  "branch": "其他線索（主力投信同買／穩懋老司機／大賺4千萬分點）",
+  "aliases": [],
+  "granularity": "category",
+  "role": "高手",
+  "stocks": [
+   "乙盛",
+   "佳凌",
+   "穩懋",
+   "萬海",
+   "虹堡(5258)"
+  ],
+  "behavior": "要找主力跟投信一起買賣；『乙盛主力還沒跑？穩懋老司機也還在？』；『出狠招大賺4千萬分點、大傷隔日沖』（標題，內容不明）",
+  "quotes": "所以我們要找主力跟投信一起買",
+  "sources": [
+   {
+    "video": "oqMtFqJDVVM",
+    "timecode": "0:32:09"
+   },
+   {
+    "video": "jJG92-yE4fg",
+    "timecode": "46:10"
+   },
+   {
+    "video": "I9i5rhmhXkM",
+    "timecode": "29:46"
+   }
+  ],
+  "confidence": "字幕直述",
+  "repo_match": "category",
+  "repo_match_note": "標題/時間軸層級，內容不明，需 ASR"
+ }
+]

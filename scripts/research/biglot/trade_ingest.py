@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 
 import biglot_dashboard
+from biglot import streak_live as _streak_live
 from biglot.utils import bucket_key
 
 
@@ -68,6 +69,7 @@ def _ingest_trade(line):
     t = biglot_dashboard.datetime.fromisoformat(ts)
     gap = sid in biglot_dashboard.ST.last_seen and (t - biglot_dashboard.ST.last_seen[sid]).total_seconds() > biglot_dashboard.GAP_SECONDS
     biglot_dashboard.ST.last_seen[sid] = t
+    _streak_live.on_trade(sid, t, px, dv, b, a)       # 連次/連量(只讀描述欄;例外自吞,不影響本函式)
     amt = px * dv * 1000
     bk = bucket_key(t)
     row = biglot_dashboard.ST.buckets.setdefault(sid, {}).setdefault(

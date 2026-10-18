@@ -32,11 +32,12 @@ import biglot_dashboard
 from biglot.reference_loaders import (
     _refresh_vol_risk_if_needed, _load_daily_trend, _load_key_line, _load_pe_peer,
     _load_atr_state, _load_xq_style, _load_vixtwn, _load_prev_close_db, _load_hist,
-    _load_etf981_holdings,
+    _load_etf981_holdings, _load_prev2d_totals,
 )
+from biglot import streak_live as _streak_live
 from biglot.trade_ingest import _ingest_trade
 from biglot.iceberg import _iceberg_update
-from biglot.mini_futures import _ingest_mini_fut
+from biglot.futures_bigflow import _ingest_fut_bigflow
 from stock_db import DATA_DIR
 
 
@@ -51,9 +52,15 @@ def ingest():
         (biglot_dashboard.PE_TABLE, biglot_dashboard.PE_PEERS,
          biglot_dashboard.PE_GEN, biglot_dashboard.PE_EPS) = _load_pe_peer()
         biglot_dashboard.ATR_STATE = _load_atr_state()
+        biglot_dashboard.PREV2D = _load_prev2d_totals()   # 2026-10-03 新增:近兩日尺度用
         biglot_dashboard.XQ_STYLE = _load_xq_style()
         biglot_dashboard.VIXTWN = _load_vixtwn()
-        biglot_dashboard.PREV_CLOSE.update(_load_prev_close_db())   # 換日refresh官方昨收
+        _streak_live.reset_for_day(list(biglot_dashboard.NAMES) + list(biglot_dashboard.REF_EXTRA), today)   # 連次/連量:換日清狀態+PIT分均量
+        _pc_db, _sig_db, _pc2_db = _load_prev_close_db()
+        biglot_dashboard.PREV_CLOSE.update(_pc_db)   # 換日refresh官方昨收
+        biglot_dashboard.PREV2_CLOSE.clear()
+        biglot_dashboard.PREV2_CLOSE.update(_pc2_db)
+        biglot_dashboard.SIG_DAY.update(_sig_db)
         # 2026-09-27 補漏(稽核發現):_load_hist()/_load_etf981_holdings() 先前只在 import 當下
         # 跑過一次,process 若連續跑超過一天不重啟,HIST_BIG(連續買賣streak)/Y_PMLOW(破昨午後低點)/
         # UNI5(宇宙近5日累積,餵閘門banner+OOS盤中gating)/ETF981_*(981A同步觀察)都會停在啟動當天,
