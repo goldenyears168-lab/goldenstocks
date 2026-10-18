@@ -1,0 +1,119 @@
+# 資料產品宣告（SSOT）— 每個資料產品『誰產出、誰消費、多久算過期』寫在這裡。
+# 檢查：PYTHONPATH=src .venv/bin/python scripts/ops/check_data_products.py        （warn-only）
+# 說明：src/data_products.py。producer 必須是 config/job_registry.yaml 的 label（或 "manual"），
+#       有測試（tests/test_data_products.py）鎖住；consumers 只寫『會讀它的頁面/ job』，空陣列＝目前沒人讀。
+#
+# 欄位
+#   kind          sqlite_table | file
+#   table/date_col/key_col   key_col 有填才做覆蓋率檢查（最新日 distinct key / 前 10 日中位數 < min_rows_ratio 即告警）
+#                            ⚠ 表必須有以 date_col 為首欄的索引，否則 MAX() 會掃全表（stocks.db 約 50GB）
+#   path          file 用；前綴 data: = stock_db.DATA_DIR（~/goldenstocks-data/data）、root: = 其上一層（含 cache/）、
+#                 repo: = 專案根目錄；日期取檔案 mtime
+#   cadence       trading_day（預設）| manual（用 max_age_days 日曆日判）
+#   ready_after   當日資料最晚何時該就緒（預設 22:00）；之前期望日仍是前一個交易日
+#   fresh_td/dead_td   落後幾個交易日算 FRESH / STALE（超過 dead_td 為 DEAD）
+#   status        active | dormant（停更、退役待決，只報告）| retired（略過）
+#   known_issue   已知且接受的覆蓋缺口說明；有填時覆蓋率告警降為『已知』不算違規
+version: 1
+
+# 已知休市日補充（平日休市但日線入庫前就需要被排除，例如颱風假公告當下）。格式 YYYY-MM-DD。
+# 之後應由 trading_calendar 表取代（見架構方案階段 2）。
+extra_holidays: []
+
+defaults:
+  ready_after: "22:00"
+  fresh_td: 0
+  dead_td: 3
+  status: active
+
+products:
+  # ── 日線與籌碼（daily-sync / chip-margin-catchup）────────────────────────────
+  - {id: stock_daily_bars, kind: sqlite_table, table: stock_daily_bars, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.7,
+     producer: daily-sync, consumers: ["dashboard:/", "dashboard:/stock", "dashboard:/chips", "dashboard:/disposal", "job:*"]}
+  - {id: stock_institutional_daily, kind: sqlite_table, table: stock_institutional_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.7,
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips", "dashboard:/stock"]}
+  - {id: stock_margin_daily, kind: sqlite_table, table: stock_margin_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.7,
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips", "dashboard:/stock"]}
+  - {id: stock_lending_daily, kind: sqlite_table, table: stock_lending_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips"]}
+  - {id: stock_lending_balance_daily, kind: sqlite_table, table: stock_lending_balance_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips"]}
+  - {id: stock_short_interest_daily, kind: sqlite_table, table: stock_short_interest_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips"]}
+  - {id: stock_sbl_fee_daily, kind: sqlite_table, table: stock_sbl_fee_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: chip-margin-catchup, consumers: []}
+  - {id: stock_shareholding_daily, kind: sqlite_table, table: stock_shareholding_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: chip-margin-catchup, consumers: ["dashboard:/stock"]}
+  - {id: stock_block_trade, kind: sqlite_table, table: stock_block_trade, date_col: trade_date,
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips"]}
+  - {id: stock_daytrade_daily, kind: sqlite_table, table: stock_daytrade_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: chip-margin-catchup, consumers: ["dashboard:/disposal", "dashboard:/stock"]}
+  # 以下四張由 daily_sync.sh 的 screener / 成分股區段寫入（受 RUN_* 開關控制；2026-10-18 實測 RUN_STOCK_MARKET_SYNC=0）。
+  # 2026-10-18 以頁面讀表追蹤 + 程式碼 grep 確認：沒有任何儀表板頁面或 job 讀取它們 → consumers 為空（孤兒）。
+  - {id: stock_market_value_daily, kind: sqlite_table, table: stock_market_value_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: daily-sync, consumers: []}
+  - {id: stock_technical_daily, kind: sqlite_table, table: stock_technical_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: daily-sync, consumers: []}
+  # [推論] daily-sync 10-16 的 xq_style 步驟成功（寫 25.9 萬列）卻只到 10-15，疑為設計上以前一交易日為 key，故容許落後 1。
+  - {id: stock_xq_style_daily, kind: sqlite_table, table: stock_xq_style_daily, date_col: trade_date, key_col: stock_id, min_rows_ratio: 0.5,
+     producer: daily-sync, consumers: ["dashboard:/ (reference_loaders)"], fresh_td: 1}
+  - {id: stock_institutional_side_daily, kind: sqlite_table, table: stock_institutional_side_daily, date_col: trade_date,
+     producer: daily-sync, consumers: []}
+  - id: stock_broker_branch_daily
+    kind: sqlite_table
+    table: stock_broker_branch_daily
+    date_col: trade_date
+    key_col: stock_id
+    min_rows_ratio: 0.5
+    producer: branch-tape-prewarm
+    consumers: ["dashboard:/chips", "dashboard:/stock", "job:holdings-branch-sell-monitor", "job:expert-pool-chart-digest"]
+    known_issue: "2026-10-16 起 FinMind 退役，富邦來源只覆蓋專家池 + 個股頁前 15 名分點（約 60~70 檔，原全市場約 1,650 檔）"
+
+  # ── 期貨/波動率/海外 ────────────────────────────────────────────────────────
+  - {id: futures_institutional_daily, kind: sqlite_table, table: futures_institutional_daily, date_col: trade_date,
+     producer: daily-sync, consumers: []}
+  - {id: market_vix_daily, kind: sqlite_table, table: market_vix_daily, date_col: date,
+     producer: vixtwn-daily-sync, consumers: ["dashboard:/"]}
+  - {id: tech_risk_daily_snapshot, kind: sqlite_table, table: tech_risk_daily_snapshot, date_col: session_date,
+     producer: daily-sync, consumers: []}
+  - {id: morning_risk_snapshot, kind: sqlite_table, table: morning_risk_snapshot, date_col: trade_date,
+     producer: daily-sync, consumers: []}
+  - {id: fubon_premarket_quote_snapshot, kind: sqlite_table, table: fubon_premarket_quote_snapshot, date_col: trade_date,
+     producer: fubon-premarket-quote-collect, consumers: ["dashboard:/"]}
+  - id: us_daily_bars
+    kind: sqlite_table
+    table: us_daily_bars
+    date_col: trade_date
+    producer: manual              # 唯一寫入者 backfill_yahoo_research.py 沒有任何排程
+    consumers: []
+    dead_td: 5
+
+  # ── 檔案產物（儀表板頁面實際讀取）────────────────────────────────────────────
+  - {id: chip_sop_latest, kind: file, path: "data:chip/chip_sop_latest.json",
+     producer: chip-margin-catchup, consumers: ["dashboard:/chips"]}
+  - {id: disposal_risk, kind: file, path: "data:disposal/disposal_risk.json",
+     producer: manual, consumers: ["dashboard:/disposal"], cadence: manual, max_age_days: 3}
+  - {id: comovement_tags, kind: file, path: "root:cache/biglot_live_watch/comovement_tags.json",
+     producer: manual, consumers: ["dashboard:/"], cadence: manual, max_age_days: 30}
+  - {id: live_calib_universe, kind: file, path: "data:cache/pit_universe_tick/_live_calib.json",
+     producer: manual, consumers: ["dashboard:/", "dashboard:/chips", "job:clone-agent-signal"], cadence: manual, max_age_days: 45}
+  - {id: regime_daily_brief, kind: file, path: "repo:reports/daily/regime/daily_brief.md",
+     producer: daily-sync, consumers: []}
+  # CLAUDE.md 稱 etf-daily brief 是收盤主線產物，但 mtime 停在 2026-06-22。
+  # 要決定：恢復產出，或改標 retired（RRG/Lens 已過時）。決定前會一直報 DEAD。
+  - {id: etf_daily_brief, kind: file, path: "repo:reports/daily/etf-daily/daily_brief.md",
+     producer: daily-sync, consumers: ["doc:CLAUDE.md 收盤主線"]}
+
+  # ── 停更中、是否退役待決（只報告）──────────────────────────────────────────
+  - {id: stock_kbar_1m, kind: sqlite_table, table: stock_kbar_1m, date_col: trade_date, producer: manual, consumers: [], status: dormant}
+  - {id: stock_kbar_5m, kind: sqlite_table, table: stock_kbar_5m, date_col: trade_date, producer: manual, consumers: [], status: dormant}
+  - {id: stock_opening_session_stats, kind: sqlite_table, table: stock_opening_session_stats, date_col: trade_date, producer: manual, consumers: [], status: dormant}
+  - {id: order_intraday_exit_log, kind: sqlite_table, table: order_intraday_exit_log, date_col: trade_date, producer: manual, consumers: [], status: dormant}
+  - {id: stock_branch_daily, kind: sqlite_table, table: stock_branch_daily, date_col: trade_date, producer: manual, consumers: [], status: dormant}
+
+  # ── 已退役（略過；列出是為了讓『這張表為何不更新』有答案）──────────────────────
+  - {id: lens_daily_alert, kind: sqlite_table, table: lens_daily_alert, date_col: trade_date, producer: manual, consumers: [], status: retired}
+  - {id: lens_daily_highlight, kind: sqlite_table, table: lens_daily_highlight, date_col: trade_date, producer: manual, consumers: [], status: retired}
+  - {id: signal_capitulation_daily, kind: sqlite_table, table: signal_capitulation_daily, date_col: date, producer: manual, consumers: [], status: retired}
+  - {id: signal_capitulation_picks, kind: sqlite_table, table: signal_capitulation_picks, date_col: date, producer: manual, consumers: [], status: retired}
+  - {id: pre_market_auction_snapshot, kind: sqlite_table, table: pre_market_auction_snapshot, date_col: trade_date, producer: manual, consumers: [], status: retired}
