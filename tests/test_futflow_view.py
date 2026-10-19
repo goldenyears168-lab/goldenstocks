@@ -29,14 +29,15 @@ class FutFlowTests(unittest.TestCase):
              row("2026-10-14T08:50:02.000+08:00", 47000, 1006, 4, tt=30),           # 5 口(名目 1175 萬)→ 大戶
              row("2026-10-14T08:50:03.000+08:00", 47000, 1006, 5, tt=40, stale=True),
              row("2026-10-14T08:50:04.000+08:00", 47000, 1006, 4, tt=30),           # (serial,cum) 重複
-             row("2026-10-14T08:50:09.000+08:00", 47001, 1007, 6, tt=5_000_000)]    # 讓前面的爆發被沖出
+             row("2026-10-14T08:50:09.000+08:00", 47001, 1007, 6, tt=10_000_000)]   # 讓前面的爆發被沖出(≥2 口要超過 5 秒沒續單才結算)
         for ln in L:
             b.feed_line(ln, "2026-10-14")
-        b.merger.flush_old()
+        b.flush()
         bar = b.sessions[("day", "2026-10-14")][8 * 60 + 50]
         self.assertEqual(bar["vol"], 7)
-        self.assertEqual(bar["bl"]["R"], 1)
-        self.assertEqual(bar["bl"]["B"], 5)
+        self.assertEqual(bar["bl"]["R"], 1)                                         # 孤立單口
+        self.assertEqual(bar["bl"]["M"], 5)                                         # 小台 5 口(名目 1175 萬)不是連發 → 其餘;不再叫大單
+        self.assertEqual(bar["bl"]["B"], 0)
 
     def test_night_stitch_across_midnight(self):
         b = F.Book("TMF")
@@ -62,20 +63,22 @@ class FutFlowSummaryTests(unittest.TestCase):
                 row("2026-10-14T08:59:59.000+08:00", 47000, 1007, 4, tt=90_000_000)]
         for ln in rows:
             b.feed_line(ln, "2026-10-14")
-        b.merger.flush_old()
+        b.flush()
         return b
 
     def test_amount_and_windows(self):
         b = self._book()
-        S = F.summarize(b.sessions[("day", "2026-10-14")])
+        S = F.summarize(b.sessions[("day", "2026-10-14")], "MXF")
+        self.assertEqual(S["root"], "MXF")
         self.assertEqual(S["vol"], 7)
         self.assertAlmostEqual(S["amt"], 7 * 50 * 47000)
         t = S["full"]["tot"]
         self.assertEqual(t["R"]["bl"], 1)
-        self.assertEqual(t["B"]["sl"], 5)
-        self.assertLess(t["B"]["bn"] - t["B"]["sn"], 0)                                  # 大戶淨賣
+        self.assertEqual(t["M"]["sl"], 5)                                                # 5 口主動賣 → 其餘(非連發)
+        self.assertLess(t["M"]["bn"] - t["M"]["sn"], 0)
         self.assertEqual(S["w5"]["vol"], 1)                                              # 最後 5 分鐘只剩 08:59 那 1 口
-        self.assertAlmostEqual(F.share_diff(S["full"]), ((0 - 5 * 50 * 47000) - (1 * 50 * 47000)) / S["amt"] * 100)
+        # 第一線(B=連發)此處為空 → (0 − 第二線淨額) ÷ 成交額
+        self.assertAlmostEqual(F.share_diff(S["full"]), (0 - (1 * 50 * 47000)) / S["amt"] * 100)
 
     def test_market_status(self):
         D = dt.datetime
@@ -132,6 +135,45 @@ class FutFlowPercentileTests(unittest.TestCase):
         self.assertEqual(F.percentiles(sessions[cur_key], cur_key, sessions, order)["n"], 6)   # 10-01 只有 5 分鐘,不比
 
 
+class FutFlowStreakBookTests(unittest.TestCase):
+    """Book 與 StreakTagger 的整合:延遲確認後回頭歸類。"""
+
+    @staticmethod
+    def _chain(root, n, gap_us=500_000, start_tt=1_000_000, base=1000):
+        b = F.Book(root)
+        b.feed_line(row("2026-10-14T08:50:00.000+08:00", 47000, base, 1, tt=10), "2026-10-14")                    # 基準
+        for i in range(n):
+            b.feed_line(row(f"2026-10-14T08:50:{1 + i:02d}.000+08:00", 47000, base + 1 + i, 2 + i, tt=start_tt + i * gap_us), "2026-10-14")
+        b.feed_line(row("2026-10-14T08:51:30.000+08:00", 47000, base + 1 + n, 99, tt=90_000_000), "2026-10-14")   # 很久以後:沖出前面所有爆發
+        b.flush()
+        return b.sessions[("day", "2026-10-14")][8 * 60 + 50]
+
+    def test_six_one_lot_bursts_become_streak_retroactively(self):
+        bar = self._chain("MXF", 6)
+        self.assertEqual(bar["bl"]["B"], 6)                    # 連續 6 筆 → 全部(含達標前的前 4 筆)算 1口連發
+        self.assertEqual(bar["bl"]["R"], 0)
+
+    def test_four_one_lot_bursts_not_enough(self):
+        bar = self._chain("MXF", 4)                            # 1 口需連續 ≥5 筆
+        self.assertEqual(bar["bl"]["B"], 0)
+        self.assertEqual(bar["bl"]["R"], 4)
+
+    def test_slow_one_lot_bursts_are_isolated(self):
+        bar = self._chain("TMF", 6, gap_us=2_000_000)         # 間隔 2 秒 > 1 秒 → 不連
+        self.assertEqual(bar["bl"]["B"], 0)
+        self.assertEqual(bar["bl"]["R"], 6)
+
+    def test_txf_big_wins_over_streak_and_chain_has_own_slot(self):
+        bar = self._chain("TXF", 6)                            # 大台 1 口名目 940 萬 < 4000 萬;6 筆連發 → C 槽
+        self.assertEqual(bar["bl"]["C"], 6)
+        self.assertEqual(bar["bl"]["R"], 0)
+
+    def test_tsmc_has_no_tagger(self):
+        self.assertIsNone(F.Book("QFF").tagger)
+        self.assertIsNone(F.Book("CDF").tagger)
+        self.assertIsNotNone(F.Book("MXF").tagger)
+
+
 class FutFlowActiveTests(unittest.TestCase):
     def test_is_active(self):
         D = dt.datetime
@@ -163,6 +205,7 @@ class FutFlowCheckpointTests(unittest.TestCase):
         self.assertEqual({m: x["vol"] for m, x in b2.sessions[k].items()}, {m: x["vol"] for m, x in b.sessions[k].items()})
         self.assertEqual(b2.stream.prev, b.stream.prev)
         self.assertEqual(b2.merger.open, b.merger.open)
+        self.assertEqual(_j.loads(_j.dumps(b.tagger.to_state())), b2.tagger.to_state())    # 尚未確定的連發串也要續接
         # 還原後繼續餵資料,結果與沒中斷的一致
         nxt = row("2026-10-15T00:00:20.000+08:00", 47001, 109, 4, qt="FUTURE_AH", ask=47001, tt=9_100_000)
         b.feed_line(nxt, "2026-10-15", "f"); b2.feed_line(nxt, "2026-10-15", "f")
@@ -240,6 +283,33 @@ class FutFlowGoldenTests(unittest.TestCase):
         else:
             sys.modules["biglot_dashboard"] = self._bd
 
+    def test_linked_page_renders_with_tsmc(self):
+        for r in ("QFF", "CDF"):                                                    # 台積電期貨用同一份合成盤別(只驗版面與不當機)
+            b = F.Book(r)
+            b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
+            b.last_ts = "2026-10-07T09:29:50.000+08:00"
+            F._BOOKS[r] = b
+        html, live = F._body("ALL", "")
+        self.assertTrue(live)
+        for needle in ("期貨聯動", "MXF", "QFF", "CDF", "台積電合計", "相對開盤報酬", "第一線累計淨額", "1口連發", "孤立單口", "root=ALL"):
+            self.assertIn(needle, html)
+        self.assertEqual(F.render_futflow("ALL", "").count("id='ffapp'"), 1)       # 整頁入口也接受 ALL
+        self.assertEqual(F._body("all", "day|2026-10-03")[1], False)                # 固定歷史盤別不輪詢
+
+    def test_linked_page_without_tsmc_data(self):
+        html, _ = F._body("ALL", "")                                                # 只有 MXF 時不應出錯,也不顯示台積電合計
+        self.assertIn("MXF", html)
+        self.assertNotIn("台積電合計", html)
+
+    def test_health_overall_ignores_thin_tsmc(self):
+        from biglot import health as H
+        tmf = F.Book("TMF"); tmf.last_ts = "2026-10-07T09:29:50.000+08:00"
+        cdf = F.Book("CDF"); cdf.last_ts = "2026-10-07T09:00:00.000+08:00"          # 30 分鐘沒成交:台積電期貨夜盤常態
+        F._BOOKS["TMF"], F._BOOKS["CDF"] = tmf, cdf
+        h = H.health()
+        self.assertEqual(h["futflow"]["CDF"]["freshness"], "stale")                 # 仍如實回報
+        self.assertEqual(h["overall"], "fresh")                                     # 但不影響整體判斷
+
     def test_body_matches_golden(self):
         html, live = F._body("MXF", "")
         self.assertTrue(live)
@@ -248,6 +318,33 @@ class FutFlowGoldenTests(unittest.TestCase):
         if self._upd or not self.GOLDEN.exists():
             self.GOLDEN.write_text(html, encoding="utf-8")
         self.assertEqual(html, self.GOLDEN.read_text(encoding="utf-8"))
+
+    def test_per_root_definitions_and_adj_toggle(self):
+        for r in ("TMF", "TXF"):
+            b = F.Book(r)
+            b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
+            b.last_ts = "2026-10-07T09:29:50.000+08:00"
+            F._BOOKS[r] = b
+        names = {"MXF": ("1口連發", "孤立單口"), "TMF": ("1口連發", "孤立單口"), "TXF": ("大單≥4000萬", "1口連發", "孤立單口")}
+        for r, need in names.items():
+            html, _ = F._body(r, "")
+            for n in need:
+                self.assertIn(n, html, (r, n))
+            self.assertNotIn(">散戶</td>", html, r)                                      # 表格列不再用舊的『散戶』稱呼
+            self.assertNotIn(">大單</td>", html.replace("大單≥4000萬", ""), r)
+            self.assertIn("原始淨額", html)
+            self.assertIn("扣價格殘差", html)
+            self.assertIn("data-g=", html)
+        adj, _ = F._body("MXF", "day|2026-10-07|adj")
+        self.assertIn("扣價格", adj)
+        self.assertIn("累計殘差", adj)
+        self.assertEqual(F._parse_sel("day|2026-10-07|adj"), ("day|2026-10-07", True))
+        self.assertEqual(F._parse_sel("adj"), ("", True))
+        self.assertEqual(F._parse_sel("day|2026-10-07"), ("day|2026-10-07", False))
+        self.assertEqual(F._body("MXF", "adj")[0].count("<svg"), 1)
+        # 大台第三條線:四個槽位都顯示
+        self.assertEqual(F.groups("TXF"), ("B", "C", "M", "R"))
+        self.assertEqual(F.groups("MXF"), ("B", "M", "R"))
 
     def test_health_shape(self):
         from biglot import health as H
