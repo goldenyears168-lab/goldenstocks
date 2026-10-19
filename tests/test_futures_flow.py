@@ -155,7 +155,7 @@ class StreakGroupTests(unittest.TestCase):
         self.assertEqual(FF.slot_name("TXF", "B"), "大單≥4000萬")
         self.assertEqual(FF.slot_name("QFF", "R"), "散戶")
         self.assertNotEqual(FF.slot_color("TXF", "B"), FF.slot_color("MXF", "B"))        # 大台大單(紅)≠小台連發(青)
-        self.assertEqual(FF.RULES_VERSION, 2)
+        self.assertEqual(FF.RULES_VERSION, 3)
 
     @staticmethod
     def _run(bursts, flush_tt=None, state_roundtrip=False):
@@ -224,3 +224,81 @@ class StreakGroupTests(unittest.TestCase):
         out = self._run([self._b(10 + i * 0.5) for i in range(3)] + [self._b(11.5), self._b(12.0)], state_roundtrip=True)
         self.assertEqual(len(out), 5)
         self.assertTrue(all(s for _, s in out))                                # 中途存檔再讀回,仍能湊滿 5 筆確認
+
+
+class WindowStreakTests(unittest.TestCase):
+    """5 秒窗連次(小哥口徑,只對大台)。"""
+
+    @staticmethod
+    def _b(t, side=1, lots=3, stype="day", T="2026-10-19"):
+        return FF.Burst("FUTURE" if stype == "day" else "FUTURE_AH", side, int(t * 1e6), stype, T, 540, lots, 1.0, 1.0)
+
+    def _run(self, bursts, flush_all=True):
+        w = FF.WindowStreak()
+        for b in bursts:
+            w.add(b)
+        if flush_all:
+            w.flush_all()
+        return w
+
+    def test_lit_at_ten_and_turn_on_opposite_window(self):
+        bs = [self._b(100 + i * 5 + 1) for i in range(12)] + [self._b(100 + 12 * 5 + 1, side=-1)]
+        s = self._run(bs).snapshot()[("day", "2026-10-19")]
+        self.assertEqual(s["lits"], [[150, 1, 10]])                      # 第 10 個紅窗結算(窗末 150 秒)時亮燈
+        self.assertEqual(s["turns"], [[165, -1, 12]])                    # 第 13 窗反向 → 轉綠,前段 12 窗
+        self.assertEqual((s["n"], s["d"]), (1, -1))
+
+    def test_tie_breaks_and_empty_windows_are_skipped(self):
+        # 窗0、窗1 紅;窗2 無成交(跳過,不中斷);窗3 紅 → 連次 3
+        s = self._run([self._b(1), self._b(6), self._b(16)]).snapshot()[("day", "2026-10-19")]
+        self.assertEqual(s["n"], 3)
+        # 窗內買=賣 → 平手中斷
+        s = self._run([self._b(1, 1, 3), self._b(2, -1, 3), self._b(6, 1, 3)]).snapshot()[("day", "2026-10-19")]
+        self.assertEqual((s["n"], s["d"]), (1, 1))
+
+    def test_dominant_lots_is_last_window_only(self):
+        s = self._run([self._b(1, 1, 5), self._b(6, 1, 9), self._b(7, -1, 2)]).snapshot()[("day", "2026-10-19")]
+        self.assertEqual(s["last_dom"], 9)                                # 連量=最近一窗的主導方向口數(9 買 vs 2 賣 → 9)
+        self.assertEqual(s["seg"], 14)                                    # 本段累計(各窗主導口數加總)
+
+    def test_cooldown_between_lights(self):
+        bs = [self._b(i * 5 + 1) for i in range(24)]                      # 一串 24 窗:只在第 10 窗亮一次
+        self.assertEqual(len(self._run(bs).snapshot()[("day", "2026-10-19")]["lits"]), 1)
+        # 紅串 12 窗 → 綠 → 又紅 12 窗(間隔不到 300 秒)→ 第二次亮燈被冷卻擋掉
+        bs = [self._b(i * 5 + 1) for i in range(12)] + [self._b(60 + 1, -1)] + [self._b(65 + i * 5 + 1) for i in range(12)]
+        self.assertEqual(len(self._run(bs).snapshot()[("day", "2026-10-19")]["lits"]), 1)
+
+    def test_settle_waits_for_late_bursts(self):
+        w = FF.WindowStreak()
+        w.add(self._b(1))
+        w.flush({"FUTURE": int(6e6)})                                     # 窗 0 結束於 5 秒,但還要等 3 秒才結算
+        self.assertNotIn(("day", "2026-10-19"), w.st)
+        w.add(self._b(4, -1, 5))                                          # 稍晚才輸出的賣方爆發,仍屬窗 0 → 賣 5 > 買 3
+        w.flush({"FUTURE": int(8.5e6)})
+        self.assertEqual(w.st[("day", "2026-10-19")]["d"], -1)
+
+    def test_batch_equals_live(self):
+        import random
+        rnd = random.Random(7)
+        bs = [self._b(i * 0.9 + rnd.random(), rnd.choice((1, 1, 1, -1)), rnd.randint(1, 6)) for i in range(2500)]
+        batch = self._run(bs).snapshot()
+        live = FF.WindowStreak()
+        last = None
+        for b in bs:
+            live.add(b)
+            last = b.trade_time
+            live.flush({"FUTURE": last})                                  # 邊餵邊結算
+        live.flush_all()
+        self.assertEqual(batch, live.snapshot())
+
+    def test_state_roundtrip(self):
+        w = self._run([self._b(i * 5 + 1) for i in range(11)] + [self._b(60 + 1)], flush_all=False)
+        w.flush({"FUTURE": int(70e6)})
+        w2 = FF.WindowStreak()
+        w2.load_state(json.loads(json.dumps(w.to_state())))
+        self.assertEqual(w.snapshot(), w2.snapshot())
+        self.assertEqual({k: v for k, v in w.win.items() if v}, {k: v for k, v in w2.win.items() if v})   # 空窗表不存檔
+
+    def test_night_and_day_states_are_separate(self):
+        s = self._run([self._b(1, stype="day"), self._b(1, stype="night", T="2026-10-19")]).snapshot()
+        self.assertEqual(set(s), {("day", "2026-10-19"), ("night", "2026-10-19")})

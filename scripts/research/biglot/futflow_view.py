@@ -78,9 +78,13 @@ class Book:
         self.merger = FF.BurstMerger(self.pv, self._on_burst, streaming=True)
         # 指數期貨需要『連發』標記(延遲確認 3~8 秒);台積電期貨純名目分組,不需要
         self.tagger = FF.StreakTagger(self._on_tagged) if root in FF.STREAK_ROOTS else None
+        # 連次/連量(5 秒窗,小哥口徑):目前只對大台(小台/微台每天亮 12~17 次且無訊號,見 futures_flow.WindowStreak)
+        self.wstreak = FF.WindowStreak() if root == FF.STREAK_ROOT else None
         self.last_ts = ""
 
     def _on_burst(self, b):
+        if self.wstreak is not None:
+            self.wstreak.add(b)
         if self.tagger is not None:
             self.tagger.add(b)                 # 類別確定後才呼叫 _on_tagged
         else:
@@ -98,6 +102,8 @@ class Book:
         self.merger.flush_old()
         if self.tagger is not None:
             self.tagger.flush_old(self.merger.last_tt)
+        if self.wstreak is not None:
+            self.wstreak.flush(self.merger.last_tt)
 
     def feed_line(self, line, file_date, file_key=None):
         t = self.stream.feed(line, file_date, file_key)
@@ -123,6 +129,7 @@ class Book:
                 "last_ts": self.last_ts, "last_tt": self.merger.last_tt,
                 "open": {f"{k[0]}|{k[1]}": v for k, v in self.merger.open.items()},
                 "streak": self.tagger.to_state() if self.tagger is not None else {},
+                "wstreak": self.wstreak.to_state() if self.wstreak is not None else {},
                 "sessions": {f"{k[0]}|{k[1]}": {str(m): bar for m, bar in self.sessions[k].items()} for k in keys}}
 
     @classmethod
@@ -141,6 +148,8 @@ class Book:
                 b.merger.open[(qt, int(side))] = v
             if b.tagger is not None:
                 b.tagger.load_state(st.get("streak"))
+            if b.wstreak is not None:
+                b.wstreak.load_state(st.get("wstreak"))
             for k, bars in st["sessions"].items():
                 stype, T = k.split("|")
                 b.sessions[(stype, T)] = {int(m): bar for m, bar in bars.items()}
@@ -818,6 +827,46 @@ def _parse_sel(sel):
     return sel, False
 
 
+def _wstreak_block(ws, cur, in_session):
+    """大台『連次/連量』描述欄(5 秒窗,小哥口徑)。ws=該盤別的狀態快照或 None。純描述,不進分數、不是訊號。"""
+    st = (ws or {}).get(cur)
+    o = ["<div class='sect'>連次／連量(5 秒窗 · 小哥口徑 · 純描述)</div>"]
+    if not st or st["last_end"] is None:
+        o.append("<div class='meta'>本盤尚無已結算的 5 秒窗</div>")
+    else:
+        n, d = st["n"], st["d"]
+        sn = n * d
+        col = _cls(sn)
+        lit = "🔔 " if n >= FF.STREAK_LIGHT else ""
+        face = "外盤攻(紅)" if d > 0 else ("內盤攻(綠)" if d < 0 else "—")
+
+        def _hm(t):
+            return dt.datetime.fromtimestamp(t, dt.timezone(dt.timedelta(hours=8))).strftime("%H:%M:%S")
+        lits = st["lits"]; turns = st["turns"]
+        last_l = f"{_hm(lits[-1][0])} {'紅' if lits[-1][1] > 0 else '綠'}" if lits else "—"
+        last_t = f"{_hm(turns[-1][0])} 轉{'紅' if turns[-1][1] > 0 else ('綠' if turns[-1][1] < 0 else '平')}(前段 {turns[-1][2]} 窗)" if turns else "—"
+        o.append("<div class='wrap'><table><thead><tr>"
+                 + _th("連次", "窗", "目前連續同向的 5 秒窗數;紅(+)=外盤量>內盤量、綠(−)=內盤量>外盤量;平手中斷、無成交窗跳過")
+                 + _th("連量", "口", "最近一個已結算 5 秒窗的主導方向成交口數(小哥口徑:單窗,不是整段累計)")
+                 + _th("本段累計", "口", "本次連攻段各窗主導方向口數加總(我們附的,非小哥口徑)")
+                 + _th("本盤亮燈", "次", f"|連次|≥{FF.STREAK_LIGHT} 的次數(同盤別 {FF.LIGHT_COOLDOWN:.0f} 秒內不重複計)")
+                 + _th("最近亮燈", "時間")
+                 + _th("最近轉色", "時間", "連攻段(≥10 窗)被反向窗打斷的時刻")
+                 + "</tr></thead><tbody><tr>"
+                 f"<td class='{col}'>{lit}{sn:+d} <span class='dim'>{face}</span></td>"
+                 f"<td>{st['last_dom']:,.0f}</td><td>{st['seg']:,.0f}</td><td>{len(lits)}</td>"
+                 f"<td class='dim'>{last_l}</td><td class='dim'>{last_t}</td></tr></tbody></table></div>")
+    o.append("<div class='disc'><b>連次／連量:口徑與證據</b><br>"
+             "· 定義(小哥公開口徑):每 5 秒窗,外盤量&gt;內盤量=+1(紅)、內&gt;外=−1(綠),平手中斷、無成交窗跳過;連次=連續同向窗數,達 ±10 亮燈;連量=最近一窗主導方向口數。窗結束後再等 3 秒才結算,所以最新數字會晚約 3~8 秒。<br>"
+             "· <b>只放大台</b>:小台、微台在 2026-10 探索期(36 個日盤)連次≥10 每天亮 12~17 次(燈天天亮),且亮燈/轉色/連量高低各視窗都沒有訊號;大台每天約 6 次。<br>"
+             "· <b>探索結果(大台,36 個日盤,未預註冊)</b>:連次達 10 亮燈後,價格傾向反向——5/10/15 分鐘平均 −2.3/−3.3/−5.0 bps(連次 5 無效、15 更強);前後半段同號、75% 的交易日同向、連量大小無差(股票版『連量越大越回吐』在期貨不成立)。"
+             "⚠ 約 150 個組合中挑出、亮燈與轉色是同一批串,<b>不是兩次獨立證據</b>;成本為假設值。<br>"
+             "· 預先登記:<code>docs/futures-streak-prereg-20261019.md</code>(只有 2026-10-19 起的盤別計入確認);評估腳本 <code>scripts/research/futures_streak_prereg_eval.py</code>。在確認期結論出來前,這只是描述欄。<br>"
+             + ("· 夜盤:探索期只檢驗日盤,夜盤的連次僅供參考。<br>" if cur[0] == "night" else "")
+             + "· <span class='warnv'>⚠</span> 不進任何分數、不是進場訊號、不接下單層。</div>")
+    return "".join(o)
+
+
 def _disc(root, S):
     """依品牌產生『口徑與限制』說明。所有數字都來自 2026-10-19 的探索分析(記憶 futflow-tier-redundancy-20261019)。"""
     big_lots = int(BIG_AMT / (PV[root] * (S["close"] or 47000))) + 1
@@ -859,6 +908,7 @@ def _body(root, sel):
         book = _BOOKS.get(root)
         sessions = {k: dict(v) for k, v in book.sessions.items() if v} if book else {}
         last_ts = book.last_ts if book else ""
+        wsnap = book.wstreak.snapshot() if (book and book.wstreak is not None) else None
     keys = sorted(sessions, key=lambda k: (k[1], 0 if k[0] == "day" else 1))
     # 殘留(<20 根分鐘,例如週末檔的零星重送)不列;但最新的盤別即使剛開盤也要列,才能在開盤後立刻切過去
     order = [k for k in keys if len(sessions[k]) >= 20 or (k == keys[-1] and len(sessions[k]) >= 2 and _is_active(k))]
@@ -895,6 +945,8 @@ def _body(root, sel):
              f"(<span class='{_cls(chg)}'>{chg:+.2f}%</span>) · 成交 {S['vol']:,} 口 · 成交額 {S['amt'] / 1e8:,.1f} 億 {' '.join(flags)}</div>")
     o.append("<div class='sect'>本盤／5分／30分 主動買賣</div>")
     o.append(_summary_table(S, pct))
+    if wsnap is not None:
+        o.append(_wstreak_block(wsnap, cur, in_session))
     if root == "MXF":                              # 小台持倉估計:只對應期交所 MTX,微台沒有校準
         o.append(MP.render_block(MP.estimate(sessions), html_mod.escape))
     o.append("<div class='sect'>價格與累計淨額(疊圖)</div>")

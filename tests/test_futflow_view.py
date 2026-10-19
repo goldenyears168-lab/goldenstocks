@@ -346,6 +346,35 @@ class FutFlowGoldenTests(unittest.TestCase):
         self.assertEqual(F.groups("TXF"), ("B", "C", "M", "R"))
         self.assertEqual(F.groups("MXF"), ("B", "M", "R"))
 
+    def test_txf_has_streak_block_and_others_do_not(self):
+        import futures_flow as FFm
+        b = F.Book("TXF")
+        b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
+        b.last_ts = "2026-10-07T09:29:50.000+08:00"
+        for i in range(12):                                                 # 12 個連續紅窗 → 亮燈
+            b.wstreak.add(FFm.Burst("FUTURE", 1, int((1_000_000 + i * 5 + 1) * 1e6), "day", "2026-10-07", 540, 3, 1.0, 47000.0))
+        b.wstreak.flush_all()
+        F._BOOKS["TXF"] = b
+        html, _ = F._body("TXF", "")
+        for needle in ("連次／連量(5 秒窗", "🔔", "+12", "預先登記", "futures-streak-prereg-20261019", "只放大台"):
+            self.assertIn(needle, html, needle)
+        mxf, _ = F._body("MXF", "")
+        self.assertNotIn("連次／連量(5 秒窗", mxf)                           # 小台/微台不顯示(每天亮燈 12~17 次且無訊號)
+        self.assertIsNone(F.Book("MXF").wstreak)
+        self.assertIsNone(F.Book("TMF").wstreak)
+
+    def test_streak_state_survives_checkpoint(self):
+        import json as _j
+        import futures_flow as FFm
+        b = F.Book("TXF")
+        for i in range(11):
+            b.wstreak.add(FFm.Burst("FUTURE", 1, int((2_000_000 + i * 5 + 1) * 1e6), "day", "2026-10-07", 540, 3, 1.0, 47000.0))
+        b.wstreak.flush({"FUTURE": int((2_000_000 + 80) * 1e6)})
+        st = _j.loads(_j.dumps(b.to_state()))
+        b2 = F.Book.from_state("TXF", st)
+        self.assertIsNotNone(b2)
+        self.assertEqual(b.wstreak.snapshot(), b2.wstreak.snapshot())
+
     def test_health_shape(self):
         from biglot import health as H
         h = H.health()

@@ -18,8 +18,9 @@ import datetime as dt
 import json
 from typing import Callable, NamedTuple, Optional
 
-RULES_VERSION = 2        # 解析/分組規則一改就加 1;落地的檢查點(checkpoint)帶這個版本,不一致就丟掉重建
+RULES_VERSION = 3        # 解析/分組規則一改就加 1;落地的檢查點(checkpoint)帶這個版本,不一致就丟掉重建
 #                          v2(2026-10-19):指數期貨改『每品牌各自的分組』+ 1 口連發(延遲確認),見 group_for / StreakTagger
+#                          v3(2026-10-19):大台加『連次/連量』(5 秒窗,小哥口徑),見 WindowStreak
 
 PV = {"TXF": 200, "MXF": 50, "TMF": 10, "CDF": 2000, "QFF": 100}    # 每點新台幣(個股期貨=每口股數:台積電標準 2000、小型 100)
 DAY0, DAY1 = 8 * 3600 + 45 * 60, 13 * 3600 + 45 * 60
@@ -313,3 +314,103 @@ class StreakTagger:
         for k, r in (st or {}).items():
             qt, side = k.split("|")
             self.runs[(qt, int(side))] = [r[0], float(r[1]), int(r[2]), bool(r[3]), [Burst(*m) for m in r[4]]]
+
+
+# ======================================================================================================
+# 連次／連量(小哥口徑,5 秒窗)—— 2026-10-19,只對大台使用
+# 定義(docs/exhaustion-streak-spec.md,官方說明欄):每 5 秒一個窗,外盤(主動買)量 > 內盤(主動賣)量 → +1(紅);
+# 內 > 外 → −1(綠);平手中斷;無成交的窗跳過(不計、不中斷)。連次 = 連續同向窗數,|連次| ≥ 10 亮燈;
+# 連量 = 最近一個已結算窗的主導方向張數。轉色 = 連攻段(≥10)被反向窗打斷,在該窗結算時觸發。
+# 為什麼只有大台:2026-10-19 探索(36 個日盤)——小台/微台的 |連次|≥10 每天亮 12~17 次且各視窗都沒有訊號;
+# 大台每天 6 次,亮燈後 5/10/15 分鐘平均反向 −2.3/−3.3/−5.0 bps(探索,待預註冊確認,見
+# docs/futures-streak-prereg-20261019.md)。這是『描述欄』,不進分數、不是訊號。
+# ======================================================================================================
+WINDOW_SEC = 5
+STREAK_LIGHT = 10            # |連次| ≥ 10 亮燈
+LIGHT_COOLDOWN = 300.0       # 同一盤別內,兩次亮燈(或兩次轉色)至少間隔 300 秒才記錄
+WINDOW_SETTLE = 3.0          # 窗結束後再等 3 秒才結算:買、賣兩側爆發的輸出時間可差約 2 秒,避免窗未收齊就結算
+STREAK_ROOT = "TXF"          # 目前只在大台顯示(見上)
+
+
+class WindowStreak:
+    """5 秒窗連次狀態機。`add(burst)` 把爆發單累進所屬窗;`flush(last_tt)` 結算已確定收齊的窗並更新連次。
+
+    與頁面、預註冊評估腳本共用同一份邏輯(批次評估把所有爆發單餵完後 `flush_all()`,結果與即時一致)。
+    狀態以盤別 (stype, T) 分開;日盤用 FUTURE 流的時間、夜盤用 FUTURE_AH 流的時間判斷窗是否已收齊。
+    """
+
+    QT = {"day": "FUTURE", "night": "FUTURE_AH"}
+
+    def __init__(self):
+        self.win: dict = {}       # (stype, T) → {窗編號: [買張, 賣張]}  尚未結算
+        self.st: dict = {}        # (stype, T) → 連次狀態(見 _new_state)
+
+    @staticmethod
+    def _new_state() -> dict:
+        return {"n": 0, "d": 0, "last_dom": 0.0, "seg": 0.0, "last_end": None,
+                "lit_t": -1e18, "turn_t": -1e18, "lits": [], "turns": []}   # lits/turns:[結算時刻(epoch 秒), 方向, 連次]
+
+    def add(self, b: "Burst") -> None:
+        if b.trade_time is None or b.side == 0:
+            return
+        wid = int((b.trade_time / 1e6) // WINDOW_SEC)
+        w = self.win.setdefault((b.stype, b.T), {}).setdefault(wid, [0, 0])
+        w[0 if b.side > 0 else 1] += b.lots
+
+    def _settle(self, key, wid: int, w: list) -> None:
+        st = self.st.setdefault(key, self._new_state())
+        end = (wid + 1) * WINDOW_SEC
+        buy, sell = w
+        dom = float(max(buy, sell))
+        d = (buy > sell) - (buy < sell)
+        st["last_dom"], st["last_end"] = dom, end
+        if d == 0:                                       # 平手:中斷
+            if st["n"] >= STREAK_LIGHT and end - st["turn_t"] >= LIGHT_COOLDOWN:
+                st["turns"].append([end, 0, st["n"]])
+                st["turn_t"] = end
+            st["n"], st["d"], st["seg"] = 0, 0, 0.0
+            return
+        if d == st["d"]:
+            st["n"] += 1
+            st["seg"] += dom
+            if st["n"] == STREAK_LIGHT and end - st["lit_t"] >= LIGHT_COOLDOWN:
+                st["lits"].append([end, d, st["n"]])
+                st["lit_t"] = end
+            return
+        if st["n"] >= STREAK_LIGHT and end - st["turn_t"] >= LIGHT_COOLDOWN:
+            st["turns"].append([end, d, st["n"]])        # 方向=新顏色(連攻段被打斷後的第一個反向窗)
+            st["turn_t"] = end
+        st["n"], st["d"], st["seg"] = 1, d, dom
+
+    def flush(self, last_tt: dict) -> None:
+        for key in list(self.win):
+            now = last_tt.get(self.QT.get(key[0], "FUTURE"))
+            if now is None:
+                continue
+            now /= 1e6
+            ws = self.win[key]
+            for wid in sorted(w for w in ws if (w + 1) * WINDOW_SEC + WINDOW_SETTLE <= now):
+                self._settle(key, wid, ws.pop(wid))
+
+    def flush_all(self) -> None:
+        for key in list(self.win):
+            ws = self.win[key]
+            for wid in sorted(ws):
+                self._settle(key, wid, ws.pop(wid))
+
+    def snapshot(self) -> dict:
+        """給頁面讀的複本:{(stype,T): 狀態}。"""
+        return {k: {**v, "lits": [list(x) for x in v["lits"]], "turns": [list(x) for x in v["turns"]]} for k, v in self.st.items()}
+
+    def to_state(self, keep: int = 24) -> dict:
+        ks = sorted(set(self.st) | set(self.win), key=lambda k: (k[1], 0 if k[0] == "day" else 1))[-keep:]
+        return {"st": {f"{k[0]}|{k[1]}": self.st[k] for k in ks if k in self.st},
+                "win": {f"{k[0]}|{k[1]}": {str(w): v for w, v in self.win[k].items()} for k in ks if self.win.get(k)}}
+
+    def load_state(self, state: dict) -> None:
+        for k, v in ((state or {}).get("st") or {}).items():
+            stype, T = k.split("|")
+            self.st[(stype, T)] = {**self._new_state(), **v}
+        for k, v in ((state or {}).get("win") or {}).items():
+            stype, T = k.split("|")
+            self.win[(stype, T)] = {int(w): list(x) for w, x in v.items()}
