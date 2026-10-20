@@ -1239,6 +1239,14 @@ jobs:
     schedule: "weekdays 19:40"
     description: "小哥籌碼每日抓取＋筆記本 · scripts/launchd/xiaoge-chip-daily.command · 富邦分點頁（流動性前 579 檔個股頁＋全部活躍分點頁，~35 分鐘）→ ${DATA}/chip/xiaoge/<日期>/*.parquet，再產生 ${DATA}/chip/xiaoge_notebook/notebook_<日期>.json 供 8771 /xiaoge 讀 · 唯讀 stocks.db、不寫正本、不碰下單層 · 富邦未就緒(rc=3)每 10 分鐘重試 ≤6 次 · .env RUN_XIAOGE_CHIP_DAILY=0 可停 · 與 branch-tape-prewarm(16:30/18:30) 錯開 · 設計見 docs/warrant-xiaoge/research-system-plan.md"
 
+  - label: xiaoge-inventory
+    category: health
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-10-21"
+    schedule: "weekdays 21:30"
+    description: "小哥盤點 · scripts/launchd/xiaoge-inventory.command · scripts/ops/xiaoge_inventory.py 把書中戰法(M01–M08：開布林/窄帶寬/多頭區間/高檔出貨/地板股/關鍵分點低檔/隔日沖短空/純空頭)逐一檢查當日是否重現 → ${DATA}/chip/xiaoge_inventory/inventory_<日>.json/.md，再由 headless claude -p (sonnet, cwd=資料目錄套 CLAUDE.md 護欄) 解讀成 _ai.md · 判準 SSOT: scripts/launchd/xiaoge-inventory-prompt.txt · 唯讀 stocks.db、不下單 · .env RUN_XIAOGE_INVENTORY=0 全停、RUN_XIAOGE_INVENTORY_AI=0 只停 AI 步驟 · 規格見 docs/warrant-xiaoge/daily-inventory-spec.md"
+
   - label: umc-night-forward-recorder
     category: research
     order_capable: false

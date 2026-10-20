@@ -66,19 +66,20 @@ class FutFlowSummaryTests(unittest.TestCase):
         b.flush()
         return b
 
-    def test_amount_and_windows(self):
+    def test_summarize_cumulative_in_yi(self):
         b = self._book()
         S = F.summarize(b.sessions[("day", "2026-10-14")], "MXF")
         self.assertEqual(S["root"], "MXF")
-        self.assertEqual(S["vol"], 7)
-        self.assertAlmostEqual(S["amt"], 7 * 50 * 47000)
-        t = S["full"]["tot"]
-        self.assertEqual(t["R"]["bl"], 1)
-        self.assertEqual(t["M"]["sl"], 5)                                                # 5 口主動賣 → 其餘(非連發)
-        self.assertLess(t["M"]["bn"] - t["M"]["sn"], 0)
-        self.assertEqual(S["w5"]["vol"], 1)                                              # 最後 5 分鐘只剩 08:59 那 1 口
-        # 第一線(B=連發)此處為空 → (0 − 第二線淨額) ÷ 成交額
-        self.assertAlmostEqual(F.share_diff(S["full"]), (0 - (1 * 50 * 47000)) / S["amt"] * 100)
+        self.assertEqual(S["price"][0][1], 47000)
+        self.assertEqual(len(S["cum"]["R"]), len(S["ks"]))
+        self.assertAlmostEqual(S["cum"]["R"][-1][1], 1 * 50 * 47000 / 1e8)               # 零星單口 1 口外盤 → +0.0235 億
+        self.assertLess(S["cum"]["M"][-1][1], 0)                                         # 5 口內盤 → 中單淨額為負
+        self.assertEqual(S["cum"]["B"][-1][1], 0)                                        # 沒有連續單口
+
+    def test_yi_format(self):
+        self.assertEqual(F._yi(17.33), "+17.3億")
+        self.assertEqual(F._yi(-0.0391), "-0.04億")
+        self.assertEqual(F._yi(1234.5, sign=False), "1,234.5億")
 
     def test_market_status(self):
         D = dt.datetime
@@ -93,46 +94,6 @@ class FutFlowSummaryTests(unittest.TestCase):
         self.assertEqual(F._nice_step(20), 5)
         self.assertEqual(F._nice_step(300), 60)
         self.assertEqual(F._nice_step(840), 120)
-
-
-class FutFlowPercentileTests(unittest.TestCase):
-    def test_pct_rank(self):
-        self.assertEqual(F._pct_rank(5, [1, 2, 3, 4]), 100.0)
-        self.assertEqual(F._pct_rank(0, [1, 2, 3, 4]), 0.0)
-        self.assertEqual(F._pct_rank(2, [1, 2, 3]), (1 + 0.5) / 3 * 100)
-        self.assertIsNone(F._pct_rank(1, []))
-
-    def _sess(self, net_wan_per_min, minutes=30):
-        """合成一個盤別:每分鐘大戶買 net_wan_per_min 萬(其他為 0)。"""
-        bars = {}
-        for i in range(minutes):
-            b = F._new_bar(47000)
-            b["bn"]["B"] = net_wan_per_min * F.WAN
-            b["bl"]["B"] = 1
-            b["vol"] = 1
-            b["amt"] = 10 * F.WAN
-            bars[540 + i] = b
-        return bars
-
-    def test_percentiles_same_elapsed_and_min_prior(self):
-        sessions = {("day", f"2026-10-{d:02d}"): self._sess(d) for d in range(1, 9)}   # 8 個歷史盤別,大戶淨額隨日期增加
-        cur_key = ("day", "2026-10-09")
-        sessions[cur_key] = self._sess(100)                                          # 比所有歷史都高
-        order = sorted(sessions, key=lambda k: k[1])
-        p = F.percentiles(sessions[cur_key], cur_key, sessions, order)
-        self.assertEqual(p["n"], 8)
-        self.assertEqual(p["B"], 100.0)
-        # 歷史不足 5 個 → 只回 n
-        few = {k: v for k, v in sessions.items() if k[1] in ("2026-10-01", "2026-10-02", "2026-10-09")}
-        p2 = F.percentiles(few[cur_key], cur_key, few, sorted(few, key=lambda k: k[1]))
-        self.assertEqual(p2, {"n": 2})
-
-    def test_incomplete_history_excluded(self):
-        sessions = {("day", f"2026-10-{d:02d}"): self._sess(d, minutes=5 if d == 1 else 30) for d in range(1, 8)}
-        cur_key = ("day", "2026-10-09")
-        sessions[cur_key] = self._sess(3)
-        order = sorted(sessions, key=lambda k: k[1])
-        self.assertEqual(F.percentiles(sessions[cur_key], cur_key, sessions, order)["n"], 6)   # 10-01 只有 5 分鐘,不比
 
 
 class FutFlowStreakBookTests(unittest.TestCase):
@@ -247,9 +208,7 @@ def _synthetic_session(k, minutes=30):
 
 
 class FutFlowGoldenTests(unittest.TestCase):
-    """凍結時間與合成資料,整段頁面片段與 tests/golden 逐字比對:改 HTML/CSS 結構時會失敗,迫使你有意識地更新基準(UPDATE_GOLDEN=1)。"""
-
-    GOLDEN = Path(__file__).resolve().parent / "golden" / "futflow_mxf_body.html"
+    """凍結時間與合成資料,驗證每天一頁的版面(只放圖、日盤＋夜盤、各品牌兩張圖)。"""
 
     def setUp(self):
         import os
@@ -258,9 +217,6 @@ class FutFlowGoldenTests(unittest.TestCase):
         self._saved = (F._BOOKS.copy(), dict(F._LOADING), F._now, F._files, F.CKPT_DIR)
         F._files = lambda root: []
         F.CKPT_DIR = Path(self._tmp.name)
-        self._csv = F.MP.CSV_PATH                                          # 小台持倉估計讀的基準檔也要隔離,否則輸出會隨正式機檔案與日期變動
-        F.MP.CSV_PATH = Path(self._tmp.name) / "mtx_retail_ratio.csv"
-        F.MP.CSV_PATH.write_text("date,total_oi,inst_net_oi\n2026-10-07,40000,-8000\n", encoding="utf-8")
         import types
         self._bd = sys.modules.get("biglot_dashboard")                     # 以空殼取代,避免 import 整個儀表板(會載入資料、約 27 秒)
         sys.modules["biglot_dashboard"] = types.SimpleNamespace(TABLE_CSS="body{}")
@@ -271,35 +227,15 @@ class FutFlowGoldenTests(unittest.TestCase):
         F._BOOKS.clear(); F._BOOKS["MXF"] = book
         F._LOADING.update({"started": True, "done": True, "err": ""})
         F._now = lambda: dt.datetime(2026, 10, 7, 9, 30, 0)                 # 週三 09:30,日盤進行中
-        self._upd = os.environ.get("UPDATE_GOLDEN") == "1"
 
     def tearDown(self):
         F._BOOKS.clear(); F._BOOKS.update(self._saved[0]); F._LOADING.clear(); F._LOADING.update(self._saved[1])
         F._now, F._files, F.CKPT_DIR = self._saved[2], self._saved[3], self._saved[4]
-        F.MP.CSV_PATH = self._csv
         self._tmp.cleanup()
         if self._bd is None:
             sys.modules.pop("biglot_dashboard", None)
         else:
             sys.modules["biglot_dashboard"] = self._bd
-
-    def test_linked_page_renders_with_tsmc(self):
-        for r in ("QFF", "CDF"):                                                    # 台積電期貨用同一份合成盤別(只驗版面與不當機)
-            b = F.Book(r)
-            b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
-            b.last_ts = "2026-10-07T09:29:50.000+08:00"
-            F._BOOKS[r] = b
-        html, live = F._body("ALL", "")
-        self.assertTrue(live)
-        for needle in ("期貨聯動", "MXF", "QFF", "CDF", "台積電合計", "相對開盤報酬", "第一線累計淨額", "1口連發", "孤立單口", "root=ALL"):
-            self.assertIn(needle, html)
-        self.assertEqual(F.render_futflow("ALL", "").count("id='ffapp'"), 1)       # 整頁入口也接受 ALL
-        self.assertEqual(F._body("all", "day|2026-10-03")[1], False)                # 固定歷史盤別不輪詢
-
-    def test_linked_page_without_tsmc_data(self):
-        html, _ = F._body("ALL", "")                                                # 只有 MXF 時不應出錯,也不顯示台積電合計
-        self.assertIn("MXF", html)
-        self.assertNotIn("台積電合計", html)
 
     def test_health_overall_ignores_thin_tsmc(self):
         from biglot import health as H
@@ -310,58 +246,69 @@ class FutFlowGoldenTests(unittest.TestCase):
         self.assertEqual(h["futflow"]["CDF"]["freshness"], "stale")                 # 仍如實回報
         self.assertEqual(h["overall"], "fresh")                                     # 但不影響整體判斷
 
-    def test_body_matches_golden(self):
-        html, live = F._body("MXF", "")
-        self.assertTrue(live)
-        self.assertIn("日盤進行中", html)
-        self.assertIn("P", html)                                                   # 有百分位欄
-        if self._upd or not self.GOLDEN.exists():
-            self.GOLDEN.write_text(html, encoding="utf-8")
-        self.assertEqual(html, self.GOLDEN.read_text(encoding="utf-8"))
-
-    def test_per_root_definitions_and_adj_toggle(self):
+    def _two_roots(self):
         for r in ("TMF", "TXF"):
             b = F.Book(r)
             b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
             b.last_ts = "2026-10-07T09:29:50.000+08:00"
             F._BOOKS[r] = b
-        names = {"MXF": ("1口連發", "孤立單口"), "TMF": ("1口連發", "孤立單口"), "TXF": ("大單≥4000萬", "1口連發", "孤立單口")}
-        for r, need in names.items():
-            html, _ = F._body(r, "")
-            for n in need:
-                self.assertIn(n, html, (r, n))
-            self.assertNotIn(">散戶</td>", html, r)                                      # 表格列不再用舊的『散戶』稱呼
-            self.assertNotIn(">大單</td>", html.replace("大單≥4000萬", ""), r)
-            self.assertIn("原始淨額", html)
-            self.assertIn("扣價格殘差", html)
-            self.assertIn("data-g=", html)
-        adj, _ = F._body("MXF", "day|2026-10-07|adj")
-        self.assertIn("扣價格", adj)
-        self.assertIn("累計殘差", adj)
-        self.assertEqual(F._parse_sel("day|2026-10-07|adj"), ("day|2026-10-07", True))
-        self.assertEqual(F._parse_sel("adj"), ("", True))
-        self.assertEqual(F._parse_sel("day|2026-10-07"), ("day|2026-10-07", False))
-        self.assertEqual(F._body("MXF", "adj")[0].count("<svg"), 1)
-        # 大台第三條線:四個槽位都顯示
+
+    def test_day_page_has_only_charts_for_all_brands(self):
+        self._two_roots()
+        for r in ("QFF", "CDF"):                                                    # 台積電期貨用同一份合成盤別(只驗版面與不當機)
+            b = F.Book(r)
+            b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
+            F._BOOKS[r] = b
+        page = F.render_futflow("MXF", "")
+        self.assertEqual(page.count("<svg"), 2 + 5 * 2)                             # 聯動 2 張 + 5 個品牌各 2 張(原始、扣價格)
+        for needle in ("TXF", "MXF", "TMF", "CDF", "QFF", "連續單口", "零星單口", "大單≥4000萬", "累計內外盤差", "扣掉價格影響", "相對開盤漲跌(%)", "10/07(三)"):
+            self.assertIn(needle, page, needle)
+        for gone in ("<table", "百分位", "口徑與限制", "逐 5 分鐘", "散戶淨部位", "bps", "萬元", "1口連發", "孤立單口"):
+            self.assertNotIn(gone, page, gone)                                      # 表格/說明區塊/舊名詞/混用單位都不再出現
+
+    def test_one_page_per_day_navigation(self):
+        book = F._BOOKS["MXF"]
+        book.sessions[("night", "2026-10-06")] = _synthetic_session(6)
+        page = F.render_futflow("MXF", "2026-10-06")
+        self.assertIn("10/06(二)", page)
+        self.assertIn("href='/futflow?s=2026-10-07'", page)                          # 下一日
+        self.assertIn("10/06 15:00 → 10/07 05:00 夜盤", page)
+        self.assertIn("10/07(三)", F.render_futflow("MXF", ""))                      # 預設=最新一天
+        self.assertIn("10/03(六)", F.render_futflow("MXF", "day|2026-10-03"))        # 舊連結格式導向該日
+        self.assertIn("10/07(三)", F.render_futflow("MXF", "2099-01-01"))            # 不存在的日期退回最新
+
+    def test_live_only_for_active_session(self):
+        page = F.render_futflow("MXF", "")
+        self.assertIn("/assets/live.js", page)
+        self.assertIn("data-live='1'", page)
+        self.assertIn("data-u='/futflowfrag?s=day|2026-10-07'", page)
+        self.assertIn("data-live='0'", F.render_futflow("MXF", "2026-10-03"))        # 歷史日不輪詢
+        frag = F.render_futflow_frag("MXF", "day|2026-10-07")
+        self.assertIn("進行中", frag)
+        self.assertEqual(frag.count("<svg"), 2 + 1 * 2)                              # 只有 MXF 有資料:聯動 2 + MXF 2
+        self.assertEqual(F.render_futflow_frag("MXF", "night|2026-10-07"), "")       # 沒這個盤別
+        self.assertEqual(F.render_futflow_frag("MXF", "垃圾"), "")
+
+    def test_txf_streak_marks_only_on_txf(self):
+        import futures_flow as FFm
+        self._two_roots()
+        b = F._BOOKS["TXF"]
+        t0 = dt.datetime(2026, 10, 7, 9, 5, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp()     # 落在合成盤別 09:00~09:29 內才畫得出標注
+        for i in range(12):                                                         # 12 個連續紅窗 → 亮燈
+            b.wstreak.add(FFm.Burst("FUTURE", 1, int((t0 + i * 5 + 1) * 1e6), "day", "2026-10-07", 540, 3, 1.0, 47000.0))
+        b.wstreak.flush_all()
+        page = F.render_futflow("MXF", "")
+        self.assertIn("亮燈 紅連10", page)
+        self.assertEqual(page.count("連次達 10 亮燈"), 1)                            # 說明列只掛在大台原始圖下,小台微台沒有
+        self.assertNotIn("連次／連量(5 秒窗", page)                                    # 連次表格已移除
+
+    def test_names_use_taiwan_futures_terms(self):
+        import futures_flow as FFm
+        self.assertEqual(FFm.slot_name("MXF", "B"), "連續單口")
+        self.assertEqual(FFm.slot_name("MXF", "R"), "零星單口")
+        self.assertEqual(FFm.slot_name("TXF", "M"), "中單")
         self.assertEqual(F.groups("TXF"), ("B", "C", "M", "R"))
         self.assertEqual(F.groups("MXF"), ("B", "M", "R"))
-
-    def test_txf_has_streak_block_and_others_do_not(self):
-        import futures_flow as FFm
-        b = F.Book("TXF")
-        b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
-        b.last_ts = "2026-10-07T09:29:50.000+08:00"
-        for i in range(12):                                                 # 12 個連續紅窗 → 亮燈
-            b.wstreak.add(FFm.Burst("FUTURE", 1, int((1_000_000 + i * 5 + 1) * 1e6), "day", "2026-10-07", 540, 3, 1.0, 47000.0))
-        b.wstreak.flush_all()
-        F._BOOKS["TXF"] = b
-        html, _ = F._body("TXF", "")
-        for needle in ("連次／連量(5 秒窗", "🔔", "+12", "預先登記", "futures-streak-prereg-20261019", "只放大台"):
-            self.assertIn(needle, html, needle)
-        mxf, _ = F._body("MXF", "")
-        self.assertNotIn("連次／連量(5 秒窗", mxf)                           # 小台/微台不顯示(每天亮燈 12~17 次且無訊號)
-        self.assertIsNone(F.Book("MXF").wstreak)
-        self.assertIsNone(F.Book("TMF").wstreak)
 
     def test_streak_state_survives_checkpoint(self):
         import json as _j
@@ -375,6 +322,46 @@ class FutFlowGoldenTests(unittest.TestCase):
         self.assertIsNotNone(b2)
         self.assertEqual(b.wstreak.snapshot(), b2.wstreak.snapshot())
 
+    def test_shadow_tick_rule_version_keeps_frozen_definition_untouched(self):
+        """凍結版（預先登記）仍丟棄買賣價之間無法判定方向的成交；影子版用 tick rule 補判後餵同一個 WindowStreak。"""
+        import json as _j
+        b = F.Book("TXF")
+        base = 1_000_000_000_000_000            # trade_time µs
+
+        def line(px, bid, ask, cv, i):
+            return _j.dumps({"ts": "2026-10-07T09:00:01.000+08:00", "root": "TXF", "symbol": "TXFJ6", "price": px, "size": 1,
+                             "bid": bid, "ask": ask, "trade_time": base + i * 1000, "cum_volume": cv, "serial": i,
+                             "quote_type": "FUTURE", "stale": False})
+        b.feed_line(line(47000, 46999, 47001, 100, 1), "2026-10-07")        # 基準列
+        b.feed_line(line(47001, 46999, 47001, 102, 2), "2026-10-07")        # ≥ask → 外盤（2 口）
+        b.feed_line(line(47002, 46999, 47003, 105, 3), "2026-10-07")        # 在買賣價之間 → 凍結版無法判定；tick rule：價高於前一筆 → 外盤（3 口）
+        self.assertEqual(b.unk[("day", "2026-10-07")], [3, 5])              # 無法判定口數／總口數
+        b.merger.flush_all(); b.merger_fill.flush_all()
+        frozen = sum(w[0] for ws in b.wstreak.win.values() for w in ws.values())
+        shadow = sum(w[0] for ws in b.wstreak_fill.win.values() for w in ws.values())
+        self.assertEqual((frozen, shadow), (2, 5))
+        st = _j.loads(_j.dumps(b.to_state()))                               # 影子狀態與無法判定統計都進檢查點
+        b2 = F.Book.from_state("TXF", st)
+        self.assertEqual(b2.unk, b.unk)
+        self.assertEqual(b2._fill_state, b._fill_state)
+        self.assertIsNone(F.Book("MXF").wstreak_fill)
+
+    def test_streak_marks_two_versions_and_flat_turn_not_drawn(self):
+        import datetime as _dt
+        tz = _dt.timezone(_dt.timedelta(hours=8))
+        e = lambda h, m, s: _dt.datetime(2026, 10, 7, h, m, s, tzinfo=tz).timestamp()   # noqa: E731
+        ws = {("day", "T"): {"lits": [[e(9, 10, 5), 1, 10]], "turns": [[e(9, 12, 0), -1, 12], [e(9, 15, 0), 0, 11]]}}
+        wf = {("day", "T"): {"lits": [[e(9, 10, 20), 1, 10]], "turns": []}}
+        marks = F._streak_marks(ws, ("day", "T"), "A") + F._streak_marks(wf, ("day", "T"), "B")
+        ks = list(range(540, 600))
+        S = {"ks": ks, "root": "TXF", "price": [(k, 47000 + k % 7) for k in ks],
+             "cum": {g: [(k, i * 10.0) for i, k in enumerate(ks)] for g in F.groups("TXF")}}
+        svg = F._overlay_svg(S, '測試圖', marks=marks)
+        self.assertIn("[凍結版]", svg)
+        self.assertIn("[補tick rule版]", svg)
+        self.assertEqual(svg.count("轉綠(前段12窗)"), 1)
+        self.assertNotIn("轉平", svg)                                       # 平手轉色不畫標記
+
     def test_health_shape(self):
         from biglot import health as H
         h = H.health()
@@ -383,9 +370,3 @@ class FutFlowGoldenTests(unittest.TestCase):
         self.assertEqual(h["futflow"]["MXF"]["sessions_loaded"], 7)
         self.assertEqual(h["futflow"]["TMF"]["freshness"], "missing")             # TMF 沒載入=交易時段內沒有資料
         self.assertEqual(h["overall"], "missing")
-
-    def test_page_wires_live_js_only_when_live(self):
-        page = F.render_futflow("MXF", "")
-        self.assertIn("/assets/live.js", page)
-        self.assertIn("data-live='1'", page)
-        self.assertIn("data-live='0'", F.render_futflow("MXF", "day|2026-10-03"))   # 固定看歷史盤別不輪詢

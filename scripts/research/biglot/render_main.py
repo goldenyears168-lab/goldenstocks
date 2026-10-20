@@ -18,8 +18,8 @@ VOLRISK_DATE 十個全域從未被任何一次 dep_graph 執行正確算進「re
 `_rb`／`_pc`／`_ds` 等區域變數，AST 掃描時特別排除）。
 
 已搬移函式一律直接從各自現在的模組 import（不經過 biglot_dashboard 屬性存取，
-因為它們不是 biglot_dashboard 自己定義的名稱）：`_cause_tags`/`_hold_update`/
-`_log_scores`/`_mini_stats`/`_mini_td`/`_oos_summary`/`_paper_summary`/
+因為它們不是 biglot_dashboard 自己定義的名稱）：`_cause_tags`/
+`_log_scores`/`_oos_summary`/`_paper_summary`/
 `_paper_update`/`_px_class`/`_rolling`/`_score_rows`/`_score_td`/
 `_shadow_triple`/`_stock_note_td`/`_tag_engine`/`_tx_panel`/`_wrt_td`。
 """
@@ -32,10 +32,14 @@ from datetime import timedelta
 
 import biglot_dashboard
 from biglot import streak_live as _streak_live
+from biglot import xiaoge_cols as _xg_cols
+from biglot import fut_basis as _fbmod
 from biglot.cause_tags import _cause_tags
 from biglot.user_state import _oos_summary, _stock_note_td
 from biglot.scoring_support import _log_scores, _rolling, _score_td, _tag_engine
+from biglot import fairvalue_live as _fv
 from biglot.story_tags import _story_td, story_tags
+
 from biglot.futures_bigflow import fut_merge_day_td
 from biglot.paper_trading import _paper_summary, _paper_update
 from biglot.utils import _px_class, _b5n, _b30n, _r30n, _rolling_now, _in_market
@@ -52,12 +56,18 @@ _KL_TIP_TAIL = ("規則:紅K∧收盤漲>前一日+4%∧收盤突破前60日最�
 from biglot.pe_and_shadow import _shadow_triple
 from biglot.tx_panel import _tx_panel
 from biglot.futures_pnl import _pnl_panel
-from biglot.html_fragments import _wrt_td
+from biglot.html_fragments import _bigret_diff_td, _wrt_td, _mark_eod_fallback
+from biglot.comovement import _comovement_td
 from stock_db import DATA_DIR
+
+
+_HL_BUY = " style='background:#1f6f43;color:#fff;padding:0 2px'"     # 合理價比賣一高≥0.5tick(持續≥3秒):賣一便宜可買
+_HL_SELL = " style='background:#8b2c2c;color:#fff;padding:0 2px'"    # 合理價比買一低≥0.5tick(持續≥3秒):買一偏高可賣
 
 
 def render():
     now = biglot_dashboard.datetime.now(biglot_dashboard.TZ)
+    _hm_now = now.strftime("%H:%M")   # 算一次給散戶背離(SMFI)的 SMFI_ACTIVE_FROM 時間閘門用,不用每檔重算
     all_bks = sorted({bk for m in biglot_dashboard.ST.buckets.values() for bk in m})
     done = [bk for bk in all_bks if bk + timedelta(minutes=5, seconds=10) <= now]
     cur = done[-1] if done else None
@@ -70,17 +80,20 @@ def render():
 
     rows, rets5, rets30 = [], [], []
     _dayrets = []
-    for sid in biglot_dashboard.NAMES:
+    for sid in [*biglot_dashboard.NAMES, *biglot_dashboard.REF_EXTRA]:
+        _is_ref = sid in biglot_dashboard.REF_SIDS
         m = biglot_dashboard.ST.buckets.get(sid, {})
         ds = biglot_dashboard.ST.day.get(sid)
         a = m.get(cur) if cur else None
         p = m.get(prev) if prev else None
-        r = {"sid": sid, "name": biglot_dashboard.NAMES[sid], "cat": biglot_dashboard.SUBCAT.get(sid, biglot_dashboard.CATS.get(sid, "")),
+        r = {"sid": sid, "name": biglot_dashboard.REF_NAMES.get(sid) or biglot_dashboard.NAMES[sid],
+             "cat": biglot_dashboard.SUBCAT.get(sid, biglot_dashboard.CATS.get(sid, "")),
              "amp20": biglot_dashboard.AMP20.get(sid),
-             "unm": sid in biglot_dashboard.RET_UNM}
+             "unm": sid in biglot_dashboard.RET_UNM or (sid in biglot_dashboard.REF_EXTRA and (biglot_dashboard.PREV_CLOSE.get(sid) or 0) * 1000 >= biglot_dashboard.RETAIL_CAP),
+             "ref": _is_ref}
         # 5分窗
         r["w_ret"] = (a["px"] / p["px"] - 1) * 10000 if (a and p and a["px"] and p["px"]) else None
-        if r["w_ret"] is not None:
+        if r["w_ret"] is not None and not _is_ref:     # 市場代理只用核心/獨立列,參考列不進
             rets5.append(r["w_ret"])
         r["big5"] = a["big"] if a else None
         r["big_prior6"] = (sum(m[bk]["big"] for bk in prior6 if bk in m)
@@ -147,22 +160,40 @@ def render():
             px_base = (m[base_bk]["px"] if base_bk and base_bk in m and m[base_bk].get("px")
                        else next((m[bk]["px"] for bk in win6 if bk in m and m[bk]["px"]), None))
             r["r30"] = (px_end / px_base - 1) * 10000 if (px_end and px_base) else None
-            if r["r30"] is not None:
+            if r["r30"] is not None and not _is_ref:
                 rets30.append(r["r30"])
         else:
             r["big30"] = r["share30"] = r["r30"] = None
             r["rbuy30"] = r["rsell30"] = None
             r["tot30"] = r["big30p"] = r["dsh30"] = None
         # 全日
-        last_price = biglot_dashboard.ST.last_px.get(sid)
-        r.update(_rolling(sid, time.time()))            # 5分/30分 欄位每秒滾動(顯示用 + 即時標籤引擎)
-        r["mini"] = _mini_stats(sid, time.time()) if sid in biglot_dashboard.FUT_MINI else None   # 期散(小型契約 1 口)
-        r["rvol5_r"] = ((r["tot5_r"] / rb[bk_lbl]) if (r.get("tot5_r") and bk_lbl in rb and rb[bk_lbl] > 0)
+        # 2026-10-03 jack 糾正:5分/30分滾動窗跟期散統計,盤中該用真實時間,但收盤後
+        # (含伺服器任何時間點重啟、假日)改用該檔最後一筆已知成交時間當基準,見
+        # biglot/utils.py::_rolling_now docstring——這是「收盤幾小時後重開伺服器,
+        # 現價/5分/30分全部變成—」這個現象的根因修復,不是另外加判斷特例。
+        _now_ref = _rolling_now(sid)
+        r.update(_rolling(sid, _now_ref))                # 5分/30分 欄位每秒滾動(顯示用 + 即時標籤引擎)
+        r["rvol5_r"] =((r["tot5_r"] / rb[bk_lbl]) if (r.get("tot5_r") and bk_lbl in rb and rb[bk_lbl] > 0)
                         else None)                        # 滾動 5 分量能倍數(對同時段基準)
-        r["px"] = last_price
         _pc = biglot_dashboard.PREV_CLOSE.get(sid)                       # 前一交易日收盤(專業看盤主報價基準)
-        r["chg_amt"] = (last_price - _pc) if (_pc and last_price) else None
-        r["chg_pct"] = ((last_price / _pc - 1) * 100) if (_pc and last_price) else None
+        # 現價:今天完全沒有任何成交紀錄時(假日、今天尚未開盤、該檔今天從未成交),
+        # 退回前一交易日官方收盤價顯示,不讓「現價」整欄空白——2026-10-03 jack 交辦:
+        # 「收盤價還是可以顯示」。退回昨收時,對昨收漲跌自然算出 0(誠實反映「沒有比
+        # 官方收盤價更新的資訊」,不是真的今天漲跌0%),r["px_is_prev_close"]供需要
+        # 區分兩者的呼叫端使用(目前沒有欄位用到,保留供未來擴充)。
+        last_price = biglot_dashboard.ST.close_px.get(sid) or biglot_dashboard.ST.last_px.get(sid)
+        r["px_is_prev_close"] = last_price is None and _pc is not None
+        if last_price is None:
+            last_price = _pc
+        r["px"] = last_price
+        _pc2 = biglot_dashboard.PREV2_CLOSE.get(sid)
+        if r["px_is_prev_close"] and _pc2:
+            # 今天沒有成交(休市日/收盤後重啟):漲跌保留最近一個交易日收盤當時的數字,不顯示 0
+            r["chg_amt"] = _pc - _pc2
+            r["chg_pct"] = (_pc / _pc2 - 1) * 100
+        else:
+            r["chg_amt"] = (last_price - _pc) if (_pc and last_price) else None
+            r["chg_pct"] = ((last_price / _pc - 1) * 100) if (_pc and last_price) else None
         r["day_ret"] = ((last_price / ds["px0"] - 1) * 100
                         if (ds and ds["px0"] and last_price) else None)
         r["bigday"] = ds["big"] if ds else None
@@ -192,7 +223,15 @@ def render():
         # 隔夜策略因子
         r["bigsh_d"] = (ds["big"] / ds["tot"] * 100) if (ds and ds["tot"]) else None
         r["ret_open_sh"] = (ds["ret_open"] / ds["tot_open"] * 100) if (ds and ds["tot_open"]) else None
-        r["ret_close_sh"] = (ds["ret_close"] / ds["tot_close"] * 100) if (ds and ds["tot_close"]) else None
+        # 散戶背離(SMFI)「現在」這一側:2026-10-04 jack 交辦「我想要的是盤中當中可以用到的
+        # 欄位,隨時取得,即時變化較好」——原設計是收盤後才看的隔夜因子(尾盤12:55-13:20 vs
+        # 開盤),只在收盤前25分鐘才有值。改用近30分滾動窗(跟5分/30分欄位同算法,_r30n)取代
+        # 固定尾盤窗口,從 SMFI_ACTIVE_FROM 起算、之前一律 None(顯示—)——見
+        # biglot_dashboard.py::SMFI_ACTIVE_FROM 的完整回測依據(47點滾動窗時段驗證)。
+        # ⚠ ds["ret_close"]/["tot_close"](固定尾盤窗累加器)不受影響、照常累積:day_views.py
+        # (/day /history)跟 reference_loaders.py 的 PREV2D 回退需要「這天收盤後的最終定格
+        # 值」,固定尾盤窗口剛好等於滾動窗撐到收盤那一刻收斂到的答案,兩者語意不同、互不干擾。
+        r["ret_close_sh"] = _r30n(r) if _hm_now >= biglot_dashboard.SMFI_ACTIVE_FROM else None
         r["ret_smfi"] = ((r["ret_close_sh"] - r["ret_open_sh"]) if (r["ret_open_sh"] is not None and r["ret_close_sh"] is not None) else None)
         last12 = [m[bk]["px"] for bk in done[-12:] if bk in m and m[bk]["px"]]
         r["cmp1h"] = ((last_price / (sum(last12) / len(last12)) - 1) * 100
@@ -227,14 +266,18 @@ def render():
                 r["bid_min"] = r["ask_min"] = r["lu_dist"] = None
         else:
             r["bid_min"] = r["ask_min"] = r["lu_dist"] = None
-        if r.get("day_ret") is not None:
+        if r.get("day_ret") is not None and not _is_ref:
             _dayrets.append(r["day_ret"])
         rows.append(r)
 
+    # 參考列(池內2+池外10)只借同一套逐列計算,之後立刻切開:不進橫斷面排名/旗標/標籤引擎/淨分/前10/計分落地
+    ref_rows = [r for r in rows if r["ref"]]
+    rows = [r for r in rows if not r["ref"]]
+    for r in ref_rows:
+        r.update(flag="", bull_n=0, bear_n=0, bull_txt="", bear_txt="", ex_txt="")
+
     mkt5 = sum(rets5) / len(rets5) if rets5 else 0.0
     mkt30 = sum(rets30) / len(rets30) if rets30 else 0.0
-    _r30r = [r["r30_r"] for r in rows if r.get("r30_r") is not None]
-    mkt30_r = sum(_r30r) / len(_r30r) if _r30r else mkt30      # 滾動版市場 30 分(V2.3 逆弱用,與個股 r30_r 同鐘)
 
     # 排名(1=最大;注意力分流用,非訊號——個股排名持續性已檢定為不可持續)
     def _rank(key):
@@ -258,29 +301,15 @@ def render():
         r["flag"] = ""
         big30n = (r["big30"] / r["tot30"] * 100
                   if (r.get("big30") is not None and r.get("tot30")) else None)
-        if r["r30"] is not None and r["r30"] > 30:
-            if ((r["dsh30"] is not None and r["dsh30"] > 10 and not r["unm"])
-                    or (big30n is not None and big30n < -5)):
-                r["flag"] = "⚠勿追30"
-        elif (r["r30"] is not None and r["r30"] < -30
-              and big30n is not None and big30n > 5):
+        if (r["r30"] is not None and r["r30"] < -30
+                and big30n is not None and big30n > 5):
             r["flag"] = "🟢跌深大戶接"
         # 5分早期旗標(127日驗證預測未來30分:F8超額-6.1/cl-t-4.9、F9 -9.1/-5.0;
         #  F7 +10.8/+2.8僅觀察)——與30分旗標並列顯示
         big5n = (r["big5"] / r["tot5"] * 100
                  if (r.get("big5") is not None and r.get("tot5")) else None)
         early = ""
-        tot5v = r.get("tot5") or 0
-        if (big5n is not None and big5n > 10 and tot5v > 0
-                and r["share5"] is not None and r["share5"] < 5 and not r["unm"]
-                and r["big_prior6"] is not None and r["big_prior6"] < 0
-                and r["big5p"] is not None and r["big5p"] < 0):
-            # 127日兩兩交互測試定案:核心=逆大戶(雙尺度)∧散戶<5%,+23.8bps/t5.18 n=1801
-            # 市場方向條件是死重(只+1.3bps卻砍40%樣本),已移除;7/7月為正
-            # 劑量≥3000萬:+28.7/t4.09、45分+36.1/t3.84
-            early = ("💎💎巨資機構(≥3千萬)" if r["big5"] >= 3e7
-                     else "💎純機構")
-        elif r["w_ret"] is not None and r["w_ret"] > 20:
+        if r["w_ret"] is not None and r["w_ret"] > 20:
             if ((r["dshare"] is not None and r["dshare"] > 5 and not r["unm"])
                     or (big5n is not None and big5n < -5)):
                 early = "⚠勿追5m"
@@ -289,37 +318,22 @@ def render():
         elif (r["w_ret"] is not None and r["w_ret"] < -20
               and big5n is not None and big5n > 5):
             if r["rvol5"] is not None and r["rvol5"] >= 0.5:
-                early = "🟢跌深大戶接"               # RVOL>=0.5 條件版:127日+11~14bps cl-t 3.4-3.9
-            else:
-                early = "▫虛胖接刀(枯量,超額≈0)"     # <0.5x 帶127日超額≈0(名字直接標無效,別和「深接」搞混)
+                early = "🟢跌深大戶接"
         if early:
             r["flag"] = (r["flag"] + " " + early).strip()
 
     # 漲訊/跌訊 逐條件計分(只收錄已驗證格;每格獨立打勾,分數=命中數)
     for r in rows:
-        par30 = ((r["rbuy30"] or 0) + (r["rsell30"] or 0)
-                 if (r.get("rbuy30") is not None and not r["unm"]) else None)
         bear = []
         if r.get("r30") is not None and r["r30"] >= 150:
             bear.append("噴後過熱")        # 波段峰後30分均-32/中位-45
-        if "⚠勿追" in r["flag"]:
-            bear.append("勿追")        # 漲×參與跳升或大戶賣 -5~-9.6bps(趨勢日-32)
-        if (r.get("big30") is not None and r["big30"] <= -3e7
-                and (par30 is None or par30 < 15)):
-            bear.append("機構暗退")      # 30分大戶賣≥3千萬∧散戶缺席=機構主動調節(金居格)
-        if (r.get("w_ret") is not None and r["w_ret"] > 20
-                and r.get("rbuy5") is not None and r["rbuy5"] >= 5 and not r["unm"]):
-            bear.append("散戶虛拉")      # 散戶買方推的急拉留不到收盤 -6~-9bps/t-5
+        if "⚠勿追5m" in r["flag"]:
+            bear.append("勿追5m")
         if "⚠同賣" in r["stamp"]:
             bear.append("同賣")        # 大戶賣∧散戶賣 隔夜-28bps/t-6
         if r.get("pmlow_warn"):
             bear.append(f"破昨防線@{r['pmlow']:g}" if r.get("pmlow") else "破昨防線")  # 觸昨日午後低=主力尾盤防守位 -125bps/73%貫穿
         bull = []
-        if (r.get("big30") is not None and r["big30"] >= 3e7
-                and (par30 is None or par30 < 45)):
-            bull.append("主力點火")     # 大戶買≥3千萬∧散戶<45%=健康首發(唯一正格;台股「抬轎」易誤解為散戶)
-        if "💎" in r["flag"]:
-            bull.append("巨資機構" if "💎💎" in r["flag"] else "純機構")  # 逆勢純機構 +24~29/t5.2(文字區分,不靠鑽石數量)
         if "🟢" in r["flag"]:
             bull.append("深接")        # 跌深大戶接(RVOL≥0.5,正EV) +11~14bps/t3.4+
         if (r.get("bigsh_d") is not None and r["bigsh_d"] >= 10
@@ -347,9 +361,8 @@ def render():
         print(f"[tag_engine] {_e!r}", file=sys.stderr)
     # ---- 淨分(2026-09-24 設計,加總分未驗證;各項權重依 127 日基準率 0/±1/±2)----
     try:
-        _score_rows(rows, mkt30, time.time(), mkt30_r)
+        _score_rows(rows, mkt30, time.time())
         _cause_tags(rows, biglot_dashboard.ST.date)
-        _hold_update(rows)
         try:
             _paper_update(rows, time.time())
         except Exception as _pe:  # noqa: BLE001
@@ -360,10 +373,11 @@ def render():
 
     # 固定產業鏈排序(不隨大戶流跳位);查無者(理論上不會有)排最後、依big30
     rows.sort(key=lambda r: (biglot_dashboard.SORT_INDEX.get(r["sid"], 999), -(r["big30"] or 0)))
+    rows_all = sorted(rows + ref_rows, key=lambda r: biglot_dashboard.SORT_INDEX.get(r["sid"], 999))   # 顯示用(含參考列)
     # 產業交界的最後一列→畫粗線
     grpend = set()
-    for i, r in enumerate(rows):
-        nxt = rows[i + 1] if i + 1 < len(rows) else None
+    for i, r in enumerate(rows_all):
+        nxt = rows_all[i + 1] if i + 1 < len(rows_all) else None
         if nxt is None or biglot_dashboard.CLUSTER_OF.get(r["sid"]) != biglot_dashboard.CLUSTER_OF.get(nxt["sid"]):
             grpend.add(r["sid"])
     win_lbl = (f"{cur.strftime('%H:%M')}–{(cur+timedelta(minutes=5)).strftime('%H:%M')}"
@@ -372,7 +386,6 @@ def render():
                if win6 else "—")
 
     # 旗標速覽 + 資料延遲警示
-    fl_chase = " ".join(f"{r['sid']}{r['name']}" for r in rows if r["flag"] == "⚠勿追30")
     fl_catch = " ".join(f"{r['sid']}{r['name']}" for r in rows
                         if r["flag"] == "🟢跌深大戶接")
     flag_bar = ""
@@ -390,16 +403,10 @@ def render():
         cand_txt = ("<span style='color:#ffd700'>隔夜候選(前10∧壓縮深3,13:25定案):</span> "
                     + " ".join(f"{r['sid']}{r['name']}({r['cmp1h']:+.1f}%/佔{r['bigsh_d']:.0f}%)"
                                for r in picks) + " · ")
-    if fl_chase:
-        flag_bar += f"<span class='warnv'>⚠勿追30(漲窗×參與跳升/大戶賣):</span> {fl_chase} "
     if fl_catch:
         flag_bar += f"<span style='color:#3fb950'>🟢跌深大戶接(唯一正EV格):</span> {fl_catch} "
     fl_e1 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "⚠勿追5m" in r["flag"])
     fl_e2 = " ".join(f"{r['sid']}{r['name']}" for r in rows if "🟡接刀觀察" in r["flag"])
-    fl_dia = " ".join(f"{r['sid']}{r['name']}" for r in rows if "💎" in r["flag"])
-    if fl_dia:
-        flag_bar = (f"<span style='color:#79c0ff'>💎純機構買單(127日+16bps/t4.4,全系統最強格):</span> "
-                    f"{fl_dia} ") + flag_bar
     if fl_e1:
         flag_bar += f"<span class='warnv'>⚠勿追5m(早期):</span> {fl_e1} "
     if fl_e2:
@@ -460,6 +467,17 @@ def render():
         cls = "rk1" if n <= 3 else ("rkN" if n >= 43 else "")
         return f"<td class='{cls}'>{n}{arrow}</td>"
 
+    def _role_chip(r):
+        if r.get("ref"):
+            _n = (biglot_dashboard.REF_POOL.get(r["sid"]) or biglot_dashboard.REF_EXTRA.get(r["sid"]) or {}).get("note", "")
+            _t = html_mod.escape(f"族群參考列(不進排名/標籤/淨分/旗標,只看族群脈絡;交易標的是同組有期貨的核心檔)。{_n}", quote=True)
+            return f"<span class='rolechip rref' title=\"{_t}\">參</span>"
+        _i = biglot_dashboard.INDEP.get(r["sid"])
+        if _i:
+            _t = html_mod.escape(f"{_i['kind']}:{_i['reason']}(原地標注,不隱藏)", quote=True)
+            return f"<span class='rolechip rind' title=\"{_t}\">獨</span>"
+        return ""
+
     VR_CLS = {"🌊🌊": "vr2", "🌊": "vr1", "": "vr0"}   # 對應 VOLRISK_TIERS 的分級,單一事實來源
 
     def vr_td(r):
@@ -473,7 +491,7 @@ def render():
         return f"<td class='{cls}' data-sort='{score}' title=\"{title}\">{icon}{score:.0f}</td>"
 
     _mktday = sum(_dayrets) / len(_dayrets) if _dayrets else None
-    for r in rows:
+    for r in rows_all:
         r["rs_live"] = (r["day_ret"] - _mktday
                         if (r.get("day_ret") is not None and _mktday is not None) else None)
         # 順/逆市:個股30分方向 vs 市場30分方向(描述性脈絡,非訊號——市場是最強控制變數)
@@ -524,6 +542,8 @@ def render():
         _hb800 = biglot_dashboard.HOLDER_BIG800.get(r["sid"])
         r["holder_big800"] = _hb800[0] if _hb800 else None
         r["holder_big800_asof"] = _hb800[1] if _hb800 else None
+        r["holder_big800_delta"] = _hb800[2] if _hb800 else None       # 2026-10-03新增:對前一週變動(pp)
+        r["holder_big800_prev_asof"] = _hb800[3] if _hb800 else None
         # 隱形大戶守價位(2026-09-25 jack 交辦,見 _iceberg_update docstring):
         # 靠山(backing)兩側皆已驗證為雜訊,只當描述性顯示;突破壓力(breakout_bull)是唯一
         # 通過延遲檢定+安慰劑對照的真訊號(t-2.2~-2.9,回落/fade,非延續),近30分內顯示、並進分數。
@@ -549,13 +569,18 @@ def render():
                 r["sc_v2"] += r["iceberg_score"]
                 (r.setdefault("sc_v2_items", [])).append(
                     (f"突破壓力防回落({_elapsed/60:.0f}′)", round(r["iceberg_score"], 1)))
+    # 30分成交額百分位(代理人規則⑤):同 trader_signal_watch.pct_rank —— 嚴格小於 ÷ 母體(NAMES 42 檔、≥5 檔有值)×100
+    _amt30_pool = [r["tot30_r"] for r in rows_all if r["sid"] in biglot_dashboard.NAMES and r.get("tot30_r") is not None]
+    for r in rows_all:
+        _x = r.get("tot30_r")
+        r["amtpct30"] = (100 * sum(v < _x for v in _amt30_pool) / len(_amt30_pool)
+                         if (len(_amt30_pool) >= 5 and _x is not None and r["sid"] in biglot_dashboard.NAMES) else None)
+    _fv.ensure_started(); _FV_SNAP = _fv.snapshot().get("stocks", {})
     trs = []
-    for r in rows:
+    for r in rows_all:
         name = html_mod.escape(f"{r['sid']} {r['name']}")
-        _hh = r.get("hold"); _hcls = ""
-        if _hh:
-            _hcls = "hexp" if any(f.startswith("到期") for f in _hh["flags"]) else ("hbad" if any(f.startswith("壞") for f in _hh["flags"]) else ("hexit" if _hh["flags"] else "hold"))
-        _band = " class='" + " ".join(x for x in (("band" if r["sid"] in grpend else ""), _hcls) if x) + "'" if (r["sid"] in grpend or _hcls) else ""     # 產業交界粗線 + 持倉底色
+        _role_cls = "refrow" if r.get("ref") else ("indep" if r["sid"] in biglot_dashboard.INDEP else "")      # 參考列/獨立標注底色
+        _band = " class='" + " ".join(x for x in (("band" if r["sid"] in grpend else ""), _role_cls) if x) + "'" if (r["sid"] in grpend or _role_cls) else ""     # 產業交界粗線
         _cc = r.get("chg_amt")                          # 對昨收漲跌:紅漲綠跌(台股慣例)
         _qcls = _px_class(r.get("px"), biglot_dashboard.PREV_CLOSE.get(r["sid"]), r.get("chg_pct"))
         # 對昨收:只用一般紅漲綠跌字色(不要紅底白字——紅底只留給「價」欄)
@@ -568,11 +593,17 @@ def render():
         # 個股期貨買一/賣一 拆兩欄:委託價+委託量(小字)。title 附成交價與基差%(期貨/現股−1)
         _fp = biglot_dashboard.FUT_PX.get(r["sid"]) if isinstance(biglot_dashboard.FUT_PX.get(r["sid"]), dict) else None
         _futpx = _fp.get("px") if _fp else None
-        _bastxt = ""
-        if _futpx and r.get("px"):
-            _bastxt = f" · 期貨成交{_futpx:g} 基差{(_futpx / r['px'] - 1) * 100:+.1f}%"
         _fbid = _fp.get("bid") if _fp else None
         _fask = _fp.get("ask") if _fp else None
+        # 基差% 全站統一：期貨中價÷現貨中價−1（中價=買一賣一平均；2026-10-21 jack 要求，原為期貨最新成交價÷現價）。
+        # 現貨中價取逐筆帶的買一/賣一（缺值退回現價）；期貨簿斷線逾 30 秒會被剔除 → 基差不顯示。
+        _fmid = _fbmod.mid(_fbid, _fask)
+        _smid = _fbmod.mid(biglot_dashboard.ST.last_bid.get(r["sid"]), biglot_dashboard.ST.last_ask.get(r["sid"]), r.get("px"))
+        _basis = _fbmod.basis_pct(_fmid, _smid) if (_fmid and _smid and not r.get("px_is_prev_close")) else None
+        r["fut_basis_pct"] = _basis
+        _bastxt = ""
+        if _futpx and _basis is not None:
+            _bastxt = f" · 期貨成交{_futpx:g} 中價基差{_basis:+.2f}%"
         _ffpc = _fp.get("fpc") if _fp else None         # 期貨自身昨結:算期貨漲跌停(紅底/綠底)
         # 著色:有期貨昨結→用 _px_class(漲停紅底白字/跌停綠底白字/一般紅漲綠跌);
         # 無昨結時退回買紅賣綠(維持買賣側可辨)。
@@ -583,21 +614,70 @@ def render():
         # 成交價落在買一或賣一的那一邊:該側報價加黃底線(=主動方 price==ask主動買 / price==bid主動賣)
         _hitb = _futpx is not None and _fbid is not None and abs(_futpx - _fbid) < 1e-6
         _hita = _futpx is not None and _fask is not None and abs(_futpx - _fask) < 1e-6
-        if _fbid is not None:
-            _bp = f"<span class='hit'>{_fbid:g}</span>" if _hitb else f"{_fbid:g}"
-            _fbtd = (f"<td class='frz {_fbcls}' title='期貨買一{_bastxt}'>{_bp}"
-                     f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}{'小' if r['sid'] in biglot_dashboard.FUT_MINI else ''}</span></td>")
+        _mini = "小" if r["sid"] in biglot_dashboard.FUT_MINI else ""
+        _bp = (f"<span class='hit'>{_fbid:g}</span>" if _hitb else f"{_fbid:g}") if _fbid is not None else "—"
+        _ap = (f"<span class='hit'>{_fask:g}</span>" if _hita else f"{_fask:g}") if _fask is not None else "—"
+        if _fbid is not None or _fask is not None:
+            _bsz = f"<span class='dim' style='font-size:9px'>×{_fp.get('bidsz') or 0}{_mini}</span>" if _fbid is not None else ""
+            _asz = f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}{_mini}</span>" if _fask is not None else ""
+            _spr = f"{_fask - _fbid:g}" if (_fbid is not None and _fask is not None) else "—"
+            _fbatd = (f"<td class='frz' data-sort='{(_fask - _fbid) if (_fbid is not None and _fask is not None) else ''}' "
+                      f"title='個股期貨買一/賣一(委託價×委託量)。紅=買一、綠=賣一,黃底線=最新成交落在該側(主動方)。買賣價差 {_spr}。"
+                      f"{_bastxt.strip(' ·')}'>"
+                      f"<span class='{_fbcls or 'up'}'>{_bp}</span>{_bsz} / <span class='{_facls or 'dn'}'>{_ap}</span>{_asz}</td>")
         else:
-            _fbtd = "<td class='frz dim'>—</td>"
-        if _fask is not None:
-            _ap = f"<span class='hit'>{_fask:g}</span>" if _hita else f"{_fask:g}"
-            _fatd = (f"<td class='frz {_facls}' title='期貨賣一{_bastxt}'>{_ap}"
-                     f"<span class='dim' style='font-size:9px'>×{_fp.get('asksz') or 0}{'小' if r['sid'] in biglot_dashboard.FUT_MINI else ''}</span></td>")
+            _fbatd = "<td class='frz dim'>—</td>"
+        # 期貨中價／校正合理價(2026-10-20,fairvalue_live 背景執行緒每秒前進;邏輯同離線驗證 fairvalue_kalman.Filter):
+        # 平常=買賣簿中價;台指自上次報價動 ≥4bps 且報價 ≥10 秒沒更新 → 改顯示校正價(橘『校』)。
+        # 小字=買一/賣一/最新成交 各自偏離該價的 bps;報價年齡 ≥10 秒才標。⚠ 校正價前向驗證中(2026-11-03 判決)。
+        _fv_snap = _FV_SNAP.get(r["sid"])
+        if _fv_snap and not _fv_snap["why"]:
+            _trig = _fv_snap["trig"]
+            _fval = _fv_snap["fair"]               # 一直顯示 Kalman 校正合理價(中價只是買賣簿本身,沒有資訊)
+            _tk = _fv.tick_size(_fval); _sz = biglot_dashboard.FUT_CONTRACT_SIZE.get(r["sid"], 2000.0)
+            def _tm(px):    # 偏離 → (tick 數, 每口金額元);小於 0.5 tick 淡化成灰色
+                d = px - _fval
+                return d / _tk, d * _sz, ("dim" if abs(d / _tk) < 0.5 else "")
+            def _fmt(lab, px, hl=""):
+                t, mny, c = _tm(px)
+                t, mny = round(t, 1) + 0.0, round(mny) + 0.0         # +0.0:避免顯示「-0.0」
+                return f"<span class='{c}'{hl}>{lab}{t:+.1f}t</span>" if t else f"<span class='dim'>{lab}0t</span>"
+            _agetxt = f" · 報價{_fv_snap['age']}秒前" if _fv_snap["age"] >= 10 else ""
+            _lab = ("<b style='color:#f0883e' title='校正價(實驗)'>校</b> " if _trig else "")
+            _sub = (f"<span style='font-size:9px'>{_fmt('買', _fv_snap['bid'], _HL_SELL if _fv_snap['sig_sell'] >= 3 else '')} / {_fmt('賣', _fv_snap['ask'], _HL_BUY if _fv_snap['sig_buy'] >= 3 else '')}"
+                    + (f"<br>{_fmt('成', _futpx)}" if _futpx else "") + f"<span class='dim'>{_agetxt}</span></span>")
+            _fvtd = (f"<td data-sort='{_fval}' title='{'Kalman 校正合理價(實驗·前向驗證中,2026-11-03 判決)'+('·台指已動≥4bps且報價≥10秒沒動' if _trig else '')}"
+                     f"={_fval:.2f}(中價{_fv_snap['mid']:.2f};校正價{_fv_snap['fair']:.2f})。1 tick={_tk:g} 元,"
+                     f"一口{_sz:g}股=每tick {_tk * _sz:,.0f} 元。買/賣/成=買一/賣一/最新成交偏離此價的tick數(乘每tick金額=每口元)。"
+                     f"報價{_fv_snap['age']}秒前;台指自上次報價{_fv_snap['move']:+.1f}bps。灰色=偏離小於0.5tick。"
+                     f"橘『校』=台指自上次報價動≥4bps且報價≥10秒沒動(校正量最有意義);其餘時間合理價與中價很接近。綠底=賣一比合理價低≥0.5tick(可買);紅底=買一比合理價高≥0.5tick(可賣),皆需持續≥3秒。'>"
+                     f"{_lab}{_fval:.2f}<br>{_sub}</td>")
         else:
-            _fatd = "<td class='frz dim'>—</td>"
+            _why = _fv_snap["why"] if _fv_snap else "無資料"
+            _fvtd = f"<td class='dim' title='期貨中價不顯示:{_why}'>—</td>"
+        # 期貨成交現價(緊鄰現價,方便目視比價差):顏色=對期貨自身昨結;小字=基差%(期貨/現股−1)
+        if _futpx:
+            _fchg = ((_futpx / _ffpc - 1) * 100) if _ffpc else None
+            _fcls = _px_class(_futpx, _ffpc, _fchg) if _ffpc else ""
+            _bsub = (f"<span class='dim' style='font-size:9px'> {_basis:+.2f}%</span>" if _basis is not None else "")
+            _futpxtd = (f"<td class='frz {_fcls}' data-sort='{_basis if _basis is not None else ''}' "
+                        f"title='個股期貨最新成交價{_futpx:g}(成交時間{_fp.get('t') or '—'};期貨昨結{_ffpc if _ffpc else '—'}"
+                        f"{f';對昨結{_fchg:+.2f}%' if _fchg is not None else ''});小字=基差%=期貨中價÷現貨中價−1(中價=買一賣一平均),排序依基差'>"
+                        f"{_futpx:g}{_mini and '<sup style=\"font-size:8px;color:#8b949e\">小</sup>'}{_bsub}</td>")
+        else:
+            _futpxtd = "<td class='frz dim'>—</td>"
         # 盤前試撮:08:30~09:00 無成交價時,試撮直接塞進現有欄位共用(價/對昨收/買簿/賣簿),不另立欄
         _tr = biglot_dashboard.PREOPEN.get(r["sid"]); _tpc = biglot_dashboard.PREV_CLOSE.get(r["sid"])
-        if r["px"]:                                     # 已有成交價:正常顯示
+        # ⚠ 2026-10-05 jack 糾正(真bug,不是早盤資料本來就少):2026-10-03 加的「今天完全沒
+        # 成交就退回昨收顯示現價」那個 PREV_CLOSE 回退(見上面 r["px"]/r["px_is_prev_close"]
+        # 那段),原本設計是給假日/收盤後重啟這種「今天根本沒開盤」的情境用——但試撮期間
+        # (08:30-09:00)同樣符合「ST.last_px 是 None」這個條件(逐筆成交的 isTrial=true
+        # 記錄會被 _ingest_trade 直接跳過,不算進 last_px),於是 r["px"] 被這個回退值撐成
+        # truthy,讓下面這個判斷式誤以為「已經有成交價」,直接搶在試撮分支前面把現價釘死在
+        # 昨收、漲跌也跟著顯示假的 0.00%——試撮當下其實有試搓指示價可以顯示,是被這個回退
+        # 邏輯擋住了,不是沒有資料。改用 r["px_is_prev_close"] 排除「這其實是回退值,不是
+        # 真正的成交價」的情況,讓試撮分支搶得到。
+        if r["px"] and not r["px_is_prev_close"]:       # 已有真實成交價:正常顯示
             _pxtd = f"<td class='frz {_qcls}' data-sort='{r['px']}'>{r['px']}</td>"
             _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         elif _tr and _tr.get("px") is not None:         # 盤前:借 價/對昨收/買賣簿 顯示試撮(標「試」上標)
@@ -609,7 +689,10 @@ def render():
                           f"{_tg:+.2f}%{_sup}</td>")
             _bidtd = f"<td title='試撮買一'>{_tr.get('bid')}{_sup}</td>"
             _asktd = f"<td title='試撮賣一(撮合{_tr.get('size') or 0}張)'>{_tr.get('ask')}{_sup}</td>"
-        else:                                           # 開盤前空窗/無試撮
+        elif r["px"]:                                    # 連試撮都沒有,但有昨收可以退回顯示(2026-10-03 設計)
+            _pxtd = f"<td class='frz {_qcls}' data-sort='{r['px']}' title='今日尚無成交或試撮,顯示前一交易日收盤價'>{r['px']}</td>"
+            _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
+        else:                                           # 連昨收都沒有(新股/資料缺失)
             _pxtd = "<td class='frz dim'>—</td>"
             _bidtd, _asktd = td(r["bid_min"], "min", False), td(r["ask_min"], "min", False)
         # 訊號合併欄:漲訊(紅)+跌訊(綠)+注記(黃)整成一格,不同顏色分辨方向。
@@ -626,8 +709,6 @@ def render():
             _ex.append("↓弱開")
         if r.get("ex_txt"):
             _ex.append(r["ex_txt"])
-        elif "ex_txt" not in r and "虛胖接刀" in r["flag"]:
-            _ex.append("▫虛胖接刀(枯量,超額≈0)")
         if _ex:
             _sig.append(f"<span class='warnv'>{' '.join(_ex)}</span>")
         _signum = r["bull_n"] + r["bear_n"]
@@ -642,64 +723,133 @@ def render():
                               _w.get("bull_5"), _w.get("bear_5"), "權證5分 " + _wtip)
             _wrt30td = _wrt_td(_w.get("call_30") or 0.0, _w.get("put_30") or 0.0,
                                _w.get("bull_30"), _w.get("bear_30"), "權證30分 " + _wtip)
+            _wrtdaytd = _wrt_td(_w.get("call_day") or 0.0, _w.get("put_day") or 0.0,
+                                _w.get("bull_day"), _w.get("bear_day"), "權證全日 " + _wtip)
         else:
-            _wrt5td = _wrt30td = "<td class='dim'>—</td>"
+            _wrt5td = _wrt30td = _wrtdaytd = "<td class='dim'>—</td>"
+        # 近兩日(2026-10-03 jack交辦):昨開盤累積到現在=昨全天(PREV2D,換日時載入一次)+今天即時累計。
+        _p2d = biglot_dashboard.PREV2D.get(r["sid"])
+        _tot_today = (biglot_dashboard.ST.day.get(r["sid"]) or {}).get("tot") or 0   # 今天原始累計(近兩日混算用,絕不回退)
+        # 2026-10-03 jack 交辦(第二批):全日大戶/全日散戶/權證全日/大戶-散戶/大戶佔比/散戶
+        # 背離這組「收盤後拿來決定隔夜部位」的欄位,在非交易日或收盤後該檔今天確實整天
+        # 零成交時(ST.day 當天完全沒有這檔的紀錄,=r["bigday"] is None),回退顯示上一個
+        # 已知交易日(PREV2D)的全日定格數字,用 _mark_eod_fallback 標註是哪一天的——跟
+        # 現價的 PREV_CLOSE 回退同一個理由,總比一片空白有用,但不能悄悄假裝是今天的
+        # 數字。盤中(_in_market() 為真)時即使這檔今天真的還沒成交也絕不回退,以免
+        # 「尚未成交」被誤讀成「已經有今天的數據」。⚠ 近兩日欄位(下方 _wrt2dtd/c_big2d
+        # 等)刻意不吃這層回退、一律用 `_tot_today`/`r.get("bigday")` 等今天的原始值——
+        # 回退值本身就等於 PREV2D,混進「近兩日=昨全天+今天」的算式會把昨天重複加兩次。
+        _eod_fallback = r.get("bigday") is None and not _in_market() and _p2d is not None
+        if _eod_fallback:
+            _disp_bigday, _disp_retday = _p2d.get("big"), _p2d.get("ret")
+            _disp_tot = _p2d.get("tot") or 0
+            _disp_bigsh = (_disp_bigday / _disp_tot * 100) if (_disp_bigday is not None and _disp_tot) else None
+            _disp_smfi = _p2d.get("ret_smfi")
+            _disp_ret_open_sh, _disp_ret_close_sh = _p2d.get("ret_open_sh"), _p2d.get("ret_close_sh")
+            _eod_asof = _p2d.get("day", "")
+            _pcall, _pput = _p2d.get("call_day") or 0.0, _p2d.get("put_day") or 0.0
+            _pbull_d, _pbear_d = _p2d.get("bull_day"), _p2d.get("bear_day")
+            if _pcall or _pput or _pbull_d or _pbear_d:
+                _wrtdaytd = _mark_eod_fallback(
+                    _wrt_td(_pcall, _pput, _pbull_d, _pbear_d,
+                            f"權證全日(回退顯示{_eod_asof}) 購{_pcall/1e4:,.0f}萬/售{_pput/1e4:,.0f}萬"),
+                    _eod_asof)
+            else:
+                _wrtdaytd = "<td class='dim'>—</td>"
+        else:
+            _disp_bigday, _disp_retday = r.get("bigday"), r.get("retday")
+            _disp_tot = _tot_today
+            _disp_bigsh, _disp_smfi = r.get("bigsh_d"), r.get("ret_smfi")
+            _disp_ret_open_sh, _disp_ret_close_sh = r.get("ret_open_sh"), r.get("ret_close_sh")
+            _eod_asof = None
+        if _p2d is None:
+            _wrt2dtd = "<td class='dim'>—</td>"
+        else:
+            _call2d, _put2d = (_p2d.get("call_day") or 0.0) + ((_w.get("call_day") if _w else 0.0) or 0.0), \
+                               (_p2d.get("put_day") or 0.0) + ((_w.get("put_day") if _w else 0.0) or 0.0)
+            _pbull, _pbear = _p2d.get("bull_day"), _p2d.get("bear_day")
+            _wbull, _wbear = (_w.get("bull_day") if _w else None), (_w.get("bear_day") if _w else None)
+            _bull2d = (_pbull or 0.0) + (_wbull or 0.0) if (_pbull is not None or _wbull is not None) else None
+            _bear2d = (_pbear or 0.0) + (_wbear or 0.0) if (_pbear is not None or _wbear is not None) else None
+            _wrt2dtd = _wrt_td(_call2d, _put2d, _bull2d, _bear2d,
+                                f"權證近兩日(昨{_p2d.get('day','')}開盤起累積) 購{_call2d/1e4:,.0f}萬/售{_put2d/1e4:,.0f}萬")
         # ---- 各欄先算成具名字串,再依「同尺度 大戶→散戶→權證」順序組列(2026-09-24 重排) ----
-        c_nm = (f"<td class='nm'><a href='/stock?sid={r['sid']}' target='_blank' "
+        _offp = r["sid"] in biglot_dashboard.REF_EXTRA     # 池外參考列無個股頁/筆記(不在 NAMES)
+        c_nm = (f"<td class='nm'>" + (f"<span>{name}</span>" if _offp else
+                f"<a href='/stock?sid={r['sid']}' target='_blank' "
                 f"title=\"{html_mod.escape(biglot_dashboard._stock_tip(r['sid']), quote=True).replace(chr(10), '&#10;')}\" "
-                f"style='color:inherit;text-decoration:none'>{name}</a>"
-                f"<span class='cat'>{r['cat']}</span>"
+                f"style='color:inherit;text-decoration:none'>{name}</a>")
+                + f"<span class='cat'>{r['cat']}</span>"
+                + _role_chip(r)
                 + ("<span class='dim' style='font-size:9px' title='散戶不可測:1 張≥500 萬,散戶欄=不可測、散戶側訊號(虛拉/勿追/竭盡∧散戶接)關閉;大戶/真空/急跌/隔夜大戶佔比照常'> ✗散</span>" if r.get("unm") else "")
                 + ("<span class='dim' style='font-size:9px' title='個股期貨為小型契約(100 股):期貨買/賣欄的量以小型口數計,1 口名目=價×100'> 小</span>" if r["sid"] in biglot_dashboard.FUT_MINI else "")
-                + (f" <span class='hbtn' data-sid='{r['sid']}' data-action='close' title='點一下=平倉(記錄損益與原因 manual)' style='cursor:pointer;color:#f85149;font-size:9px;border:1px solid #f85149;padding:0 3px'>出</span>" if r.get("hold")
-                   else f" <span class='hbtn' data-sid='{r['sid']}' data-action='open' title='點一下=標記持倉(以現價為進場價,啟動持倉分監控;純提示不送單)' style='cursor:pointer;color:#58a6ff;font-size:9px;border:1px solid #30363d;padding:0 3px'>持</span>")
                 + "</td>")
         c_vr = vr_td(r)
-        c_amp = (f"<td class='{'warnv' if r['amp20'] >= 7 else ('dim' if r['amp20'] < 5 else '')}' data-sort='{r['amp20']}'>"
-                 f"{r['amp20']:.1f}%</td>" if r.get("amp20") is not None else "<td class='dim'>—</td>")
         c_open = td(r["day_ret"], "pct2")
         c_r30 = td(r["r30_r"] / 100 if r["r30_r"] is not None else None, "pct2")   # 統一用 %(2026-09-24)
         c_ctx = (f"<td class='{'up' if '逆強' in r['mkt_ctx'] or '順漲' in r['mkt_ctx'] else 'dn'}' "
                  f"style='font-size:11px'>{r['mkt_ctx']}</td>" if r.get("mkt_ctx") else "<td class='dim'>—</td>")
-        c_big5, c_big30, c_bigday = td(r["big5_r"], "wan"), td(r["big30_r"], "wan"), td(r["bigday"], "wan")
-        c_rb30 = (f"<td class='{'warnv' if (r['rbuy30_r'] or 0) >= 5 else ''}' data-sort='{r['rbuy30_r']}'>{r['rbuy30_r']:.1f}%</td>"
-                  if (r.get("rbuy30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-        c_rs30 = (f"<td data-sort='{r['rsell30_r']}'>{r['rsell30_r']:.1f}%</td>"
-                  if (r.get("rsell30_r") is not None and not r["unm"]) else "<td class='dim'>—</td>")
-        c_dsh = td(r["dsh30_r"], "bps", True, r["unm"]).replace("bps", "")
+        c_big5, c_big30 = td(r["big5_r"], "wan"), td(r["big30_r"], "wan")
+        c_bigday = td(_disp_bigday, "wan")
+        if _eod_fallback and _disp_bigday is not None:
+            c_bigday = _mark_eod_fallback(c_bigday, _eod_asof)
+        elif not _eod_fallback:
+            c_bigday = fut_merge_day_td(r, "big", _disp_bigday) or c_bigday
         c_w5 = td(r["w_ret_r"] / 100 if r["w_ret_r"] is not None else None, "pct2")
         c_ret5 = td(r["retn5_r"], "wan", unm=r["unm"])
-        c_rb5 = (f"<td class='{'warnv' if (r['rbuy5_r'] or 0) >= 5 else ''}' data-sort='{r['rbuy5_r']}'>"
-                 f"{r['rbuy5_r']:.1f}%</td>" if (r["rbuy5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-        c_rs5 = (f"<td data-sort='{r['rsell5_r']}'>{r['rsell5_r']:.1f}%</td>" if (r["rsell5_r"] is not None and not r["unm"]) else "<td class='dim'>—</td>")
-        c_retday = td(r["retday"], "wan", unm=r["unm"])
-        # 新欄:全日大戶 − 全日散戶(萬);|差| ≥ 全日成交 5% 粗體
-        # 大戶−散戶 改為 ÷ 全日成交 的 %(= 大戶佔比 − 散戶佔比);tooltip 給 A/B/C/D 判讀(2026-09-24)
-        _tot = (biglot_dashboard.ST.day.get(r["sid"]) or {}).get("tot") or 0
-        if r.get("bigday") is not None and r.get("retday") is not None and not r["unm"] and _tot > 0:
-            _bp = r["bigday"] / _tot * 100; _rp = r["retday"] / _tot * 100; _dp = _bp - _rp
-            if _bp >= 10 and _rp < 5:
-                _lab, _cls = "A 大戶買·散戶未主導(127日隔夜 +124,散0~5%最佳 +185/t4.5)", "up"
-            elif _bp >= 10 and _rp >= 5:
-                _lab, _cls = "B 大戶帶散戶(散戶≥5%,127日 +75/t1.2 n15,打折)", "warnv"
-            elif _bp <= -10 and _rp >= 5:
-                _lab, _cls = "C 大戶倒·散戶接刀(127日隔夜 −11,低於基準 +73 約 85bps)", "dn"
-            elif _bp <= -10:
-                _lab, _cls = "D 大戶賣·散戶不接(127日隔夜 −13,低於基準約 85bps)", "dn"
-            else:
-                _lab, _cls = "佔比未過 ±10% 門檻,不判", ""
-            _bold = "font-weight:700" if abs(_dp) >= 15 else ""   # ±15% ≈ 127日 p10/p90
-            c_diff = (f"<td class='{_cls or ('up' if _dp > 0 else ('dn' if _dp < 0 else ''))}' data-sort='{_dp}' style='{_bold}' "
-                      f"title='大戶佔比 {_bp:+.1f}% − 散戶佔比 {_rp:+.1f}% = {_dp:+.1f}% → {_lab}'>{_dp:+.1f}%</td>")
+        c_ret30 = td(r.get("retn30_r"), "wan", unm=r["unm"])
+        c_retday = td(_disp_retday, "wan", unm=r["unm"])
+        if _eod_fallback and _disp_retday is not None and not r["unm"]:
+            c_retday = _mark_eod_fallback(c_retday, _eod_asof)
+        elif not _eod_fallback:
+            c_retday = fut_merge_day_td(r, "ret", _disp_retday, unm=r["unm"]) or c_retday
+        # 2026-10-02 欄位重整(jack交辦):5分/30分/全日三尺度統一成「大戶→散戶→權證→大戶-散戶→大戶佔比」
+        # 五欄並列;移除原本的散買/散賣參與%拆分跟散戶參與Δ(30分)——這些仍在算分數用,只是不再單獨開欄顯示。
+        c_bigpct5 = td(_b5n(r), "pct2")
+        c_bigpct30 = td(_b30n(r), "pct2")
+        c_ret30pct = td(_r30n(r), "pct2")                    # 30分散戶佔比(代理人規則④;同代理人 ret30=散戶淨÷30分成交額)
+        c_dhi30 = td(r.get("dhi30_r"), "pct2")               # 距近30分高%(代理人規則②:≤−0.5)
+        c_amtp30 = (f"<td data-sort='{r['amtpct30']:.4f}'>{r['amtpct30']:.0f}</td>" if r.get("amtpct30") is not None
+                    else "<td class='dim'>—</td>")           # 30分成交額百分位(代理人規則⑤:≥30)
+        c_diff5 = _bigret_diff_td(r.get("big5_r"), r.get("retn5_r"), r.get("tot5_r"), r["unm"])
+        c_diff30 = _bigret_diff_td(r.get("big30_r"), r.get("retn30_r"), r.get("tot30_r"), r["unm"])
+        # 全日大戶−散戶(=大戶佔比−散戶佔比,%,含A/B/C/D判讀,2026-09-24定案)。
+        # 2026-10-02 抽成 _bigret_diff_td 共用函式(html_fragments.py),5分/30分版本見上方 c_diff5/c_diff30。
+        c_diff = _bigret_diff_td(_disp_bigday, _disp_retday, _disp_tot, r["unm"], full_stats=True)
+        c_bigsh = (f"<td class='{'up' if _disp_bigsh > 0 else 'dn'}' data-sort='{_disp_bigsh}'>{_disp_bigsh:+.1f}%</td>"
+                   if _disp_bigsh is not None else "<td class='dim'>—</td>")
+        if _eod_fallback:
+            c_diff = _mark_eod_fallback(c_diff, _eod_asof) if _disp_bigday is not None else c_diff
+            c_bigsh = _mark_eod_fallback(c_bigsh, _eod_asof) if _disp_bigsh is not None else c_bigsh
+        # 近兩日大戶/散戶/大戶-散戶/大戶佔比:昨全天(PREV2D)+ 今天截至目前(bigday/retday/_tot_today)。
+        # ⚠ 一律用 r.get("bigday")/_tot_today(今天原始值),不可用上面的 _disp_*——後者在
+        # _eod_fallback 時已經等於 PREV2D 本身,混進這裡的加總會把昨天重複算兩次。
+        if _p2d is None:
+            c_big2d = c_ret2d = c_diff2d = c_bigpct2d = "<td class='dim'>—</td>"
         else:
-            c_diff = "<td class='dim'>—</td>"
-        c_bigsh = (f"<td class='{'up' if r['bigsh_d'] > 0 else 'dn'}' data-sort='{r['bigsh_d']}'>{r['bigsh_d']:+.1f}%</td>"
-                   if r["bigsh_d"] is not None else "<td class='dim'>—</td>")
-        c_smfi = (f"<td class='{'up' if r['ret_smfi'] > 0 else ('dn' if r['ret_smfi'] < 0 else '')}' data-sort='{r['ret_smfi']}' "
-                 f"title='散戶版SMFI(2026-09-25已採納進隔夜分:≥+10pp 記+1):尾盤(12:55-13:20)散戶淨額佔比 {r['ret_close_sh']:+.1f}% − "
-                 f"開盤(09:00-09:25) {r['ret_open_sh']:+.1f}% = 背離 {r['ret_smfi']:+.1f}pp。127日面板:對次日跳空 OOS t+2.50(單變量t+3.07)、"
-                 f"控大戶背離與既有隔夜四項後不衰減;IS 控制後邊緣未過(t+1.73)——方向反直覺:散戶尾盤更偏買方反而預測次日偏多(像散戶跟隨法人已建方向)。"
-                 f"累20日後再議是否進隔夜分'>{r['ret_smfi']:+.1f}</td>" if r.get("ret_smfi") is not None else "<td class='dim'>—</td>")
+            _big2d_amt = (_p2d.get("big") or 0.0) + (r.get("bigday") or 0.0)
+            _ret2d_amt = (_p2d.get("ret") or 0.0) + (r.get("retday") or 0.0)
+            _tot2d = (_p2d.get("tot") or 0.0) + _tot_today
+            c_big2d = td(_big2d_amt, "wan")
+            c_ret2d = td(_ret2d_amt, "wan", unm=r["unm"])
+            c_diff2d = _bigret_diff_td(_big2d_amt, _ret2d_amt, _tot2d, r["unm"])
+            c_bigpct2d = td(_big2d_amt / _tot2d * 100 if _tot2d else None, "pct2")
+        # 2026-10-04 jack 交辦:原本是收盤前25分鐘(尾盤12:55-13:20)才有值的隔夜因子,改成
+        # 近30分滾動窗(跟5分/30分欄位同算法),從 SMFI_ACTIVE_FROM(11:45)起即時持續更新,
+        # 之前一律—(47點滾動窗時段回測證實此前訊號不穩定,不是技術限制,見
+        # biglot_dashboard.py::SMFI_ACTIVE_FROM)。EOD回退(_eod_fallback)顯示的是前一交易日
+        # 收盤那一刻的定格值——對已結束的一天,滾動窗撐到收盤正好收斂成尾盤窗口的答案,
+        # 兩種情境用同一個 _disp_ret_close_sh/_disp_smfi,只差 tooltip 怎麼描述「現在」這一側。
+        _smfi_cur_desc = (f"前一交易日({_eod_asof})收盤定格值" if _eod_fallback
+                          else f"近30分(≥{biglot_dashboard.SMFI_ACTIVE_FROM}起即時滾動更新)")
+        c_smfi = (f"<td class='{'up' if _disp_smfi > 0 else ('dn' if _disp_smfi < 0 else '')}' data-sort='{_disp_smfi}' "
+                 f"title='散戶背離(SMFI,2026-09-25已採納進隔夜分:≥+10pp 記+1):{_smfi_cur_desc}散戶淨額佔比 {_disp_ret_close_sh:+.1f}% − "
+                 f"開盤(09:00-09:25) {_disp_ret_open_sh:+.1f}% = 背離 {_disp_smfi:+.1f}pp。127日面板(原尾盤版本):對次日跳空 OOS t+2.50(單變量t+3.07)、"
+                 f"控大戶背離與既有隔夜四項後不衰減;IS 控制後邊緣未過(t+1.73)——方向反直覺:散戶偏買方反而預測次日偏多(像散戶跟隨法人已建方向)。"
+                 f"2026-10-04改滾動窗後47點時段回測:{biglot_dashboard.SMFI_ACTIVE_FROM}起兩個標的連續站穩(OOS |t|>=2),之前雜訊不可信"
+                 f"'>{_disp_smfi:+.1f}</td>" if _disp_smfi is not None else "<td class='dim'>—</td>")
+        if _eod_fallback and _disp_smfi is not None:
+            c_smfi = _mark_eod_fallback(c_smfi, _eod_asof)
         # 壓縮顯示規則(2026-09-24 jack 定案,多空對稱、不標字):
         #   多:全日大戶佔比 ≥+10% ∧ 壓縮 <0(價壓在近1h均價下)→ 黃粗體
         #   空:全日大戶佔比 ≤−10% ∧ 壓縮 >0(大戶倒完價仍在均價上)→ 黃粗體
@@ -765,14 +915,14 @@ def render():
         _e981_asof_txt = biglot_dashboard.ETF981_ASOF or "—"
         _e981_prev_txt = biglot_dashboard.ETF981_PREV_ASOF or "—"
         if _e981 is None:
-            c_etf981 = (f"<td class='dim' title='00981A(中信ARK創新)最近兩次快照({_e981_asof_txt}"
+            c_etf981 = (f"<td class='dim' title='00981A(統一台股增長)最近兩次快照({_e981_asof_txt}"
                         f" / {_e981_prev_txt})皆未持有此股。純展示欄,不進分數'>—</td>")
         else:
             _eamt, _edelta = _e981["amount"], _e981["delta"]
             _ecls = "up" if _edelta > 0 else ("dn" if _edelta < 0 else "")
             _eamt_e, _edelta_e = _eamt / 1e8, _edelta / 1e8
-            c_etf981 = (f"<td class='{_ecls}' data-sort='{_eamt}' title='00981A(中信ARK創新)持股市值(ezmoney快照{_e981_asof_txt},"
-                        f"股數×當時收盤價,非即時)vs前次快照({_e981_prev_txt})的變動金額;"
+            c_etf981 = (f"<td class='{_ecls}' data-sort='{_eamt}' title='00981A(統一台股增長)持股市值(ezmoney快照{_e981_asof_txt},"
+                        f"股數×當時收盤價,非即時);Δ=(股數變動)×最新收盤價 vs前次快照({_e981_prev_txt}),只含買賣、不含漲跌價差,未扣贖回造成的等比例縮減;"
                         f"正=加碼/新進、負=減碼/出清。純展示欄,不進分數;跟單訊號另見 00981a-l1h9 daily brief'>"
                         f"{_eamt_e:.2f}億<span class=\"sub\">{_edelta_e:+.2f}億</span></td>")
         # 集保戶股權分散表·大戶≥800張比例(2026-09-29 jack 交辦):週頻(TDCC每週五公告),純參考展示。
@@ -780,15 +930,18 @@ def render():
         # (散戶持股比)通過五項對抗檢定但控週轉率後淨值由+5.44%/年轉−0.14%~−3.33%/年,結論是低週轉
         # 流動性溢酬代理非真籌碼alpha(詳見 biglot/reference_loaders.py::_load_holder_big800 docstring)。
         _hb800v, _hb800d = r.get("holder_big800"), r.get("holder_big800_asof")
+        _hb800delta, _hb800pasof = r.get("holder_big800_delta"), r.get("holder_big800_prev_asof")
         if _hb800v is None:
             c_holder800 = "<td class='dim' title='集保戶股權分散表無此股資料(或level_lo缺值)'>—</td>"
         else:
-            c_holder800 = (f"<td data-sort='{_hb800v}' title='集保戶股權分散表(as_of {_hb800d}):"
-                            f"大戶(持股≥800張)合計占比{_hb800v:.1f}%。週頻,非即時,跟本表其他盤中欄位不同尺度。"
+            _hb800dtxt = (f"{_hb800delta:+.1f}pp(較{_hb800pasof})" if _hb800delta is not None else "無上週資料可比")
+            c_holder800 = (f"<td data-sort='{_hb800v}' title='集保戶股權分散表(as_of {_hb800d};上一筆快照{_hb800pasof or '—'}):"
+                            f"大戶(持股≥800張)合計占比{_hb800v:.1f}%,較上週{_hb800dtxt}。週頻,非即時,跟本表其他盤中欄位不同尺度。"
                             f"⚠已知不可交易:文獻對此資料源零同儕審查支持,本系統自己用同一份資料做的HS因子(散戶持股比)"
                             f"通過五項對抗檢定但控週轉率後淨值轉負(+5.44%→−0.14%~−3.33%/年)——結論是低週轉流動性溢酬代理,"
                             f"非真籌碼alpha。純參考顯示,不進分數、不影響排序'>{_hb800v:.1f}%"
-                            f"<span class='dim' style='font-size:9px'> {_hb800d}</span></td>")
+                            f"<span class='dim' style='font-size:9px'> {_hb800d}"
+                            f"{(' ' + ('+' if _hb800delta >= 0 else '') + f'{_hb800delta:.1f}pp') if _hb800delta is not None else ''}</span></td>")
         _ib_tip = ("隱形大戶守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06 演算法重建,"
                    "取代第一版寬鬆定義)。方法:追蹤五檔全部價位(非僅最優價),量耗盡到接近零(≤原量15%)"
                    "且交叉比對逐筆真實成交確認打在該價位,第一次補回=偵測到(原文:detected after the first "
@@ -878,13 +1031,13 @@ def render():
                 c_atr = f"<td class='dim' data-sort='{_atr_sort}' title='{_atr_tip_base}'>{r['atr_pct']:.1f}%</td>"
         trs.append(
             f"<tr{_band} data-sid='{r['sid']}'{'' if r['sid'] in biglot_dashboard.NAMES else ' data-offpool=1'}>" + c_nm
-            + _pxtd + _futpxtd + _fbatd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價;委買簿厚度 2026-10-05 已移除,覆蓋率太窄)
+            + _pxtd + _futpxtd + _fbatd + _fvtd + _chgtd + c_open + c_w5 + c_r30 + c_ctx   # ① 價(期貨買賣緊接現價;委買簿厚度 2026-10-05 已移除,覆蓋率太窄)
             + c_big5 + c_ret5 + _wrt5td + c_diff5 + c_bigpct5           # ② 5分:大戶→散戶→權證→大戶-散戶→大戶佔比
             + c_big30 + c_ret30 + _wrt30td + c_diff30 + c_bigpct30 + c_ret30pct + c_dhi30 + c_amtp30   # ③ 30分(同五欄;期貨散戶30分 2026-10-05 已移除,覆蓋僅4檔且觀察期未滿即判定無用)
             + c_bigday + c_retday + _wrtdaytd + c_diff + c_bigsh   # ④ 全日(同五欄;散戶背離 SMFI 2026-10-05 搬到⑤b訊號輸入區)
             + c_big2d + c_ret2d + _wrt2dtd + c_diff2d + c_bigpct2d          # ④b 近兩日(同五欄,2026-10-03新增)
             + c_dtr + c_bias20 + c_keyline + c_atr + c_pe + c_etf981 + c_holder800   # ⑤ 結構/隔夜事實欄(日線趨勢、20MA乖離、關鍵一條線、ATR盤整、本益比同族群、00981A持股、集保大戶800張;2026-10-03「振幅%(20日已實現)」移到個股詳情頁,主表不再顯示——這是選股門檻用的穩定統計量,不是盤中訊號,每秒重繪佔格子沒有對應資訊價值)
-            + c_smfi + c_cmp + c_iceberg + _streak_live.cell_html(r['sid']) + c_rs + c_rvol + c_rvd + c_vr + c_ampr   # ⑤b 訊號輸入(2026-10-05 jack 交辦,從事實欄搬出:這些欄位本身是對原始數據的判斷、其中散戶背離/壓縮/冰山委託(僅breakout_bull部分)/相對強弱/全日量能已進淨分公式,量能倍數/波動分/今日振幅未進淨分但是風險分級/情境注記——都不是忠實呈現數據,緊接在訊號/淨分之前當輸入區;現貨+期貨大戶加權合併欄2026-10-06新增,純觀察不進分)
+            + c_smfi + c_cmp + c_iceberg + _xg_cols.cell_author_streak(r['sid']) + _xg_cols.cell_author_short(r['sid'], r) + _xg_cols.cell_stats(r['sid'], r) + c_rs + c_rvol + c_rvd + c_vr + c_ampr   # ⑤b 訊號輸入(2026-10-05 jack 交辦,從事實欄搬出:這些欄位本身是對原始數據的判斷、其中散戶背離/壓縮/冰山委託(僅breakout_bull部分)/相對強弱/全日量能已進淨分公式,量能倍數/波動分/今日振幅未進淨分但是風險分級/情境注記——都不是忠實呈現數據,緊接在訊號/淨分之前當輸入區;現貨+期貨大戶加權合併欄2026-10-06新增,純觀察不進分)
             + _comovement_td(r["sid"]) + _story_td(r["sid"], _stories) + _sigtd + _score_td(r) + ("<td class='dim'>—</td>" if r["sid"] in biglot_dashboard.REF_EXTRA else _stock_note_td(r["sid"]))         # ⑥ 股價共動·訊號·淨分·筆記(最末)
             + "</tr>")
 
@@ -908,7 +1061,7 @@ def render():
     biglot_dashboard.PAGE["in_mkt"] = in_mkt
     biglot_dashboard.PAGE["frag"] = f"""<div id="closed" data-closed="{0 if in_mkt else 1}" hidden></div>
 {_pnlp}{_txp}{stale_bar}
-<div class="meta" hidden>更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
+<div class="meta">更新 {now.strftime('%H:%M:%S')} · 5分窗 {win_lbl} · 30分窗 {w30_lbl} ·
 市場代理 5分 <b>{mkt5:+.1f}bps</b> / 30分 <b>{mkt30:+.1f}bps</b> · <span style='color:#d2a8ff' title='紙上交易(不送單):bucket=5分桶邊界取樣(回測口徑)、sec=每秒首次穿越;進 V2.5≥15 掛買一30秒,出 分數≤-5·30秒/壞標籤/60分 掛賣一60秒否則買一;嚴=價穿越才算成交、樂=觸價即成交;成本22bps;帳本 paper_trades_{{日}}.jsonl / paper_daily.json'>紙上 {_paper_summary()}</span> ·
 紅=正/買 綠=負/賣 · <b>淨額單位一律=萬</b>(5分/30分/全日/近兩日/權證) · <b>5分/30分欄=每秒滾動窗</b>(往回300s/1800s);訊號欄標籤仍依完成的5分桶判定(=回測定義) ·簿深≥10分=牆(紫) <3分=真空(灰) ·
 <b>大戶=≥1000萬</b>(127日:隔夜IC+0.13/接刀+12.7/勿追賣−9.6皆過檢) · <b>主尺度=30分</b>(旗標依127日驗證:
@@ -917,8 +1070,9 @@ def render():
 <table{" data-live=1" if in_mkt else ""}><thead><tr>
 <th class="stk">股票<span class="sub">點名稱看詳情</span></th>
 <th class="frz" title="現價,顏色為對前一交易日收盤:紅漲綠跌(台股慣例)。盤前08:30~09:00 無成交時,此欄顯示『試撮價』(帶『試』上標),09:00開盤後轉為成交價。已凍結(隨股票欄一起固定,橫向捲動時不動)">現價</th>
-<th class="frz" title="個股期貨最新成交價,緊鄰現價方便目視比價差。顏色=對期貨自身昨結(紅漲綠跌、漲跌停紅/綠底);小字=基差%(期貨÷現貨−1),排序依基差。『小』=小型契約(100股)。資料源:個股期貨ws(futprice,每10秒;成交時間見滑鼠提示)。08:45起即有值(現貨09:00才開盤)。已凍結">期貨價<span class="sub">成交·基差%</span></th>
+<th class="frz" title="個股期貨最新成交價,緊鄰現價方便目視比價差。顏色=對期貨自身昨結(紅漲綠跌、漲跌停紅/綠底);小字=基差%(期貨中價÷現貨中價−1,中價=買一賣一平均;與個股頁副圖、/grid 同一定義),排序依基差。『小』=小型契約(100股)。資料源:個股期貨ws(futprice,每10秒;成交時間見滑鼠提示)。08:45起即有值(現貨09:00才開盤)。已凍結">期貨價<span class="sub">成交·基差%</span></th>
 <th class="frz" title="個股期貨買一/賣一:委託價×委託量(小字)。紅=買一、綠=賣一;黃底線=最新成交落在該側(主動方);排序依買賣價差。資料源:個股期貨ws books channel(斷線逾30s剔除不顯示凍結價)。已凍結">期貨買/賣<span class="sub">買一×量 / 賣一×量</span></th>
+<th title="個股期貨中價／校正合理價。Kalman 校正合理價(Hasbrouck式狀態空間+台指β+現股,參數已凍結),一直顯示;橘『校』=台指已動≥4bps且報價≥10秒沒更新。綠底/紅底=賣一低於/買一高於合理價≥0.5tick且持續≥3秒。小字=買一/賣一/成交各自偏離該價的tick數,<0.5tick灰色;每tick金額見滑鼠提示。⚠ 校正價前向驗證中(預註冊 docs/futures-fairvalue-prereg-20261020.md,2026-11-03 判決,未通過會移除)。台指/買賣簿/現股皆即時逐筆。">合理價<span class="sub">Kalman·偏離tick</span></th>
 <th title="對前一交易日收盤的漲跌金額與%(專業看盤主報價)。盤前08:30~09:00 無成交時,此欄顯示『試撮跳空%』(帶『試』上標)">漲跌<span class="sub">對昨收</span></th>
 <th title="現價/今日開盤−1(盤中相對開盤走勢,與對昨收互補)">對開盤%</th>
 <th class="g5" title="近5分鐘價格報酬,單位bps。最短尺度、雜訊最大。">近5分漲跌<span class="sub">%</span></th>
@@ -957,7 +1111,9 @@ def render():
 <th title="散戶背離(SMFI,2026-09-25已採納進隔夜分):近30分散戶淨額佔比(≥{biglot_dashboard.SMFI_ACTIVE_FROM}起即時滾動更新,跟5分/30分欄位同算法) − 開盤(09:00-09:25)散戶淨額佔比。方向反直覺:散戶偏買方反而預測次日偏多(像散戶跟隨法人已建方向,非純反指標)。門檻不對稱——只有正向(≥+10pp)IS/OOS 一致,負向 OOS 在≥15pp 反號,故只設正向 +1、無負向項。2026-09-25原始版本(尾盤12:55-13:20固定窗)127日面板:IS IC 0.155→0.163(跳空)、OOS 0.068→0.074。2026-10-04改滾動窗後,47點5分鐘收尾點時段回測(IS 03-02~06-30/OOS 07-01~09-01,日聚類Spearman IC)證實{biglot_dashboard.SMFI_ACTIVE_FROM}之前訊號不穩定(KEEP/UNDECIDED/DROP交錯),之後兩個標的(次日跳空/收對收)連續站穩(OOS |t|>=2,12:05~12:30最強t+2.9~+4.6),故此欄改成{biglot_dashboard.SMFI_ACTIVE_FROM}前顯示—、之後即時更新,比原尾盤版本提早約70分鐘。⚠ IS 單變量控制後部分口徑未過嚴格 t≥2 門檻,依使用者明確指示採納。2026-10-05從④全日群組搬到訊號輸入區:已進淨分公式。">散戶背離<span class="sub">近30分−開盤 pp·{biglot_dashboard.SMFI_ACTIVE_FROM}起·≥10 記+1</span></th>
 <th title="壓縮 =(現價 ÷ 近12個5分桶均價 − 1)%,需≥8桶;與全日大戶佔比聯合、多空對稱:黃粗體(多)= 大戶佔比≥+10% ∧ 壓縮<0(價壓著,127日隔夜 +139/t2.9);黃粗體(空)= 大戶佔比≤−10% ∧ 壓縮>0(大戶倒完價仍在均價上,−28~−80,勿抱非放空);其餘淡化。基準 +73。2026-10-05從⑤結構/隔夜事實欄搬到訊號輸入區:已進淨分公式。">壓縮<span class="sub">對1h均% × 大戶佔比</span></th>
 <th data-nosort title="冰山委託(iceberg order)偵測守價位(2026-09-25 依 Frey & Sandås (2009) CFR Working Paper No. 09-06《The Impact of Iceberg Orders in Limit Order Books》原始演算法重建)。原文:『an iceberg to be detected after the first replenishment...keeps the detection state until...an expected replenishment has not occurred』『remembers the indicator values for multiple prices...undercut but later becomes the best quote again...still there』——本版修正三個與原文的落差:①觸發條件改成量耗盡到接近零(≤15%)才算,不是任意減少;②追蹤五檔全部價位(用價位當鍵),不是只追最優價,排名滑動仍持續追蹤;③交叉比對逐筆真實成交確認耗盡打在該價位,不只看當天總量。⚠14個交易日重跑結果:靠山(backing)兩側仍是雜訊(未復現原文Table V的顯著效果);跌破支撐(breakout_bear)延遲30秒後消失,確認雜訊;**突破壓力(breakout_bull)通過完整檢定**(即時/延遲30秒/Table V原文30筆成交口徑三種算法t值都達-2.2~-2.9,集中度55%不極端,安慰劑對照真實值在隨機範圍外)——方向是突破後回落(fade)非延續,已用0.5倍縮水、30分鐘線性淡出納入淨分,唯一進分數的部分;backing/breakout_bear仍是雜訊、純描述。2026-10-05從⑤結構/隔夜事實欄搬到訊號輸入區:整欄原樣搬動,只有breakout_bull部分已驗證進分。">冰山委託<span class="sub">守價位</span></th>
-<th title="連次/連量（反向工程「盤中當沖神器」；規格 docs/exhaustion-streak-spec.md）：每5秒窗外盤量&gt;內盤量=紅、反之綠；連次/連量(張)，副字=連量÷PIT每分鐘均量＝幾分鐘的成交量，爆×K=15分內爆量段數，↑=15分漲幅bps。純描述、不進分數；歷史上竭盡後放空含價差淨值為負，非放空訊號。">連次/連量<span class="sub">5秒窗</span></th>
+<th title="小哥原版·連次/連量（忠實作者，只用小哥公開的定義）：每5秒窗外盤量&gt;內盤量=紅、內&gt;外=綠；連次達±10亮燈🔔；連量=最近一窗主導方向張數（累計並列）；轉色=亮燈連攻段被打斷（紅轉綠=買盤竭盡、綠轉紅=賣盤竭盡）；緩搓=2分鐘漲幅&gt;3.5%。小哥未說明連量亮燈門檻。純描述，不進分數。">小哥·連次/連量<span class="sub">原版</span></th>
+<th title="小哥原版·放空三步驟清單（說明欄2025-09-27）：①周轉率&gt;30%；②高壓區=連兩根以上大紅K／連兩三天漲停；③當日轉弱（人工判斷）。列出客觀可算的項目與今日紅K/黑K；『大紅K幾%』『轉弱怎麼算』小哥未說明故不自設。清單齊備不等於進場訊號，小哥要求最後再等轉色。純描述，不進分數。">小哥·放空三步驟<span class="sub">原版</span></th>
+<th title="我們的統計·竭盡（與小哥原版分開）：窗×N=該窗÷每5秒均量；爆窗×k=單窗≥5×均量的窗數（5×自訂）；價差bps；P1=預登記規則（昨漲&gt;3%∧今紅K∧外攻連次≥10∧已有爆窗）前向驗證中。歷史毛+10~13bps但價差約26bps，淨約−15bps，非放空訊號。事件寫入forward_p1_events.jsonl。">統計·竭盡<span class="sub">我們的</span></th>
 <th title="個股日內% − 宇宙日內%(百分點):負(綠)=相對大盤壓著(彈簧),>+1(黃)=已彈開;軟否決件:日線弱∧已彈=毒格−31bps。2026-10-05從⑤結構/隔夜事實欄搬到訊號輸入區:已進淨分公式(軟否決)。">相對強弱<span class="sub">對大盤</span></th>
 <th title="5分窗成交金額 ÷ 近5日同時段中位(rvol)。≥5=爆量。2026-10-05從⑤結構/隔夜事實欄搬到訊號輸入區:未進淨分,純風險/情境注記。">量能倍數<span class="sub">x</span></th>
 <th title="全日量能 = 今日累計成交額 ÷ 同時段基準累計(近5日同時段中位加總)。127日:成交÷20日均額 控大戶佔比後隔夜 +13.8/t2.64;≥1.5x 且大戶買時淨分 +1。2026-10-05從⑤結構/隔夜事實欄搬到訊號輸入區:已進淨分公式。">全日量能<span class="sub">x</span></th>
