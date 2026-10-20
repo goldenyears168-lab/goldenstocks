@@ -69,7 +69,10 @@ _load_env_file "${STATE}/.env" "project .env"
 # ⚠ 本 job 自 2026-09-22 起被 bootout(為儀表板期貨買賣簿 feed 釋放連線額度),2026-09-24 晚重新 bootstrap;
 #   若 log 出現 Maximum number of connections reached,先停 momentum-rotation-poll(已無實彈、仍佔一條 ws)再試。
 # 2026-09-25 +6 超高價低 tick(大立光 OL/健策 RG/旺矽 UW/台光電 SF 為小型契約 100 股;奇鋐 RA/聯亞 OT 標準):42 root × 2 = 84 訂閱。
-export FUTOPT_STOCK_ROOTS="HB,KI,PL,PK,CA,NA,OW,QD,LE,QL,GU,KB,IX,NS,IRF,FQ,QX,IT,LUF,GY,QZ,DA,CCF,FZ,DI,NO,LX,PQ,LY,PT,RK,CY,II,OV,GR,DJ,OL,RG,UW,SF,RA,OT"
+export FUTOPT_STOCK_ROOTS="HB,KI,PL,PK,CA,NA,OW,QD,LE,QL,GU,KB,IX,NS,IRF,FQ,QX,IT,LUF,GY,QZ,DA,CCF,FZ,DI,NO,LX,PQ,LY,PT,RK,CY,II,OV,GR,DJ,OL,RG,UW,SF,RA,OT,CDF,QFF,FR,PWF"
+# 2026-10-16:+台積電期貨 CDF(標準 2000 股)/QFF(小型),只這兩檔訂夜盤:84 + 4×2 = 92 訂閱(<曾撞上限的 108)。
+# 2026-10-21:+台達電 FR(標準 2000 股,FRF)、小型緯穎 PWF(100 股;沿用既有 pwf_books 目錄名),供撤單神器監控:92 + 2×2 = 96 訂閱(<108)。
+export FUTOPT_NIGHT_ROOTS="CDF,QFF"
 export FUTOPT_DAY_ONLY=1
 
 PYTHON="${ROOT}/.venv-fubon/bin/python"

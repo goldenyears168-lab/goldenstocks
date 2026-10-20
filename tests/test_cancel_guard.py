@@ -30,8 +30,8 @@ def _order(no: str, off: float, side: str = "Buy", price: float = 100.0, otype: 
             "after_price": price, "status": status, "order_type": f"FutOptOrderType.{otype}", "price_type": "FutOptPriceType.Limit"}}
 
 
-def _book(off: float, bid: float, ask: float) -> dict:
-    return {"ts": _iso(off), "event": "data", "session": "day", "stale": False,
+def _book(off: float, bid: float, ask: float, sym: str = "LEFJ6") -> dict:
+    return {"ts": _iso(off), "event": "data", "session": "day", "stale": False, "symbol": sym,
             "bids": [{"price": bid, "size": 3}], "asks": [{"price": ask, "size": 3}]}
 
 
@@ -112,12 +112,24 @@ class CancelGuardTest(unittest.TestCase):
         recs = self.g.step(self._sw(enabled=True), False)
         self.assertEqual(recs[0]["side"], "賣"); self.assertEqual(recs[0]["against_ticks"], 2.0)
 
-    def test_close_orders_marketable_and_non_stock_future_skipped(self):
+    def test_close_orders_monitored_by_default_and_can_be_excluded(self):
+        self.assertEqual(cg.DEFAULT_SWITCH["apply_to"], ["New", "Close"])
         self._w(self.bk, [_book(-1, 99.5, 100.0)])
-        self._ev([_order("C1", 0, price=99.5, otype="Close"), _order("M1", 0, price=100.0), _order("X1", 0, sym="FITM")])
+        self._ev([_order("C1", 0, price=99.5, otype="Close")])
+        self._w(self.bk, [_book(2, 98.5, 99.0)])
+        recs = self.g.step(self._sw(enabled=True, apply_to=["New"]), False)               # 使用者設定只監控新倉 → 平倉單不碰
+        self.assertEqual([r for r in recs if r.get("event") == "trigger"], [])
+        g2 = cg.Guard(broker=self.broker, cache_dir=self.tmp, order_dir=self.tmp, clock=lambda: self.now); g2.set_day("2026-10-21")
+        recs = g2.step(self._sw(enabled=True, auto_cancel=True), True)                    # 預設含平倉 → 觸發，標註部位暫無出場單
+        trig = [r for r in recs if r.get("event") == "trigger"]
+        self.assertEqual(trig[0]["type"], "Close"); self.assertTrue(trig[0]["exit_unprotected"])
+
+    def test_marketable_and_non_stock_future_skipped(self):
+        self._w(self.bk, [_book(-1, 99.5, 100.0)])
+        self._ev([_order("M1", 0, price=100.0), _order("X1", 0, sym="FITM")])
         self._w(self.bk, [_book(2, 98.5, 99.0)])
         recs = self.g.step(self._sw(enabled=True, auto_cancel=True), False)
-        self.assertEqual([r for r in recs if r.get("event") == "trigger"], [])    # 平倉單不碰、跨價差單不碰
+        self.assertEqual([r for r in recs if r.get("event") == "trigger"], [])    # 跨價差單不碰
         self.assertEqual(self.broker.calls, [])
         self.assertTrue(any(r.get("event") == "skip_not_stock_future" for r in recs))
 
@@ -131,6 +143,12 @@ class CancelGuardTest(unittest.TestCase):
         recs = self.g.step(self._sw(enabled=True, auto_cancel=True), False)
         self.assertTrue(any(r.get("event") == "skip_no_books" for r in recs))
         self.assertNotIn("K1", self.g.orders)
+
+    def test_contract_roll_does_not_trigger(self):
+        self._setup_buy()
+        self._w(self.bk, [_book(2, 90.0, 90.5, sym="LEFK6")])        # 換月後的另一個合約，價位差很多，不是「行情往不利走」
+        self.assertEqual(self.g.step(self._sw(enabled=True, auto_cancel=True), False), [])
+        self.assertEqual(self.broker.calls, [])
 
     def test_stale_book_record_never_cancels(self):
         self._setup_buy(); self._w(self.bk, [_book(2, 98.5, 99.0)])

@@ -55,8 +55,9 @@ def _emit(recs: list[dict], day: str) -> None:
         print(json.dumps(r, ensure_ascii=False), flush=True)
         try:
             from notify_email import send_alert
-            send_alert(f"[撤單神器] {r['code']} {r['side']} {r['price']:g} 中價往不利 {r['against_ticks']}tick → {r['action']}",
-                       json.dumps(r, ensure_ascii=False, indent=1))
+            warn = "\n⚠ 這是平倉單，撤掉後這筆部位目前沒有掛出場單，請自行處理。" if r.get("type") == "Close" and r["action"] in ("cancelled", "would_cancel") else ""
+            send_alert(f"[撤單神器] {r['code']} {r['side']}{'(平倉)' if r.get('type') == 'Close' else ''} {r['price']:g} 中價往不利 {r['against_ticks']}tick → {r['action']}",
+                       json.dumps(r, ensure_ascii=False, indent=1) + warn)
         except Exception as e:  # noqa: BLE001
             print(f"notify failed: {e!r}", file=sys.stderr, flush=True)
 

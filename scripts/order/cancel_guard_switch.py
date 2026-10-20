@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""撤單神器開關。 status | off | alert（只通知）| on（符合條件就撤；仍受 .env DRY_RUN 與 ORDER_MASTER_ENABLED 約束）。"""
+"""撤單神器開關。 status | off | alert（只通知）| on（符合條件就撤；仍受 .env DRY_RUN 與 ORDER_MASTER_ENABLED 約束）
+| types New,Close（設定要監控的委託類型；只要新倉：types New）。"""
 from __future__ import annotations
 
 import json
@@ -17,6 +18,15 @@ def main(argv: list[str]) -> int:
     sw = load_switch()
     if cmd in ("off", "alert", "on"):
         sw.update(enabled=cmd != "off", auto_cancel=cmd == "on")
+        d = {**{k: sw[k] for k in DEFAULT_SWITCH}, "updated_at": datetime.now(TZ).isoformat(timespec="seconds"), "by": "cli"}
+        SWITCH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SWITCH_PATH.with_suffix(".tmp"); tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8"); os.replace(tmp, SWITCH_PATH)
+        sw = load_switch()
+    elif cmd == "types":
+        want = [x.strip() for x in (argv[2] if len(argv) > 2 else "").split(",") if x.strip()]
+        if not want or any(x not in ("New", "Close") for x in want):
+            print("types 需為 New、Close 或 New,Close"); return 2
+        sw["apply_to"] = want
         d = {**{k: sw[k] for k in DEFAULT_SWITCH}, "updated_at": datetime.now(TZ).isoformat(timespec="seconds"), "by": "cli"}
         SWITCH_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = SWITCH_PATH.with_suffix(".tmp"); tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8"); os.replace(tmp, SWITCH_PATH)

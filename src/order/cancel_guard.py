@@ -15,7 +15,8 @@
      enabled=true、auto_cancel=false → 只通知；兩者皆 true 才可能撤單。
   2. .env ORDER_CANCEL_GUARD_DRY_RUN（預設 1）：=1 時即使開關全開也只記錄『會撤』，不打券商。
   3. 實際撤單走 fubon_futopt_orders.cancel_futopt_order → live_submit_guard（需 ORDER_MASTER_ENABLED=1）。
-  4. 只呼叫 cancel；本模組沒有任何下單／改價程式。每日撤單上限、每張單最多嘗試一次、只處理 apply_to 內的委託類型。
+  4. 只呼叫 cancel；本模組沒有任何下單／改價程式。每日撤單上限、每張單最多嘗試一次、只處理 apply_to 內的委託類型（預設新倉＋平倉；
+     平倉單被撤後部位暫無出場單，通知會註明。不想撤平倉單：cancel_guard_switch.py types New）。
   5. 觸發所依據的買賣簿紀錄若已超過 30 秒前（收集器落後／重啟補讀）→ 不撤單（只告警）。
 """
 from __future__ import annotations
@@ -45,7 +46,7 @@ DEFAULT_SWITCH: dict[str, Any] = {
     "enabled": False,                    # 總開關：False＝完全不動作
     "auto_cancel": False,                # False＝只通知；True＝才可能撤單（仍受 .env DRY_RUN 與 ORDER_MASTER_ENABLED 約束）
     "against_ticks": 1.0,
-    "apply_to": ["New"],                 # 只處理新倉委託；平倉單預設不碰（撤掉會讓部位失去出場單）
+    "apply_to": ["New", "Close"],        # 新倉與平倉委託都監控（2026-10-21 使用者要求）；撤掉平倉單時部位會暫時沒有出場單，通知內會註明
     "symbols_allow": [],                 # 空＝所有有買賣簿的個股期貨
     "max_cancels_per_day": 20,
 }
@@ -119,6 +120,10 @@ def books_live(root: str, cache_dir: Path = CACHE_DIR, max_age_sec: float = 3 * 
     return (time.time() - newest) <= max_age_sec
 
 
+def rec_will_cancel(mode: str, sw: dict[str, Any]) -> bool:
+    return mode in ("dry_cancel", "live_cancel") and sw.get("auto_cancel") is True
+
+
 def against_ticks(sgn: int, ref_mid: float, mid: float, tick: float) -> float:
     """往不利方向的 tick 數（正＝不利）。買單 sgn=+1：中價下跌不利；賣單 sgn=-1：中價上漲不利。"""
     return -sgn * (mid - ref_mid) / tick
@@ -137,6 +142,7 @@ class OpenOrder:
     tick: float = 0.0
     state: str = "open"             # open / triggered / cancelled / done
     note: str = ""
+    sym: str = ""                   # 掛單當下買賣簿的完整合約代碼（如 FRFJ6）
 
 
 class Broker(Protocol):
@@ -255,7 +261,7 @@ class Guard:
                     price=float(p.get("after_price") or p["price"]), otype=str(p.get("order_type", "")).split(".")[-1], ts=ts)
 
     # ---------- 買賣簿 ----------
-    def _poll_root(self, root: str) -> list[tuple[float, float, float]]:
+    def _poll_root(self, root: str) -> list[tuple[float, float, float, str]]:
         tl = self._bk.get(root)
         if tl is None:
             tl = self._bk[root] = Tail(self.cache_dir / f"{root}_books" / f"{root}_books_{self.day}.jsonl")
@@ -272,7 +278,7 @@ class Guard:
             if r.get("session") != "day" or r.get("stale") or not b or not a or b[0]["price"] >= a[0]["price"]:
                 continue
             wall = datetime.fromisoformat(r["ts"]).timestamp()      # 本機收到時間，與委託回報同一把時鐘
-            rec = (wall, float(b[0]["price"]), float(a[0]["price"]))
+            rec = (wall, float(b[0]["price"]), float(a[0]["price"]), str(r.get("symbol", "")))
             self._hist[root].append(rec); new.append(rec)
             self._last_wall[root] = wall
         if new:
@@ -282,7 +288,7 @@ class Guard:
     def _ref_mid(self, root: str, ts: float) -> float | None:
         h = self._hist.get(root)
         best = None
-        for wall, bid, ask in (h or ()):
+        for wall, bid, ask, _sym in (h or ()):
             if wall <= ts:
                 best = (bid + ask) / 2
             else:
@@ -311,11 +317,12 @@ class Guard:
                     o.tick = tick_size(o.ref_mid)
                     # 已可立即成交（跨價差）的單不是被動單，略過
                     hist = [h for h in self._hist[root] if h[0] <= o.ts]
+                    o.sym = hist[-1][3] if hist else ""
                     if hist and ((o.sgn > 0 and o.price >= hist[-1][2]) or (o.sgn < 0 and o.price <= hist[-1][1])):
                         o.state, o.note = "done", "marketable"
                         continue
-                for wall, bid, ask in new:
-                    if wall <= o.ts:
+                for wall, bid, ask, sym in new:
+                    if wall <= o.ts or (o.sym and sym != o.sym):      # 換月（結算日）後的紀錄是另一個合約，不能和掛單時的中價比
                         continue
                     mid = (bid + ask) / 2
                     ag = against_ticks(o.sgn, o.ref_mid, mid, o.tick)
@@ -327,7 +334,7 @@ class Guard:
     def _trigger(self, o: OpenOrder, mode: str, sw: dict[str, Any], ag: float, book_wall: float, now: float) -> None:
         o.state = "triggered"
         rec = {"event": "trigger", "order_no": o.order_no, "code": o.code, "side": "買" if o.sgn > 0 else "賣", "price": o.price,
-               "type": o.otype, "ref_mid": o.ref_mid, "against_ticks": round(ag, 2), "mode": mode,
+               "type": o.otype, "exit_unprotected": o.otype == "Close" and rec_will_cancel(mode, sw), "ref_mid": o.ref_mid, "against_ticks": round(ag, 2), "mode": mode,
                "detect_lag_s": round(now - book_wall, 3), "ts": datetime.fromtimestamp(now, TZ).isoformat(timespec="milliseconds")}
         feed_ok = (now - self._last_any_book) <= STALE_FEED_SEC
         if mode == "alert" or not feed_ok:
