@@ -1223,6 +1223,14 @@ jobs:
     schedule: "weekdays 21:10"
     description: "融資/借券/當沖補追同步（主線 16:35 早於 TWSE 融資發布）· scripts/launchd/chip-margin-catchup.command · 冪等 upsert · 2026-10-16 起尾端順帶跑 chip_sop.py（/chips 頁快照；已知限制：投信資料來自 daily_sync 16:35 步驟，當日常只有部分檔，要隔日回補）"
 
+  - label: xiaoge-chip-daily
+    category: collect
+    order_capable: false
+    status: enabled
+    enabled_since: "2026-10-21"
+    schedule: "weekdays 19:40"
+    description: "小哥籌碼每日抓取＋筆記本 · scripts/launchd/xiaoge-chip-daily.command · 富邦分點頁（流動性前 579 檔個股頁＋全部活躍分點頁，~35 分鐘）→ ${DATA}/chip/xiaoge/<日期>/*.parquet，再產生 ${DATA}/chip/xiaoge_notebook/notebook_<日期>.json 供 8771 /xiaoge 讀 · 唯讀 stocks.db、不寫正本、不碰下單層 · 富邦未就緒(rc=3)每 10 分鐘重試 ≤6 次 · .env RUN_XIAOGE_CHIP_DAILY=0 可停 · 與 branch-tape-prewarm(16:30/18:30) 錯開 · 設計見 docs/warrant-xiaoge/research-system-plan.md"
+
   - label: umc-night-forward-recorder
     category: research
     order_capable: false

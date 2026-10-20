@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jackm4.goldenstocks.xiaoge-chip-daily</string>
+	<!-- 週一至五 19:40 · 小哥籌碼每日抓取（富邦分點頁：流動性前 579 檔個股頁＋全部活躍分點頁）＋每日筆記本。
+	     唯讀 stocks.db，寫 ${DATA}/chip/xiaoge/ 與 chip/xiaoge_notebook/ 的 parquet／json；不碰下單層。
+	     刻意不進 install-launchd.sh 的 LABELS（比照 chip-margin-catchup），安裝方式見
+	     scripts/launchd/xiaoge-chip-daily.command 檔頭。 -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{XIAOGE_CHIP_DAILY_LAUNCHER}}</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/tmp</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>
+		<dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>
+		<dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>
+		<dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>
+		<dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>
+	</array>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/xiaoge-chip-daily.launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/xiaoge-chip-daily.launchd.err.log</string>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>

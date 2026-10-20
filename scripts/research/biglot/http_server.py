@@ -29,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import biglot_dashboard
 from biglot import nav_bar
 from biglot.disposal_view import render_disposal
+from biglot.xiaoge_notebook_view import render_xiaoge
 from biglot.futflow_view import render_futflow, render_futflow_frag
 from biglot.health import health_json
 from biglot.day_views import render_history, render_day, snapshot_day
@@ -157,6 +158,9 @@ class H(BaseHTTPRequestHandler):
         elif path == "/futflow":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_futflow(str(q.get("root", "MXF"))[:4], str(q.get("s", ""))[:20]).encode("utf-8")
+        elif path == "/xiaoge":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = render_xiaoge(str(q.get("date", ""))[:10] or None).encode("utf-8")
         elif path == "/timeline":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             date, hhmm = str(q.get("date", ""))[:10] or None, str(q.get("hhmm", ""))[:5] or None

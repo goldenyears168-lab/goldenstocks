@@ -210,3 +210,19 @@
 
 ## 附錄：本文引用的檔案與記憶
 `docs/warrant-xiaoge/xiaoge-system-book.md`（手冊、第 02／04／05／08／10 部）、`xiaoge-book-vol2-columns.md`（2024–2025 年主力收購權證監控表與玩家大戶大搜密）、`key-branches.json`、`key-branches-list.md`、`src/fubon_branch_tape.py`、`scripts/research/chip_sop.py`、`config/chip_seats.yaml`；記憶：branch-tape-coverage-map、finmind-retired-20261016、chips-sop-page-20261012、key-branch-select-validate-20261011、branch-skill-undetectable-543d、chip-street-canon-rejected、kgi-xinyi-nextday-flip-closed、warrant-daily-callput-verdict、fubon-warrant-feed-options-probe。
+
+
+---
+
+## 附：實作進度（2026-10-21，使用者核准 Phase 0–2 後）
+
+使用者決定：開始 Phase 0–2；掃描範圍＝流動性前 579 檔；**分點＝小哥抓多少就抓多少（全部活躍分點 1,010 個，不只具名的 117 個）**；筆記本放 8771 儀表板新頁。
+
+| 階段 | 狀態 | 產出 |
+|---|---|---|
+| 0 地面真值 | 完成 | `groundtruth_2024-06_2025-12.csv`（95 篇：做空 75、做多 20；代號 94／95 與資料庫吻合，1 筆名稱修正）；案例表另在補冊 |
+| 1 資料管線 | 完成並排程 | `scripts/ops/xiaoge_chip_daily.py`（個股頁 579 檔＋1,010 個分點頁 E 排名＋125 個具名分點 B 排名；實測 2026-10-20 約 48 分鐘、0 錯誤、個股 17,370 列、分點頁 65,615 列）；`config/xiaoge_all_branches.json`、`config/xiaoge_named_branches.json`；launchd `xiaoge-chip-daily` 週一至五 19:40（登錄於 `config/job_registry.yaml`）；夜間／每晚歷史回補（`--backfill`，近 63 個交易日，流動性前 250 檔） |
+| 2 每日筆記本 | 完成（代理版） | `scripts/ops/xiaoge_notebook.py` → `${DATA}/chip/xiaoge_notebook/notebook_<日期>.json`；8771 `/xiaoge`（`biglot/xiaoge_notebook_view.py`） |
+| 3 重現測試 | R2（隔日沖慣性）完成 | `flip-habit-study-results.md`：慣犯隔天更常賣（OOS A 口徑 44.9% vs 15.1%、B 16.4% vs 10.1%），價格結果為零；R1／R3／R5／R6 待做 |
+
+**已知缺口**：歷史回補完成前，多數股票的「慣犯」欄顯示資料累積中（2026-07-17 後非收集池股票沒有分點史）；權證買超排名仍缺，做空／做多名單為代理版。

@@ -12,6 +12,7 @@ MAIN = (
 )
 TOOLS = (
     ("處置監測", "/disposal", ("/disposal",)),
+    ("小哥筆記本", "/xiaoge", ("/xiaoge",)),
     ("期貨大戶−散戶", "/futflow", ("/futflow",)),
     ("紙上模擬", "/paper", ("/paper",)),
     ("圖形總覽", "/grid", ("/grid",)),
