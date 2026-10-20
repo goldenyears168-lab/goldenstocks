@@ -1,0 +1,1626 @@
+[
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "華通(2313)"
+  ],
+  "xiaoge_says": "研究華通的關鍵分點，某分點大買，剛好在小黑K出現，於是在小黑K那天買，隔天大漲",
+  "case": "隔日沖除權息行情；隔天大紅K、秒填息",
+  "quote": "我還有去研究它的關鍵分點",
+  "src": "轉錄 -D7x6AJONqM 0:06:21",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "美林",
+  "norm": "美林",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [
+   "陽明(2609)"
+  ],
+  "xiaoge_says": "陽明是美林買的，美林算比較短一點",
+  "case": "",
+  "quote": "不過陽明是美林買的 美林算比較短一點",
+  "src": "轉錄 -NxV6JvdUOs 0:02:32",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "康和",
+  "norm": "康和",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [
+   "榮運(2640)"
+  ],
+  "xiaoge_says": "榮運今天是康和買的，有可能明天會出",
+  "case": "",
+  "quote": "榮運呢今天是康和買的",
+  "src": "轉錄 -NxV6JvdUOs 0:02:39",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "新光高雄",
+  "norm": "",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "新光高雄這麼狠，沒賣得多漂亮，他們買是買在後面",
+  "case": "",
+  "quote": "新光高雄這麼狠",
+  "src": "轉錄 -NxV6JvdUOs 0:05:29",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "摩根大通",
+  "norm": "摩根大通",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [],
+  "xiaoge_says": "摩根大通這短線，買的分點也有點短",
+  "case": "",
+  "quote": "摩根大通這短線啦",
+  "src": "轉錄 -NxV6JvdUOs 0:07:38",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "凱基台北、富邦建國都隔日衝，明天可以抓一下轉折",
+  "case": "",
+  "quote": "凱基台北富邦建國 都隔日衝",
+  "src": "轉錄 -NxV6JvdUOs 0:48:00",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦建國",
+  "norm": "富邦-建國",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "凱基台北、富邦建國都隔日衝",
+  "case": "",
+  "quote": "凱基台北富邦建國 都隔日衝",
+  "src": "轉錄 -NxV6JvdUOs 0:48:00",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基信義",
+  "norm": "凱基-信義",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [],
+  "xiaoge_says": "這凱基信義算是做的不錯，他在出，要小心一點",
+  "case": "信義在買、在出",
+  "quote": "這凱基信義算是做的不錯他在出啊",
+  "src": "轉錄 -NxV6JvdUOs 0:57:33",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "友達(2409)"
+  ],
+  "xiaoge_says": "友達不要追，因為關鍵分點在這個地方是大賣的",
+  "case": "友達買聯華後，關鍵分點大賣，籌碼告訴我不太愛追",
+  "quote": "關鍵分點在這個地方是大賣的",
+  "src": "轉錄 00tYdl33a1M 0:18:53",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "大立光(3008)"
+  ],
+  "xiaoge_says": "大力王今天關鍵分點大買；關鍵已經大買了，但明天法說後要看外資態度",
+  "case": "",
+  "quote": "大力王今天關鍵分點大買哦",
+  "src": "轉錄 2A36Gqwr5a4 0:00:43",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "紅準"
+  ],
+  "xiaoge_says": "紅準最近是關鍵分點有在買",
+  "case": "",
+  "quote": "紅準最近是關鍵分點有在買哦",
+  "src": "轉錄 2A36Gqwr5a4 0:10:02",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦台北",
+  "norm": "富邦-台北",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [
+   "中華化(1727)",
+   "永光(1711)"
+  ],
+  "xiaoge_says": "昨天富邦台北還沒出，今天又進來凱基台北，明天凱基台北跟富邦台北會輪流出中華化；永光與中華化是分身",
+  "case": "中華化賣壓大，永光可能也跟著殺",
+  "quote": "明天是凱基台北跟富邦台北 會輪流的出中華化啦",
+  "src": "轉錄 2A36Gqwr5a4 0:24:09",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [
+   "中華化(1727)",
+   "永光(1711)"
+  ],
+  "xiaoge_says": "凱基台北跟富邦台北會輪流出中華化，賣壓大",
+  "case": "",
+  "quote": "會輪流出中華化啦",
+  "src": "轉錄 2A36Gqwr5a4 0:24:12",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "康和",
+  "norm": "康和",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [
+   "裕民(2606)"
+  ],
+  "xiaoge_says": "康和之前都是隔日沖，大買隔天都會賣、有賺錢都會賣；這次選擇了凹單",
+  "case": "凹單26張，今天盤勢不好沒賣好",
+  "quote": "康和之前都是隔日沖哦",
+  "src": "轉錄 2A36Gqwr5a4 0:26:14",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "瑞士信貸",
+  "norm": "瑞士信貸",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "瑞士信貸慣性隔日沖，前面這幾個分點都是隔日沖分點，所以昨天看這種籌碼就知道今天不大妙",
+  "case": "買兩天後今天大賣",
+  "quote": "啊瑞士信貸慣性隔日冲",
+  "src": "轉錄 2A36Gqwr5a4 0:46:14",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "高盛",
+  "norm": "高盛",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [],
+  "xiaoge_says": "今天的買超分點高盛，至少比較不會那麼隔日沖，所以籌碼比較還好",
+  "case": "",
+  "quote": "高盛呢他就至少比較不會那麼格子冲",
+  "src": "轉錄 2A36Gqwr5a4 0:46:31",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點清單",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "課程直播優惠：籌碼K線13個月，送345家大戶分點清單",
+  "case": "",
+  "quote": "我们会中345家的大部分点清单哦",
+  "src": "轉錄 2A36Gqwr5a4 0:38:29",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "不要去追，因為有關鍵分點；關鍵分點一天賣1萬多張，從11.6跌到10.5",
+  "case": "回顧第一集小哥提醒的事情，驗證",
+  "quote": "因為有關鍵分點",
+  "src": "轉錄 2DmsemHxTC0 0:11:49",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "美律(3669)"
+  ],
+  "xiaoge_says": "美律有一個關鍵分點，每次法說會前看有沒有買，有買就跟一下；分點有改名字但還是它；統計隔天上漲機率54.2%",
+  "case": "1470月隔天都漲停；老闆喜歡在法說會放好消息",
+  "quote": "它有一個關鍵分點 每次法說會前 我們都會看它有沒有買",
+  "src": "轉錄 2DmsemHxTC0 0:27:55",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "地緣分點",
+  "norm": "",
+  "kind": "category",
+  "role": "地緣",
+  "stocks": [],
+  "xiaoge_says": "去看你公司附近的分點有沒有大買；低檔關鍵買高殖利率就是選股王道",
+  "case": "2022年10月市場恐慌(18000到12000)，寫了一篇打造屬於自己的ETF，後面一堆翻倍",
+  "quote": "我們去看你公司附近的分點有沒有大買",
+  "src": "轉錄 4vy4w6rJxeM 0:15:18",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "每天研究關鍵分點，發現最近關鍵分點買超多，而且以前是跌下來買一點、漲上來不賣，那時候是連續買",
+  "case": "2022年10月低點",
+  "quote": "每天研究關鍵分點",
+  "src": "轉錄 4vy4w6rJxeM 0:17:04",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "美林",
+  "norm": "美林",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "美林大家都知道他是短線主力，短線他買最多的時候就是準備開始跌了",
+  "case": "",
+  "quote": "美林 大家都知道他是短線主力",
+  "src": "轉錄 6u3DKLKWjI4 0:24:57",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦南屯",
+  "norm": "富邦-南屯",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "富邦南屯拉高出貨，是隔日沖手法；隔日沖很喜歡拉高出貨",
+  "case": "",
+  "quote": "葛日聪的手法 富邦南屯拉高出货",
+  "src": "轉錄 6u3DKLKWjI4 0:27:20",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基三重",
+  "norm": "凱基-三重",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "凱基三重、富邦嘉義都是隔日沖拉高出貨",
+  "case": "",
+  "quote": "这凯基三重 葛日聪富邦嘉义",
+  "src": "轉錄 6u3DKLKWjI4 0:27:23",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦嘉義",
+  "norm": "富邦-嘉義",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "富邦嘉義隔日沖拉高出貨",
+  "case": "",
+  "quote": "葛日聪富邦嘉义",
+  "src": "轉錄 6u3DKLKWjI4 0:27:25",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台東人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "富野(富野渡假村)"
+  ],
+  "xiaoge_says": "富野是台東人的，台東人都在賣股票，所以有機會跌",
+  "case": "富邦台東賣839張、國票台東賣300張、凱基台東賣330張；小哥放空，後來因券商告知可能收標借費回補部分",
+  "quote": "富野说这个是台东人的 台东人都在卖股票",
+  "src": "轉錄 6u3DKLKWjI4 0:06:36",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "隔日沖兩天，凱基台北賠了400多萬",
+  "case": "",
+  "quote": "凱基台北賠了400多萬",
+  "src": "轉錄 7ZXYYBthuB0 0:09:40",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "統一",
+  "norm": "統一",
+  "kind": "broker",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "統一這不是隔日沖",
+  "case": "",
+  "quote": "統一這不是隔日沖",
+  "src": "轉錄 7ZXYYBthuB0 0:09:50",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大",
+  "norm": "元大",
+  "kind": "broker",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "元大有紀律地賣掉；元大臣東、國票、富邦台北今天都不是（隔日沖）",
+  "case": "",
+  "quote": "元大有纪律的卖掉了",
+  "src": "轉錄 7ZXYYBthuB0 0:10:10",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基復興",
+  "norm": "凱基-復興",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "經營權股，凱基復興、凱基北門、台南分點有先跑，這反而要小心，不要介入",
+  "case": "",
+  "quote": "凱基復興有跑",
+  "src": "轉錄 7ZXYYBthuB0 0:53:31",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基北門",
+  "norm": "凱基-北門",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "凱基北門有在跑，反而要小心，不要介入",
+  "case": "",
+  "quote": "凱基北門有在跑",
+  "src": "轉錄 7ZXYYBthuB0 0:53:34",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "摩根大通",
+  "norm": "摩根大通",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [],
+  "xiaoge_says": "摩根大通最近也變波段買，都轉信了",
+  "case": "",
+  "quote": "摩根大通最近也變波段買",
+  "src": "轉錄 8pAff-_tlr4 0:01:20",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "國泰",
+  "norm": "國泰",
+  "kind": "broker",
+  "role": "其他",
+  "stocks": [
+   "新星"
+  ],
+  "xiaoge_says": "新星今天買超分點有國泰連續買，把新星買上去，有機會創新高",
+  "case": "",
+  "quote": "國泰連續買把新星買上去",
+  "src": "轉錄 8pAff-_tlr4 0:02:03",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "高盛",
+  "norm": "高盛",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [],
+  "xiaoge_says": "高盛是比較短線，美林有點短線",
+  "case": "",
+  "quote": "高盛是比較短線",
+  "src": "轉錄 8pAff-_tlr4 0:02:14",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦",
+  "norm": "富邦",
+  "kind": "broker",
+  "role": "高手",
+  "stocks": [
+   "優群(3217)"
+  ],
+  "xiaoge_says": "優群今天被主力賣，被富邦所殺；富邦算是厲害的，上次賣在高點，今天又在這邊大賣",
+  "case": "",
+  "quote": "富邦算是厲害的",
+  "src": "轉錄 8pAff-_tlr4 0:02:45",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵買超",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "全新"
+  ],
+  "xiaoge_says": "全新是進於地板，還有關鍵買超；紅冠加益的還蠻多",
+  "case": "2月14日地板股；跳空爆量",
+  "quote": "全新呢他還有這個關鍵買潮",
+  "src": "轉錄 8pAff-_tlr4 0:14:26",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "永豐金古亭",
+  "norm": "永豐金-古亭",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [
+   "愛訊(3088)"
+  ],
+  "xiaoge_says": "愛訊最近買的分點是永豐金古亭，布局很漂亮，看他有沒有大幅出脫行情才會結束",
+  "case": "",
+  "quote": "永豐金古庭 哇塞 布局的很漂亮",
+  "src": "轉錄 8pAff-_tlr4 0:17:15",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "新加坡",
+  "norm": "",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "新加坡Rain可能是隔日沖；同一南京可能隔日沖，有隔日沖就等拉回再買",
+  "case": "",
+  "quote": "这个新加坡Rain可能是隔日冲",
+  "src": "轉錄 8pAff-_tlr4 0:21:52",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "同一南京",
+  "norm": "統一-南京",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "同一南京可能隔日沖，有隔日沖就等拉回再買",
+  "case": "",
+  "quote": "同一南京可能隔聰啦",
+  "src": "轉錄 8pAff-_tlr4 0:21:54",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點清單",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "直播優惠：籌碼K線13個月，送367家大戶分點清單，就是關鍵分點清單",
+  "case": "",
+  "quote": "送你367家的大戶分點清單",
+  "src": "轉錄 8pAff-_tlr4 0:24:05",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "原大管錢",
+  "norm": "",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "光寶科(2301)"
+  ],
+  "xiaoge_says": "光寶科拉回後買上漲，原大管錢買很多，又算是不是太短線",
+  "case": "",
+  "quote": "原大管錢買很多",
+  "src": "轉錄 8pAff-_tlr4 0:44:08",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦胡偉",
+  "norm": "",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [
+   "飛宏(2457)"
+  ],
+  "xiaoge_says": "2457明天壓力很大，因為富邦胡偉今天買漲停，鎖了5000張",
+  "case": "",
+  "quote": "因為富邦胡偉今天這個買漲停",
+  "src": "轉錄 8pAff-_tlr4 0:46:27",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "3535"
+  ],
+  "xiaoge_says": "這檔都是台南人在買、買超多，一排台南人，看起來有點內幕",
+  "case": "",
+  "quote": "這個樂視都是台南人在買",
+  "src": "轉錄 8pAff-_tlr4 0:47:20",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基松山",
+  "norm": "凱基-松山",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "凱基松山尾盤1點半到貨元大2100張，另有凱基彰化也有一堆；凱基與元大互相倒貨",
+  "case": "元大吞3000張後隔天開低走低含淚賣出，1700萬不見",
+  "quote": "這是凯基松山干的",
+  "src": "轉錄 9i5vdYkkrYI 0:43:57",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基彰化",
+  "norm": "凱基-彰化",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "凱基彰化也有一堆去尾盤倒貨",
+  "case": "",
+  "quote": "还有其他凯基彰化",
+  "src": "轉錄 9i5vdYkkrYI 0:44:04",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大",
+  "norm": "元大",
+  "kind": "broker",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "元大立馬吞了3000張，你隔日沖到我貨，我下次就到你隔沖貨；隔天開低走低含淚賣出",
+  "case": "凱基與元大互相倒貨",
+  "quote": "你今天隔日冲到我货",
+  "src": "轉錄 9i5vdYkkrYI 0:43:38",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "福邦",
+  "norm": "",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "福邦買這麼多，至少今天買的比較不是隔日沖，拉回量縮看起來是不錯買點",
+  "case": "",
+  "quote": "至少今天買的比較不是隔日沖",
+  "src": "轉錄 9i5vdYkkrYI 1:11:25",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點清單",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "分點K線免費送三檔關鍵分點清單；從分點看股票，看某分點今天買什麼",
+  "case": "",
+  "quote": "送你三個關鍵分點的清單",
+  "src": "轉錄 9i5vdYkkrYI 1:00:21",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "可成的南部分點",
+  "norm": "",
+  "kind": "region",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "可成的關鍵分點都在台南，還有北高雄的分點，都是南部分點；12年來獲利前幾名都是南部分點，虧損的都是外市分點；低檔營收很爛時拚命吃股票，營收轉好就賣",
+  "case": "可成今年沒什麼跌到",
+  "quote": "舉例來說像可成的關鍵分點 它都在台南",
+  "src": "轉錄 LoWAGHD78J0 0:10:30",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "公司派分點",
+  "norm": "",
+  "kind": "category",
+  "role": "公司派",
+  "stocks": [],
+  "xiaoge_says": "看分點不要看券商總公司；低買高賣的就是好分點，低買高賣又在公司附近，可能是老闆在操盤的公司派分點",
+  "case": "高檔董事長申報轉讓的股票千萬不能碰",
+  "quote": "那就有可能是老闆在操盤的分點",
+  "src": "轉錄 LoWAGHD78J0 0:12:10",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "常見石油(機器轉錄)"
+  ],
+  "xiaoge_says": "長春石油至少關鍵分點低檔買高殖利率",
+  "case": "",
+  "quote": "常見石油至少關鍵分點低檔買高值利率",
+  "src": "轉錄 LoWAGHD78J0 0:30:57",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "彰化地緣分點",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "百合(9938)"
+  ],
+  "xiaoge_says": "百合買進的分點都是彰化分點、都是地緣分點，因為百合就在彰化；地緣分點在低檔買進配高殖利率是選股王道",
+  "case": "配息三塊多",
+  "quote": "都地緣分點 因為百合就在彰化",
+  "src": "轉錄 LoWAGHD78J0 0:32:17",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "隔日沖",
+  "norm": "",
+  "kind": "category",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "高檔主力買超常呈現一買一賣，不好，比較像隔日沖；波段都走了就剩下隔日沖",
+  "case": "",
+  "quote": "隔日沖比較像",
+  "src": "轉錄 AeiLpDJaoGE 0:10:44",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點清單",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "更新關鍵分點清單：花一晚看最新關鍵分點，最新版本381家",
+  "case": "",
+  "quote": "最新的版本381家了",
+  "src": "轉錄 Mhx1KhHEbWU 0:52:04",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "員林分點",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "美利達(9914)"
+  ],
+  "xiaoge_says": "美利達總公司在員林，當天兩大員林分點大買，看到員林人買就去搶，這叫地緣性；台北沒有地緣性，台北以南才有；總公司所在地券商大買是很好的籌碼訊號，台北外資太多不好看",
+  "case": "",
+  "quote": "看到這個員林人買 那就去搶 這叫做地緣性",
+  "src": "轉錄 O8mOzhGKqOM 0:31:19",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "華文永昌",
+  "norm": "",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "按過往交易手法，知道他是隔日沖的權證分點，會賣掉今天的權證",
+  "case": "",
+  "quote": "他是一個隔日沖的權證分點",
+  "src": "轉錄 OUDBiF_0Vwg 0:11:06",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [],
+  "xiaoge_says": "公司跟台南人都在吸收股票；台南人不是吃素的，趁營收少趕快吃貨；營收成長時就是台南人在賣股票；最近買超多的是元大金華（台南人）、元富台南",
+  "case": "前後文講庫藏股與營收低點",
+  "quote": "等到你看到營收成長的時候 就是台南人在賣股票的時候",
+  "src": "轉錄 OxW07QG8M-U 0:26:28",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大金華",
+  "norm": "元大-金華",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [],
+  "xiaoge_says": "金華是台南人，買超多；甜甜價吃一堆",
+  "case": "與元富台南同列台南人",
+  "quote": "金华是谁 台南人",
+  "src": "轉錄 OxW07QG8M-U 0:28:12",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元富台人",
+  "norm": "元富-台南",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [],
+  "xiaoge_says": "元富台南也是台南人，最近買得多",
+  "case": "",
+  "quote": "元富台人 甜甜价",
+  "src": "轉錄 OxW07QG8M-U 0:28:17",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "摩根大通",
+  "norm": "摩根大通",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "小摩不知道是不是隔日沖",
+  "case": "",
+  "quote": "小摩不曉得是不是葛日聰",
+  "src": "轉錄 OxW07QG8M-U 0:34:36",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "公司派",
+  "stocks": [
+   "喬春(機器轉錄，名稱存疑)"
+  ],
+  "xiaoge_says": "6年前的關鍵分點現在還是它，去查應該是老闆的分點；6年算起來賠3億，他出的時候看是賺錢還賠錢；老闆不會讓自己賠錢出場",
+  "case": "高點94元，6-7年前賣在這；後來跌到13元又大買；小哥曾30幾元跟了賠錢，說「這個關鍵分點假的」",
+  "quote": "這個我們去查應該是老闆的分點",
+  "src": "轉錄 PzFh0EAEOUw 0:28:03",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "可成最近有香港人進來買，台南人也買一堆，台南人跟高雄人都買一堆",
+  "case": "",
+  "quote": "台南人也买一堆",
+  "src": "轉錄 QHpnG7cgIks 0:54:48",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "康和",
+  "norm": "康和",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [
+   "東森"
+  ],
+  "xiaoge_says": "東森今天康和大買，該不會是隔日沖的康和；還有永豐金信義；明天再看",
+  "case": "",
+  "quote": "康和 該不會是隔日沖的康和",
+  "src": "轉錄 QHpnG7cgIks 1:01:42",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "群益三重",
+  "norm": "群益-三重",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "陽明(2609)"
+  ],
+  "xiaoge_says": "陽明反彈3%，點進分點一看都是隔日沖，群益三重、康和；只要有一天買的是波段分點就比較放心",
+  "case": "",
+  "quote": "點進去分點一看 都是格日聰",
+  "src": "轉錄 QHpnG7cgIks 0:56:32",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵買",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "遠雄(機器轉錄)"
+  ],
+  "xiaoge_says": "關鍵買加布林上軌翹，是不錯買點，做短線或小波段通常蠻好做",
+  "case": "",
+  "quote": "關鍵買上軌翹 蠻強的",
+  "src": "轉錄 QHpnG7cgIks 0:35:02",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "統政(機器轉錄)"
+  ],
+  "xiaoge_says": "統政的關鍵分點之前買很多、賣很多，位置還好，但大漲隔天通常蠻有賣壓",
+  "case": "",
+  "quote": "統政的關鍵分點在之前買很多",
+  "src": "轉錄 QHpnG7cgIks 1:01:09",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點清單",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "直播優惠送最新版345家關鍵分點清單，關鍵分點很重要",
+  "case": "",
+  "quote": "關鍵分點很重要",
+  "src": "轉錄 QHpnG7cgIks 0:51:27",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "桃園人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "紅玉(機器轉錄)"
+  ],
+  "xiaoge_says": "桃園人大買，後面噴出去；但最近主力買賣超有點不理想，有賺想跑就可以跑",
+  "case": "",
+  "quote": "紅玉呢 桃園人大買",
+  "src": "轉錄 SLpwqTfaPeI 0:07:35",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大永寧",
+  "norm": "",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "627(機器轉錄)"
+  ],
+  "xiaoge_says": "元大永寧是隔日沖，凹單，非常愛凹",
+  "case": "",
+  "quote": "这个隔日冲 凹单 这个很爱凹",
+  "src": "轉錄 SLpwqTfaPeI 0:13:43",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台灣匯立",
+  "norm": "台灣匯立",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "有人說台灣匯立才是關鍵分點，小哥反駁：這麼肉腳的分點哪是關鍵分點，關鍵分點是低買高賣，台灣匯立是肉腳",
+  "case": "可成高檔台灣匯立賣、區間虧損32億",
+  "quote": "這麼肉腳的分點哪是關鍵分點 關鍵分點是低買高賣",
+  "src": "轉錄 SLpwqTfaPeI 0:17:01",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦台南",
+  "norm": "富邦-台南",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "低檔157買，現在181，賺了7億；區間獲利滿滿的台南人",
+  "case": "區間獲利：凱基東門、富邦台南、兆豐北高雄、元富台南、國票台南、元大金華",
+  "quote": "你自己看 满满的台南人",
+  "src": "轉錄 SLpwqTfaPeI 0:18:40",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "兆豐北高雄",
+  "norm": "兆豐-北高雄",
+  "kind": "branch",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "高檔380、360多、370多大賣給外資；低檔大買時是外資砍的",
+  "case": "",
+  "quote": "他们在高档380 360几 370几是大卖的",
+  "src": "轉錄 SLpwqTfaPeI 0:19:17",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元富",
+  "norm": "元富",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [
+   "紅寶(機器轉錄)"
+  ],
+  "xiaoge_says": "元富盤後一次倒6000多張給統一(3700張)、凱基永和(714張)、凱基內湖，統一賠1300萬、凱基永和賠322萬、凱基內湖賠190萬，元富賺4000多萬",
+  "case": "元富盤後倒貨坑殺隔日沖；今天元富鎖紅寶，厲害的隔日沖；不要看到元富隔日沖買就隔天空",
+  "quote": "元富很厉害的",
+  "src": "轉錄 SLpwqTfaPeI 0:37:09",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "統一",
+  "norm": "統一",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "統一吃元富盤後倒的貨3700張賠1300萬；隔日沖統一怕元富",
+  "case": "",
+  "quote": "統一怕原副",
+  "src": "轉錄 SLpwqTfaPeI 0:45:57",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基永和",
+  "norm": "凱基-永和",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "吃元富盤後倒貨714張，賠322萬",
+  "case": "",
+  "quote": "凱基永和終於出完了 賠了322萬",
+  "src": "轉錄 SLpwqTfaPeI 0:37:17",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基內湖",
+  "norm": "凱基-內湖",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "吃元富盤後倒貨，賠190萬",
+  "case": "",
+  "quote": "凱基內湖賠了190萬",
+  "src": "轉錄 SLpwqTfaPeI 0:37:46",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "中砂(1560)"
+  ],
+  "xiaoge_says": "中砂隔日沖慘賠，凱基台北賠了6400萬砍得算快、果決",
+  "case": "囤了5個月一次被倒貨",
+  "quote": "凱基台北赔了6,400",
+  "src": "轉錄 SLpwqTfaPeI 0:44:22",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "中信松江",
+  "norm": "中國信託-松江",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "中砂(1560)"
+  ],
+  "xiaoge_says": "中信松江賠1300萬",
+  "case": "",
+  "quote": "中国信州中松江的赔了1,300",
+  "src": "轉錄 SLpwqTfaPeI 0:44:34",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "統一台中",
+  "norm": "統一-台中",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "中砂(1560)"
+  ],
+  "xiaoge_says": "統一台中賠1100萬",
+  "case": "",
+  "quote": "同一台中赔了1,100",
+  "src": "轉錄 SLpwqTfaPeI 0:44:36",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "華南永昌古亭",
+  "norm": "",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [],
+  "xiaoge_says": "隔日沖(凱基台北、中信松江、統一台中、日盛文化)最怕華南永昌古亭這種波段到貨，一次倒499張",
+  "case": "隔日沖還怕波段大賣",
+  "quote": "他們就很害怕這種華永昌古庭",
+  "src": "轉錄 SLpwqTfaPeI 0:46:20",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "土城永寧",
+  "norm": "元大-土城永寧",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [],
+  "xiaoge_says": "在市場上看過很多追漲停的富邦建國、土城永寧，越追部位越大，因為大部分賺錢",
+  "case": "",
+  "quote": "他們是越追越大",
+  "src": "轉錄 Sko5z0Fz6qc 0:21:51",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦建國",
+  "norm": "富邦-建國",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [],
+  "xiaoge_says": "追漲停的富邦建國，越追部位越大，因為大部分賺錢",
+  "case": "",
+  "quote": "富邦建國 土城永寧 他們是越追越大",
+  "src": "轉錄 Sko5z0Fz6qc 0:21:51",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵第一檔",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [],
+  "xiaoge_says": "找該股長期獲利最大的分點；獲利最大不一定厲害，有的只是金額多，買賣均價差20%、30%的才厲害；低檔優買就是不錯的表情；關鍵低檔買高殖利率",
+  "case": "去年大盤低檔寫了關鍵低檔買高殖利率的股票",
+  "quote": "買賣均價大概差個20% 30%那種我們就覺得他滿厲害",
+  "src": "轉錄 THghf_sVRPI 0:02:52",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "桃園某分點",
+  "norm": "",
+  "kind": "branch",
+  "role": "關鍵分點",
+  "stocks": [
+   "健鼎(3044)"
+  ],
+  "xiaoge_says": "健鼎有一個厲害分點在桃園，低檔82元買非常多，一路到130還沒大幅賣出；最近主力有點轉賣，但這個關鍵分點還沒賣",
+  "case": "每年配息約7元，賺的配息超過五年",
+  "quote": "然後他有一個厲害分點 在桃園的某分點",
+  "src": "轉錄 THghf_sVRPI 0:05:13",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "只要看今天股票強的就做多，隔天就賣掉，不帶感情；單一分點的量有時比元大全公司還多；可以研究他每天買進什麼股票",
+  "case": "",
+  "quote": "那凱太北貢獻了超一大的量",
+  "src": "轉錄 THghf_sVRPI 0:09:13",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "隔日沖",
+  "norm": "",
+  "kind": "category",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "主力波段賣時的紅K通常是隔日沖進來，隔日沖只追今天強勢股、隔天賣，加上主力波段賣壓，容易黑K",
+  "case": "",
+  "quote": "隔日沖他只會去追今天的強勢股",
+  "src": "轉錄 THghf_sVRPI 0:12:44",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基市政",
+  "norm": "凱基-市政",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [],
+  "xiaoge_says": "主力大咖，昨天買3856張賣3850張認賠，厲害的人都這樣認賠，1000萬對他只是小錢",
+  "case": "元大(?)砍3300張、凱基信義砍2600張把股票砍下來",
+  "quote": "厲害的人都會這樣認賠",
+  "src": "轉錄 Trz2a7Oorwk 0:06:47",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基信義",
+  "norm": "凱基-信義",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "一砍2600張，直接把股票砍下來",
+  "case": "",
+  "quote": "凯基辛亦一砍一砍2600张",
+  "src": "轉錄 Trz2a7Oorwk 0:07:18",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "這一檔要聽台南人的，因為可成工廠在台南；找厲害分點：統計設2500天(約10年)看區間獲利",
+  "case": "2020年(第17集)股價170幾元時提醒",
+  "quote": "這一檔真的要聽台南人的",
+  "src": "轉錄 Trz2a7Oorwk 0:17:08",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "港商德意志",
+  "norm": "港商德意志",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "10年區間獲利第一名，已走掉，買均價222賣均價234，賺12塊也算厲害",
+  "case": "",
+  "quote": "第一名這個已經走了 港商得意志",
+  "src": "轉錄 Trz2a7Oorwk 0:17:58",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "兆豐北高雄",
+  "norm": "兆豐-北高雄",
+  "kind": "branch",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "10年區間獲利第二名，買均價209賣均價260，超厲害；低檔大買反彈、高檔賣掉",
+  "case": "",
+  "quote": "他買金價是209 賣金價260 這超厲害",
+  "src": "轉錄 Trz2a7Oorwk 0:18:12",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元富台南",
+  "norm": "元富-台南",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "買182賣230賺50，進貨成本非常低，也好厲害",
+  "case": "",
+  "quote": "元富台南買182賣230",
+  "src": "轉錄 Trz2a7Oorwk 0:20:27",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "國票台南",
+  "norm": "國票-台南",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "買199賣259，賺60塊，買一萬多張",
+  "case": "",
+  "quote": "国票台南买199卖259",
+  "src": "轉錄 Trz2a7Oorwk 0:20:35",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基東門",
+  "norm": "凱基-東門",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "買215賣233，算比較差，因為他肩負著可成股的重任",
+  "case": "",
+  "quote": "凯基东门呢买215卖233",
+  "src": "轉錄 Trz2a7Oorwk 0:20:43",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大金華",
+  "norm": "元大-金華",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "買199賣245，也厲害，一進場都賺50塊",
+  "case": "",
+  "quote": "元大金华买199卖245",
+  "src": "轉錄 Trz2a7Oorwk 0:20:50",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "外資虧損八國聯軍",
+  "norm": "",
+  "kind": "category",
+  "role": "外資",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "區間虧損前15名：美林賠73億、瑞士信貸33億、台灣匯立32億、港商麥格理26億、摩根士丹利、花旗環球、摩根大通；光可成賠了200億；賺錢的是台南分點",
+  "case": "外資是靠期貨賺錢、有攤平大法",
+  "quote": "光美林賠73億",
+  "src": "轉錄 Trz2a7Oorwk 0:19:57",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南人",
+  "norm": "",
+  "kind": "region",
+  "role": "公司派",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "那些人一定是關係人士、內部人士，在台南分點附近；長線大賣在2018年2月",
+  "case": "",
+  "quote": "这些人都一定是关系人士 内部人士在台南分点附近的",
+  "src": "轉錄 Trz2a7Oorwk 0:21:38",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵買主投買",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "標題：關鍵買、主力買、投信買，可成大漲",
+  "case": "",
+  "quote": "關鍵買主頭買可乘大長",
+  "src": "轉錄 U6uFerF1ric 0:01:38",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [
+   "威盛(2388)"
+  ],
+  "xiaoge_says": "威盛的厲害分點叫凱基台北（處置部），處置部今天稍微出掉一些；被關(處置)出來是好買點",
+  "case": "",
+  "quote": "那這個厲害的分點叫凱基台北",
+  "src": "轉錄 U6uFerF1ric 0:06:08",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵大買你不賠",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "關鍵大買你不賠，高檔大賣你是誰；很多人在可成低檔時說關鍵分點沒用，高檔時就知道有用；沒有人低檔大賣叫關鍵分點，關鍵分點都是高檔大賣",
+  "case": "低檔跌到140，一堆人酸兆豐北高雄是肉腳；今年帳面：凱基東門賺5.8億、富邦台南2.8億、兆豐北高雄(買5000多張)1.3億、元富台南1.2億，幾個分點加起來10億",
+  "quote": "關鍵大買你不賠",
+  "src": "轉錄 U6uFerF1ric 0:19:57",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台灣匯立",
+  "norm": "台灣匯立",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "台灣匯立一路賣，有人說他才是關鍵籌碼，小哥說沒有人低檔大賣叫關鍵分點",
+  "case": "",
+  "quote": "沒有人低檔大賣叫做關鍵分點的",
+  "src": "轉錄 U6uFerF1ric 0:21:44",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "桃園人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [],
+  "xiaoge_says": "這檔桃園人大買、買超多，這種股票拉回看要不要找機會上車",
+  "case": "昨天漲停很多隔日沖，隔日沖出完後大黑K",
+  "quote": "那這檔股票他是桃園人大買",
+  "src": "轉錄 U6uFerF1ric 0:31:25",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦員領",
+  "norm": "",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "雅曦(機器轉錄)"
+  ],
+  "xiaoge_says": "今天由富邦員領鎖漲停，他是隔日沖",
+  "case": "",
+  "quote": "由這個富邦員領去鎖漲停的 他是葛池聰的",
+  "src": "轉錄 U6uFerF1ric 0:45:50",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵分點",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "巨洋(機器轉錄)"
+  ],
+  "xiaoge_says": "巨洋是關鍵分點買進的股票，關鍵分點在低檔大買",
+  "case": "",
+  "quote": "他是一個這個關鍵分點買進的股票",
+  "src": "轉錄 U6uFerF1ric 0:45:58",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "今天凱基台北買多還隔日沖，明天有些壓力",
+  "case": "",
+  "quote": "今天凱基台北買多還隔日沖",
+  "src": "轉錄 U6uFerF1ric 0:51:08",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大龍潭",
+  "norm": "元大-龍潭",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [],
+  "xiaoge_says": "問桃園人有沒有買一些回來，元大龍潭有買一點，位置蠻低、殖利率還可以",
+  "case": "",
+  "quote": "元大龍潭有买一点回来",
+  "src": "轉錄 U6uFerF1ric 0:52:14",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "元大北屯",
+  "norm": "元大-北屯",
+  "kind": "branch",
+  "role": "高手",
+  "stocks": [
+   "金元(機器轉錄)"
+  ],
+  "xiaoge_says": "元大北屯厲害，高檔賣低檔買，今天噴出去居然沒有賣",
+  "case": "",
+  "quote": "北屯厲害哦 高檔賣 低檔買",
+  "src": "轉錄 U6uFerF1ric 0:58:49",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦台北",
+  "norm": "富邦-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "9907"
+  ],
+  "xiaoge_says": "9907富邦台北賣掉之後還收大紅K；昨天大買的分點富邦台北不算第一名，大摩連續買把他買上去，這種隔日沖不是第一名又有波段單的，我都不會講空",
+  "case": "",
+  "quote": "富邦台北還不算第一名 那大摩連續買就把他買上去了",
+  "src": "轉錄 U6uFerF1ric 0:59:13",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "兆豐北高雄",
+  "norm": "兆豐-北高雄",
+  "kind": "branch",
+  "role": "關鍵分點",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "周刊說可成都由兆豐北高雄先買、實施庫藏股後到貨給；小哥反駁：兆豐北高雄買得更高、380多賣得光明正大，看到他我就進去買，買了後面賠錢被酸",
+  "case": "",
+  "quote": "卖在380多光明正大",
+  "src": "轉錄 WXpwOJAy2Uo 0:16:26",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南的厲害分點",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "厲害的分點是低買高賣，所有台南的厲害分點都是低買高賣；2400天(10年)區間獲利：兆豐北高雄21元到288元差77塊第一名；凱基東門192到247差50塊",
+  "case": "國票台南198到292差近100塊；元大不算(買259賣261)",
+  "quote": "所有台南的利害分點都是低買高賣",
+  "src": "轉錄 WXpwOJAy2Uo 0:18:05",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "台南人",
+  "norm": "",
+  "kind": "region",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "凱基東門、國票台南、元富台南、元大金華、永豐金永康等台南人都是厲害的，台灣之光；小哥本人陪著台南人一起下車，台南人目前沒有下車的跡象",
+  "case": "",
+  "quote": "这台人都是厉害的 都是台湾之光",
+  "src": "轉錄 WXpwOJAy2Uo 0:19:19",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "永豐金永康",
+  "norm": "永豐金-永康",
+  "kind": "branch",
+  "role": "地緣",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "列為可成區間獲利前幾名的台南分點",
+  "case": "",
+  "quote": "元大金华 永恒金永康",
+  "src": "轉錄 WXpwOJAy2Uo 0:19:24",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "八大行庫",
+  "norm": "",
+  "kind": "category",
+  "role": "其他",
+  "stocks": [
+   "可成(2474)"
+  ],
+  "xiaoge_says": "可成最近的買超是八大行庫（第一金、日盛、凱基），其實是00878的回單，都是投信的化身，下單的都是投信",
+  "case": "",
+  "quote": "其實它是00878的回單",
+  "src": "轉錄 YTnITPC9sek 0:20:37",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "瑞士信貸",
+  "norm": "瑞士信貸",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [],
+  "xiaoge_says": "今天買超分點瑞士信貸是波段，但看起來不大持久，他過往就是這樣，是一個不大持久的分點",
+  "case": "",
+  "quote": "是一個不大持久的分點",
+  "src": "轉錄 YTnITPC9sek 0:20:13",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基",
+  "norm": "凱基",
+  "kind": "broker",
+  "role": "隔日沖",
+  "stocks": [
+   "所掌停(機器轉錄)"
+  ],
+  "xiaoge_says": "昨天隔日沖是凱基，頭很大，所以必須拉高出貨；他們最恨最後一筆到貨",
+  "case": "",
+  "quote": "他們最恨最後一筆到貨的",
+  "src": "轉錄 YTnITPC9sek 0:38:24",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "摩根大通",
+  "norm": "摩根大通",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [
+   "航運股"
+  ],
+  "xiaoge_says": "摩根大通比較波段一點；統一有點短線；富邦今天買了一堆航運股，凱基台北有點短，明天風浪有點大",
+  "case": "",
+  "quote": "摩根大通比較波段一點",
+  "src": "轉錄 YTnITPC9sek 1:00:23",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦南屯",
+  "norm": "富邦-南屯",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [
+   "1565"
+  ],
+  "xiaoge_says": "1565被隔日沖噎到：中港120、南屯49，Gate的隔日沖；統一、富邦南屯各100張",
+  "case": "",
+  "quote": "這個是Gate的隔日沖",
+  "src": "轉錄 YTnITPC9sek 1:05:35",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "富邦建國",
+  "norm": "富邦-建國",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "今天被噎到的是富邦建國",
+  "case": "",
+  "quote": "這個是今天噎到是富邦建國",
+  "src": "轉錄 YTnITPC9sek 1:07:23",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "群益桃園",
+  "norm": "群益-桃園",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [
+   "新勝利(機器轉錄)"
+  ],
+  "xiaoge_says": "五天賣了6977張，申報9600張，猜他是不是重要分點，強烈懷疑與庫藏股有關",
+  "case": "",
+  "quote": "群義桃園賣了6977張",
+  "src": "轉錄 YTnITPC9sek 1:12:08",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "中國信託",
+  "norm": "中國信託",
+  "kind": "broker",
+  "role": "其他",
+  "stocks": [],
+  "xiaoge_says": "庫藏股分點：中國信託、凱基(金記?)這兩個是庫藏股分點",
+  "case": "",
+  "quote": "這兩個是庫廠股分點",
+  "src": "轉錄 YTnITPC9sek 1:13:43",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基信義",
+  "norm": "凱基-信義",
+  "kind": "branch",
+  "role": "其他",
+  "stocks": [
+   "6134"
+  ],
+  "xiaoge_says": "凱基信義我是蠻尊重的，不知道是不是隔日沖",
+  "case": "",
+  "quote": "凱基信義我是蠻尊重的啦",
+  "src": "轉錄 YTnITPC9sek 1:15:43",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "摩根大通",
+  "norm": "摩根大通",
+  "kind": "broker",
+  "role": "外資",
+  "stocks": [
+   "台亞(2340)"
+  ],
+  "xiaoge_says": "摩根大通買進，難怪隔日沖(富邦建國)出光；新加坡Rain今天也買，那兩個大咖才能賣掉",
+  "case": "富邦建國出光",
+  "quote": "原來是摩根大通買進來啊 難怪他們今天出的光",
+  "src": "轉錄 YTnITPC9sek 1:23:05",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "凱基台北",
+  "norm": "凱基-台北",
+  "kind": "branch",
+  "role": "隔日沖",
+  "stocks": [],
+  "xiaoge_says": "今天凱基台北大買，這是難搞的壓縮大波；明天凱基台北會把各位…（機器轉錄不完整）",
+  "case": "",
+  "quote": "凱基台北大買",
+  "src": "轉錄 YTnITPC9sek 1:24:25",
+  "reliab": "機器轉錄"
+ },
+ {
+  "branch": "關鍵買",
+  "norm": "",
+  "kind": "category",
+  "role": "關鍵分點",
+  "stocks": [
+   "基元電(機器轉錄)"
+  ],
+  "xiaoge_says": "主力買加關鍵買，還不錯，沒賣",
+  "case": "",
+  "quote": "基元電是主頭加關鍵買",
+  "src": "轉錄 YTnITPC9sek 1:28:21",
+  "reliab": "機器轉錄"
+ }
+]
