@@ -69,7 +69,16 @@ def _ingest_trade(line):
     t = biglot_dashboard.datetime.fromisoformat(ts)
     gap = sid in biglot_dashboard.ST.last_seen and (t - biglot_dashboard.ST.last_seen[sid]).total_seconds() > biglot_dashboard.GAP_SECONDS
     biglot_dashboard.ST.last_seen[sid] = t
-    _streak_live.on_trade(sid, t, px, dv, b, a)       # 連次/連量(只讀描述欄;例外自吞,不影響本函式)
+    _t_ex = t                                         # 連次窗用交易所成交時間（ws `time`，µs）；缺值/時鐘異常退回收到時間
+    try:
+        _x = d.get("time")
+        if _x is not None:
+            _tx = biglot_dashboard.datetime.fromtimestamp(float(_x) / 1e6, biglot_dashboard.TZ)
+            if abs((_tx - t).total_seconds()) <= 10.0:
+                _t_ex = _tx
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    _streak_live.on_trade(sid, _t_ex, px, dv, b, a)   # 連次/連量(只讀描述欄;例外自吞,不影響本函式)
     amt = px * dv * 1000
     bk = bucket_key(t)
     row = biglot_dashboard.ST.buckets.setdefault(sid, {}).setdefault(
@@ -162,6 +171,11 @@ def _stk_trade(sid, line, st):
         return
     m["tot"] += amt
     m["vol"] += dv
+    try:                                                              # 每分鐘最後一筆的買一/賣一（現貨中價用；基差見 biglot/fut_basis.py）
+        if b is not None and a is not None and float(b) > 0 and float(a) > 0:
+            m["bid"], m["ask"] = float(b), float(a)
+    except (TypeError, ValueError):
+        pass
     sgn = 1 if side > 0 else (-1 if side < 0 else 0)
     if amt >= biglot_dashboard.BIG_AMT:
         m["big"] += sgn * amt

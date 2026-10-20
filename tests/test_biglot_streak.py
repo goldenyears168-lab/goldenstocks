@@ -129,3 +129,77 @@ class StreakTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreakEventsTest(unittest.TestCase):
+    def _run(self, px_step=0.0, outer=30, n=10, ref=10.0):
+        trk = StreakTracker()
+        trk.set_ref("X", ref)
+        px = 100.0
+        for k in range(n):
+            feed_window(trk, "X", k, outer=outer, px=px)
+            px += px_step
+        feed_window(trk, "X", n, inner=40, px=px)       # 綠窗打斷
+        trk.advance("X", T0 + 5 * (n + 2))
+        return trk
+
+    def test_lit_and_flip_events_recorded_for_grid_marks(self):
+        ev = self._run().events("X")
+        self.assertEqual([e["kind"] for e in ev], ["lit", "flip"])
+        f = ev[1]
+        self.assertEqual((f["d"], f["n"]), (1, 10))        # 被打斷的是外攻
+        self.assertGreaterEqual(f["nb5"], 3)
+
+    def test_exhaustion_needs_volume_and_stall(self):
+        from biglot.streak import is_exhaustion
+        flat = self._run(px_step=0.0).events("X")[1]
+        self.assertTrue(flat["stall"] and is_exhaustion(flat))            # 爆量、價格不再創高 → 竭盡
+        rising = self._run(px_step=0.5).events("X")[1]
+        self.assertFalse(rising["stall"])                                  # 每窗都創新高 → 沒漲不動，不算竭盡
+        self.assertFalse(is_exhaustion(rising))
+        thin = self._run(px_step=0.0, outer=2).events("X")[1]              # 每窗 2 張（<5×均量）→ 量不足
+        self.assertLess(thin["nb5"], 3)
+        self.assertFalse(is_exhaustion(thin))
+
+    def test_snapshot_flip_carries_exhaustion_flag(self):
+        trk = self._run()
+        snap = trk.snapshot("X", T0 + 5 * 12)
+        self.assertTrue(snap["flip"]["exh"])
+
+    def test_tie_window_is_break_not_color_flip(self):
+        trk = StreakTracker(); trk.set_ref("X", 10.0)
+        for k in range(10):
+            feed_window(trk, "X", k, outer=30)
+        feed_window(trk, "X", 10, outer=5, inner=5)           # 平手：連次中斷但沒有轉色
+        trk.advance("X", T0 + 5 * 12)
+        self.assertEqual([e["kind"] for e in trk.events("X")], ["lit"])
+        self.assertIsNone(trk.snapshot("X", T0 + 5 * 12)["flip"])
+
+    def test_percentile_threshold_overrides_x5_burst(self):
+        from biglot.streak import is_exhaustion
+        px = 100.0
+        trk = StreakTracker(); trk.set_ref("X", 10.0)
+        for k in range(10):
+            feed_window(trk, "X", k, outer=3, px=px)             # 3 張 <5×均量(0.83×5=4.2) → 舊規則不算爆量
+        feed_window(trk, "X", 10, inner=40, px=px)
+        trk.advance("X", T0 + 5 * 12)
+        self.assertFalse(is_exhaustion(trk.events("X")[1]))
+        trk2 = StreakTracker(); trk2.set_ref("X", 10.0)
+        trk2.set_thresholds("X", {bk: 2.0 for bk in range(9)})   # 各時段 P90＝2 張 → 3 張都算大量
+        for k in range(10):
+            feed_window(trk2, "X", k, outer=3, px=px)
+        feed_window(trk2, "X", 10, inner=40, px=px)
+        trk2.advance("X", T0 + 5 * 12)
+        f = trk2.events("X")[1]
+        self.assertGreaterEqual(f["nb5"], 3)
+        self.assertTrue(is_exhaustion(f))
+        self.assertEqual(trk2.snapshot("X", T0 + 5 * 12)["burst_src"], "p90")
+
+    def test_short_streak_has_no_events(self):
+        trk = StreakTracker()
+        trk.set_ref("X", 10.0)
+        for k in range(5):
+            feed_window(trk, "X", k, outer=30)
+        feed_window(trk, "X", 5, inner=40)
+        trk.advance("X", T0 + 5 * 7)
+        self.assertEqual(trk.events("X"), [])

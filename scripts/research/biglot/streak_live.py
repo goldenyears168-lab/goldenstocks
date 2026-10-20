@@ -8,8 +8,14 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import subprocess
+import sys
+import threading
 from datetime import datetime
+from pathlib import Path
 
 from biglot.streak import StreakTracker
 from stock_db import DEFAULT_DB_PATH
@@ -19,6 +25,41 @@ SESSION_MIN = 265.0
 TRACKER = StreakTracker()
 WM = {"t": 0.0}                       # 水位：已餵入的最新成交 time-of-day 秒
 ERR = {"n": 0, "last": None, "ref_n": 0}
+LOWVOL: set = set()                   # 近 10 日日均量 <3,000 張（作者適用範圍外：不標竭盡、連次欄灰化）
+LOWVOL_LOTS = 3000.0
+THR_DIR = Path(DEFAULT_DB_PATH).parent / "biglot_streak"
+THR_INFO = {"state": "none", "dates": None, "n": 0}
+_RAW_DIR = Path(DEFAULT_DB_PATH).parent.parent / "cache" / "biglot_live_watch"
+
+
+def _load_thresholds(sids) -> None:
+    """載入 thresholds.json（每檔×30 分鐘時段單窗主導量 P90）。缺檔/壞檔 → 退回均量×5，狀態寫進 THR_INFO。"""
+    try:
+        d = json.loads((THR_DIR / "thresholds.json").read_text(encoding="utf-8"))
+        n = 0
+        for sid in sids:
+            t = d["thr"].get(sid)
+            if t:
+                TRACKER.set_thresholds(sid, {int(k): v for k, v in t.items()})
+                n += 1
+        THR_INFO.update({"state": "p90", "dates": d.get("dates"), "n": n})
+    except Exception as e:  # noqa: BLE001
+        THR_INFO.update({"state": "fallback_x5", "n": 0})
+        ERR["n"] += 1; ERR["last"] = repr(e)
+
+
+def _refresh_thresholds_async(sids, today: str) -> None:
+    """thresholds.json 落後最新 raw 日時，背景（nice）重算；完成後套用到之後的窗。盤中重啟的重放窗仍用當下載入的門檻。"""
+    def run():
+        try:
+            root = Path(__file__).resolve().parents[3]
+            env = dict(os.environ, PYTHONPATH=f"{root}/src:{root}/scripts/research")
+            subprocess.run(["nice", "-n", "15", sys.executable, str(root / "scripts/research/biglot_streak_thresholds.py"), today],
+                           env=env, check=True, timeout=1800)
+            _load_thresholds(sids)
+        except Exception as e:  # noqa: BLE001
+            ERR["n"] += 1; ERR["last"] = repr(e)
+    threading.Thread(target=run, daemon=True, name="streak-thr-refresh").start()
 
 
 def reset_for_day(sids, today: str) -> None:
@@ -42,6 +83,15 @@ def reset_for_day(sids, today: str) -> None:
                 TRACKER.set_ref(sid, sum(v) / len(v) * CONT_VOL_RATIO / SESSION_MIN)
                 n += 1
         ERR["ref_n"] = n
+        LOWVOL.clear()
+        LOWVOL.update(sid for sid, v in per.items() if len(v) >= 3 and sum(v) / len(v) < LOWVOL_LOTS)
+    except Exception as e:  # noqa: BLE001
+        ERR["n"] += 1; ERR["last"] = repr(e)
+    _load_thresholds(sids)
+    try:                                                      # 門檻檔是否落後最新 raw 日（昨天以前）
+        last_raw = max((p.stem.replace("raw_", "") for p in _RAW_DIR.glob("raw_2026-*.jsonl") if p.stem.replace("raw_", "") < today), default=None)
+        if last_raw and (not THR_INFO["dates"] or max(THR_INFO["dates"]) < last_raw):
+            _refresh_thresholds_async(list(sids), today)
     except Exception as e:  # noqa: BLE001
         ERR["n"] += 1; ERR["last"] = repr(e)
 
@@ -52,6 +102,10 @@ def on_trade(sid: str, t: datetime, px: float, dv: float, bid, ask) -> None:
         TRACKER.on_trade(sid, ts, px, dv, bid, ask)
         if ts > WM["t"]:
             WM["t"] = ts
+        st = TRACKER._s.get(sid)
+        if st is not None and st.d > 0 and st.n >= 10:                 # P1 前向帳本：只在外攻連次≥10 時才做完整 snapshot
+            from biglot import xiaoge_cols
+            xiaoge_cols.maybe_p1(sid, TRACKER.snapshot(sid, WM["t"]), ts)
     except Exception as e:  # noqa: BLE001
         ERR["n"] += 1; ERR["last"] = repr(e)
 

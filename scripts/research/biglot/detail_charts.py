@@ -30,6 +30,7 @@ import html as html_mod
 import json
 
 import biglot_dashboard
+from biglot import fut_basis as _fb
 from biglot.scoring_support import _wrt_cum
 from biglot.trade_ingest import _stk_trade
 from biglot.utils import _limits
@@ -68,6 +69,31 @@ def _stock_series_locked(sid, day):
     return st
 
 
+def _fut_overlay(sid, day, st):
+    """個股頁期貨疊圖資料：(期貨資訊, {HH:MM: 基差%})。基差＝期貨中價÷現貨中價−1（現貨中價取該分鐘最後買賣一，缺值退回成交價）。例外自吞。"""
+    try:
+        info = _fb.series(sid, day)
+    except Exception:  # noqa: BLE001
+        return None, {}
+    if not info:
+        return None, {}
+    bas = {}
+    for k, m in st["mins"].items():
+        fm = info["fmid"].get(k)
+        sm = _fb.mid(m.get("bid"), m.get("ask"), m.get("px"))
+        b = _fb.basis_pct(fm, sm)
+        if b is not None:
+            bas[k] = b
+    return info, bas
+
+
+def _nice_pct(v):
+    for step in (0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0):
+        if v <= step:
+            return step
+    return 20.0
+
+
 def _svg_detail(sid, day, st, pc):
     """單圖疊合(2026-09-24):分時價(左軸)+ 成交量(底部淡色柱)+ 累計大戶/散戶淨(右軸,0 線置中)。x 依實際時鐘 09:00–13:30。"""
     mins = st["mins"]
@@ -85,6 +111,9 @@ def _svg_detail(sid, day, st, pc):
     def X(hm):
         return PADL + max(0.0, min(1.0, (_mod(hm) - x0) / (x1 - x0))) * plotW
     pxs = [mins[k]["px"] for k in order if mins[k]["px"]]
+    finfo, bas = _fut_overlay(sid, day, st)
+    fm_all = (finfo or {}).get("fmid") or {}
+    pxs = pxs + [v for k, v in fm_all.items() if x0 <= _mod(k) <= x1]
     lo, hi = min(pxs), max(pxs)
     refs = [pc] if pc else []
     up = dn = None
@@ -103,7 +132,9 @@ def _svg_detail(sid, day, st, pc):
 
     def Y(v):                                  # 價格:左軸,佔整個繪圖區
         return PADT + (yhi - v) / (yhi - ylo) * plotH
-    parts = [f"<svg viewBox='0 0 {W} {H}' style='width:100%;max-width:{W}px;height:auto;background:#0d1117' data-vw='{W}' data-pts='__PTS__'>"]
+    BH, BGAP = 84, 22                          # 基差副圖高度／與主圖間距（沒有期貨資料就不加高）
+    HT = H + (BGAP + BH if bas else 0)
+    parts = [f"<svg viewBox='0 0 {W} {HT}' style='width:100%;max-width:{W}px;height:auto;background:#0d1117' data-vw='{W}' data-pts='__PTS__'>"]
     # 成交量:底部 22% 高度的淡色柱(先畫,壓在最底層)
     VH = plotH * 0.22
     vmax = max((mins[k]["vol"] for k in order), default=1) or 1
@@ -146,6 +177,10 @@ def _svg_detail(sid, day, st, pc):
             parts.append(f"<line x1='{PADL}' y1='{y:.1f}' x2='{W-PADR}' y2='{y:.1f}' stroke='{col}' "
                          f"stroke-dasharray='4 3' stroke-width='1' opacity='0.7'/>")
             parts.append(f"<text x='{W-PADR-2}' y='{y-2:.1f}' fill='{col}' font-size='10' text-anchor='end'>{lab} {val:g}</text>")
+    # 期貨中價（共用價軸、虛線；現貨價線畫在它上面）
+    if fm_all:
+        fpts = " ".join(f"{X(k):.1f},{Y(v):.1f}" for k, v in sorted(fm_all.items()) if x0 <= _mod(k) <= x1)
+        parts.append(f"<polyline points='{fpts}' fill='none' stroke='#2dd4bf' stroke-width='1.3' stroke-dasharray='5 3' opacity='0.95'/>")
     # 分時價格線(最上層)
     pts = " ".join(f"{X(k):.1f},{Y(mins[k]['px']):.1f}" for k in order if mins[k]["px"])
     parts.append(f"<polyline points='{pts}' fill='none' stroke='#e3b341' stroke-width='1.6'/>")
@@ -159,11 +194,36 @@ def _svg_detail(sid, day, st, pc):
     parts.append(f"<text x='{PADL+370}' y='{PADT+11}' fill='#d2a8ff' font-size='10'>— 累計權證簽號淨(自訂尺)</text>")
     for hm in ("09:00", "10:00", "11:00", "12:00", "13:00", "13:30"):
         parts.append(f"<text x='{X(hm):.1f}' y='{H-6}' fill='#8b949e' font-size='10' text-anchor='middle'>{hm}</text>")
+    if fm_all:
+        parts.append(f"<text x='{PADL+520}' y='{PADT+11}' fill='#2dd4bf' font-size='10'>- - 期貨中價(共用價軸)</text>")
+    if bas:                                     # 基差副圖：期貨中價÷現貨中價−1（%），紅=正價差、綠=逆價差；只算 09:00～13:25
+        bmax = _nice_pct(max(abs(v) for v in bas.values()))
+        pt, pb = H + BGAP, H + BGAP + BH - 14
+        zero = (pt + pb) / 2
+
+        def BY(v):
+            return zero - (v / bmax) * ((pb - pt) / 2)
+        if finfo and finfo.get("settle"):
+            parts.append(f"<rect x='{X('13:25'):.1f}' y='{PADT}' width='{X('13:30') - X('13:25'):.1f}' height='{plotH}' fill='#d29922' opacity='0.14'/>")
+            parts.append(f"<rect x='{X('13:25'):.1f}' y='{pt}' width='{X('13:30') - X('13:25'):.1f}' height='{pb - pt}' fill='#d29922' opacity='0.14'/>")
+            parts.append(f"<text x='{X('13:25'):.1f}' y='{pt + 10}' fill='#d29922' font-size='9' text-anchor='end'>結算日:13:30 以收盤價結算,13:25 後不算</text>")
+        parts.append(f"<line x1='{PADL}' y1='{zero:.1f}' x2='{W - PADR}' y2='{zero:.1f}' stroke='#30363d' stroke-width='1'/>")
+        for k, v in sorted(bas.items()):
+            if not (x0 <= _mod(k) <= 805):
+                continue
+            y = BY(v)
+            parts.append(f"<rect x='{X(k) - 1:.1f}' y='{min(y, zero):.1f}' width='2' height='{max(abs(y - zero), 0.6):.1f}' fill='{'#ff7b72' if v >= 0 else '#3fb950'}' opacity='0.9'/>")
+        for v, y in ((bmax, BY(bmax)), (0, zero), (-bmax, BY(-bmax))):
+            parts.append(f"<text x='2' y='{y + 3:.1f}' fill='#8b949e' font-size='10'>{v:+.2f}%</text>")
+        parts.append(f"<text x='{PADL + 4}' y='{pt + 9}' fill='#8b949e' font-size='10'>基差%=期貨中價÷現貨中價−1(紅=正價差、綠=逆價差)· 09:00–13:25</text>")
+        if finfo and finfo.get("exdiv"):
+            parts.append(f"<text x='{W - PADR - 2}' y='{pt + 9}' fill='#d29922' font-size='10' text-anchor='end'>⚠ 除息日,基差可能失真</text>")
     parts.append("</svg>")
     # hover 資料:每分鐘 [x, y(價), 時間, 價, 累計大戶萬, 累計散戶萬, 量張]
     cumd = {k: (b, r) for k, b, r in cum}
     wcd = dict(zip(order, wc)) if wc else {}
-    hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"]), round(wcd.get(k, 0) / 1e4)]
+    hov = json.dumps([[round(X(k), 1), round(Y(mins[k]["px"]), 1), k, mins[k]["px"], round(cumd[k][0]), round(cumd[k][1]), int(mins[k]["vol"]), round(wcd.get(k, 0) / 1e4),
+                       (round(fm_all[k], 2) if k in fm_all else None), (round(bas[k], 3) if k in bas else None)]
                       for k in order if mins[k]["px"]])
     return "".join(parts).replace("__PTS__", html_mod.escape(hov, quote=True), 1)
 
@@ -217,5 +277,33 @@ def _svg_mini(st, pc):
     if pc:
         parts.append(f"<line x1='0' y1='{Y(pc):.0f}' x2='{W}' y2='{Y(pc):.0f}' stroke='#8b949e' stroke-dasharray='3 3' opacity='0.7'/>")
     parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{Y(mins[k]['px']):.0f}" for k in order if mins[k]["px"]) + "' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
+    try:                                                     # 買/賣盤竭盡點（小哥三要件：連次≥10 轉色 ∧ 多次爆量 ∧ 漲不動；純標注，不是訊號）
+        from biglot import streak_live as _sl
+        from biglot.streak import is_exhaustion as _is_exh
+        if (st.get("sid") or "") in _sl.LOWVOL:       # 日均量<3,000 張：作者適用範圍外，不標
+            raise StopIteration
+        for e in _sl.TRACKER.events(st.get("sid") or ""):
+            if not _is_exh(e) or not e.get("px"):
+                continue
+            tt, d, ep = e["t"], e["d"], e["px"]
+            hm_ = "%02d:%02d" % (int(tt) // 3600, int(tt) % 3600 // 60)
+            if not (540 <= _mod(hm_) <= 810):
+                continue
+            x, y = X(hm_), Y(max(min(ep, hi), lo))
+            aligned = (d > 0) != bool(e.get("day_up"))        # 順大勢：買盤竭盡(空)配今日黑K、賣盤竭盡(買)配今日紅K；逆大勢畫空心
+            side = "買盤竭盡(紅連" if d > 0 else "賣盤竭盡(綠連"
+            tip = (f"{hm_}:{int(tt) % 60:02d} {side}{e['n']}→轉色) 價{ep:g} 爆窗{e['nb5']} 窗均{e['avg']:.0f}張 打斷窗{e.get('brk_lots') or 0:.0f}張"
+                   f" {'順' if aligned else '逆'}大勢(今日{'紅' if e.get('day_up') else '黑'}K)")
+            col = "#f0883e" if d > 0 else "#56d4dd"
+            fill, stroke = (col, "#0d1117") if aligned else ("none", col)
+            if d > 0:
+                pts = f"{x - 3.5:.0f},{y - 11:.0f} {x + 3.5:.0f},{y - 11:.0f} {x:.0f},{y - 4:.0f}"
+            else:
+                pts = f"{x - 3.5:.0f},{y + 11:.0f} {x + 3.5:.0f},{y + 11:.0f} {x:.0f},{y + 4:.0f}"
+            parts.append(f"<polygon points='{pts}' fill='{fill}' stroke='{stroke}' stroke-width='{0.6 if aligned else 1}'><title>{tip}</title></polygon>")
+    except StopIteration:
+        pass
+    except Exception:  # noqa: BLE001
+        pass
     parts.append("</svg>")
     return "".join(parts), amax, wmax

@@ -14,6 +14,9 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).parent))
+from biglot.streak import exch_tod  # noqa: E402
+
 RAW = Path.home() / "goldenstocks-data/cache/biglot_live_watch"
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/exhaust_panel")
 
@@ -40,7 +43,7 @@ def one(f: Path):
             continue
         last[s] = v
         ts = datetime.fromisoformat(d["ts"])
-        t = ts.hour * 3600 + ts.minute * 60 + ts.second + ts.microsecond / 1e6
+        t = exch_tod(p.get("time"), ts.hour * 3600 + ts.minute * 60 + ts.second + ts.microsecond / 1e6)   # 交易所成交時間（2026-10-21 起；舊面板用收到時間）
         if t < 9 * 3600 - 1 or t > 13 * 3600 + 31 * 60:
             continue
         flag = 1 if (p.get("isOpen") or p.get("isClose")) else 0

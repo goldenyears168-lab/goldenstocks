@@ -56,6 +56,8 @@ def ingest():
         biglot_dashboard.XQ_STYLE = _load_xq_style()
         biglot_dashboard.VIXTWN = _load_vixtwn()
         _streak_live.reset_for_day(list(biglot_dashboard.NAMES) + list(biglot_dashboard.REF_EXTRA), today)   # 連次/連量:換日清狀態+PIT分均量
+        from biglot import xiaoge_cols as _xg
+        _xg.reset_for_day(list(biglot_dashboard.NAMES) + list(biglot_dashboard.REF_EXTRA), today)   # 小哥原版/統計欄:昨漲·連紅·周轉(換日)
         _pc_db, _sig_db, _pc2_db = _load_prev_close_db()
         biglot_dashboard.PREV_CLOSE.update(_pc_db)   # 換日refresh官方昨收
         biglot_dashboard.PREV2_CLOSE.clear()

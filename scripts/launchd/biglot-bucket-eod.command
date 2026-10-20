@@ -138,4 +138,11 @@ if [[ "${RUN_BIGLOT_FP_SCAN:-1}" != "0" ]]; then
   "${PY}" "${ROOT}/scripts/research/biglot_fingerprint_scan.py" --date "${DAY}" \
     || echo "WARN: fingerprint scan 失敗"
 fi
+# 4) 連次/連量『大量』門檻（2026-10-21 加；每檔×30 分鐘時段、前 10 日單窗主導量 P90，PIT）。
+#    給隔天儀表板用；失敗不擋前面的步驟（儀表板會退回均量×5）。開關：.env RUN_BIGLOT_STREAK_THR（預設 1）
+if [[ "${RUN_BIGLOT_STREAK_THR:-1}" != "0" ]]; then
+  NEXTDAY="$(date -v+1d '+%Y-%m-%d' 2>/dev/null || true)"
+  PYTHONPATH="${ROOT}/src:${ROOT}/scripts/research" nice -n 15 "${PY}" "${ROOT}/scripts/research/biglot_streak_thresholds.py" ${NEXTDAY} \
+    || echo "WARN: streak thresholds 失敗"
+fi
 echo "=== biglot-bucket-eod ${DAY} done $(date '+%H:%M:%S') ==="

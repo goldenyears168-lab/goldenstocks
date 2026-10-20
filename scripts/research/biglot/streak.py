@@ -31,17 +31,40 @@ ATTACK_N = 6            # 「攻擊中」門檻（連次）
 JUST_BROKE_SEC = 60.0   # 「剛中斷」顯示窗
 LIT_N = 10                # 官方：連次達 ±10 亮燈＋音效
 BURST_WIN_X = 5.0         # 爆量窗＝單窗主導量 ≥ 5× 該股每 5 秒均量（門檻為本 repo 自訂，官方未揭露）
-RISK_NB5 = 3              # 情境標籤：連次≥10 ∧ 爆量窗 ≥3 ∧ 剛中斷
+RISK_NB5 = 3              # 情境標籤：連次≥10 ∧ 爆量窗 ≥3 ∧ 剛中斷 ∧ 15 分漲 ≥RISE_BPS（知識書 R61）
+RISE_BPS = 200.0          # R61 的『急拉』：15 分鐘漲幅 ≥200bps
+# 竭盡點＝小哥三要件（2026-10-21 依 knowledge-book S13b/V10 對齊）：①連次達 ±10 後轉色 ②伴隨大量（多次爆量；門檻本 repo 自訂＝爆量窗 ≥EXH_MIN_NB5）
+# ③價格『爆量漲不動』（連攻段最後 STALL_WINS 個窗沒再創段內新高/新低，且打斷窗本身也沒創；STALL_WINS 為本 repo 自訂）
+# ②的『大量』：有分位數門檻時＝該窗主導量 ≥ 該股同時段前10日單窗主導量 P90（jack 2026-10-21 選定）；沒有時退回 ≥5×每5秒均量
+EXH_MIN_NB5 = 3
+STALL_WINS = 2            # jack 2026-10-21 選定（基準組合 A：分位90%·爆窗≥3·末2窗）
+THR_BUCKET_SEC = 1800     # 單窗『大量』門檻按 30 分鐘時段分桶（scripts/research/biglot_streak_thresholds.py）
 
 
 def _ok(q):
     return q is not None and not (isinstance(q, float) and math.isnan(q)) and q > 0
 
 
+def exch_tod(time_us, recv_tod: float, max_skew: float = 10.0) -> float:
+    """交易所成交時間（ws `time`，µs epoch）→ 台北當日秒數。缺值、非數字或與『收到時間』差 >max_skew 秒（時鐘異常）→ 退回收到時間。
+    為什麼用交易所時間：與期貨（`trade_time`）一致；收到時間系統性比交易所時間早約 0.55 秒（台虹 10/20 實測 20,275 筆，p95 僅差 0.12 秒），
+    等於把 5 秒窗邊界平移 0.55 秒、約 11% 的成交會落進不同的窗。"""
+    try:
+        tod = (float(time_us) / 1e6 + 8 * 3600) % 86400
+    except (TypeError, ValueError):
+        return recv_tod
+    return tod if abs(tod - recv_tod) <= max_skew else recv_tod
+
+
+def is_exhaustion(ev: dict) -> bool:
+    """小哥『竭盡點』三要件：連次≥10 後轉色 ∧ 伴隨大量（爆窗≥EXH_MIN_NB5，自訂）∧ 價格漲不動（stall）。三個頁面/欄位共用。"""
+    return bool(ev.get("kind") == "flip" and ev.get("n", 0) >= LIT_N and ev.get("nb5", 0) >= EXH_MIN_NB5 and ev.get("stall"))
+
+
 class _Sym:
     __slots__ = ("bid", "ask", "prev_px", "prev_side", "ref", "ht", "hp",
                  "cb", "o", "i", "first", "last", "hi", "lo",
-                 "d", "n", "closed_b", "last_dom", "s_vmax", "s_nb5", "s_cum", "last_break_up")
+                 "d", "n", "closed_b", "last_dom", "s_vmax", "s_nb5", "s_cum", "last_break_up", "last_break", "px0", "ev", "s_ext", "s_ext_n", "thr")
 
     def __init__(self):
         self.bid = self.ask = None
@@ -60,6 +83,12 @@ class _Sym:
         self.s_cum = 0.0                        # 目前連攻段累計主導方向量（張）＝連量的『整段累計』解讀（官方定義單窗/累計未定，並列顯示）
         self.s_nb5 = 0                          # 目前連攻段內『爆量窗』數（單窗主導量 ≥ BURST_WIN_X × 每5秒均量）
         self.last_break_up = None               # 最近一次外攻段被中斷：「剛中斷」用
+        self.last_break = None                  # 最近一次任一方向連攻段被中斷（紅轉綠＝買盤竭盡、綠轉紅＝賣盤竭盡；小哥原版轉色欄用）
+        self.ev = []                            # 當日事件史：('lit'|'flip', 窗收盤秒, 方向, 連次, 爆窗數, 價, 窗均張)；/grid 標注竭盡點用
+        self.thr = None                         # {時段桶: 單窗『大量』門檻(張)}；None＝退回均量×5
+        self.s_ext = None                       # 目前連攻段內價格極值（外攻=最高、內攻=最低）
+        self.s_ext_n = 0                        # 極值最後一次更新時的連次（算『漲不動』用）
+        self.px0 = None                         # 當日第一筆價（含開盤競價）＝開盤價；今日紅K/黑K判斷用
 
 
 class StreakTracker:
@@ -77,6 +106,10 @@ class StreakTracker:
         """PIT 每分鐘均量（張）：前 ≤10 日連續盤日量 ÷ 265。沒設（或 ≤0）→ win_x 為 None、不算爆量窗。"""
         self._st(sid).ref = lots_per_min if _ok(lots_per_min) else None
 
+    def set_thresholds(self, sid: str, thr: dict | None) -> None:
+        """每檔『大量』門檻：{30 分鐘時段桶(int): 張}（PIT：前 10 日同時段單窗主導量 P90）。沒設的時段退回 ≥5×每 5 秒均量。"""
+        self._st(sid).thr = dict(thr) if thr else None
+
     def reset(self) -> None:
         """換日：清所有狀態（ref 也清，呼叫端要重新 set_ref）。"""
         self._s.clear()
@@ -91,6 +124,8 @@ class StreakTracker:
             st.bid = float(bid)
         if _ok(ask):
             st.ask = float(ask)
+        if st.px0 is None:
+            st.px0 = px
         st.ht.append(t); st.hp.append(px)
         if len(st.ht) > 40000:                   # 修剪：留 WIN+60 秒內
             cut = bisect_right(st.ht, t - WIN - 60) - 1
@@ -149,28 +184,55 @@ class StreakTracker:
         tt = (cb + 1) * BIN
         dom = o if d > 0 else (i if d < 0 else 0.0)
         ref5 = (st.ref / 12.0) if st.ref else None
-        is_burst = bool(ref5 and dom >= BURST_WIN_X * ref5)
+        bk = int((cb * BIN - OPEN_T) // THR_BUCKET_SEC)
+        if st.thr and bk in st.thr:
+            is_burst = bool(dom > 0 and dom >= st.thr[bk])
+        else:
+            is_burst = bool(ref5 and dom >= BURST_WIN_X * ref5)
         out: list[dict] = []
         if d != 0 and d == st.d:
             st.s_vmax = max(st.s_vmax, dom)
             st.s_nb5 += 1 if is_burst else 0
             st.s_cum += dom
             st.n += 1
+            if st.s_ext is None or (d > 0 and st.hi > st.s_ext) or (d < 0 and st.lo < st.s_ext):
+                st.s_ext, st.s_ext_n = (st.hi if d > 0 else st.lo), st.n
+            if st.n == LIT_N:
+                st.ev.append({"kind": "lit", "t": tt, "d": d, "n": st.n, "nb5": st.s_nb5, "px": st.last,
+                              "avg": st.s_cum / st.n})
         else:
+            brk = None
+            if st.d != 0 and st.n >= LIT_N and d == -st.d:       # 必須真的轉色（外→內／內→外）；平手只是中斷、不算轉色
+                newext = (st.d > 0 and st.hi > st.s_ext) or (st.d < 0 and st.lo < st.s_ext)     # 打斷窗本身又創段內極值＝沒漲不動
+                stall = bool(not newext and (st.n - st.s_ext_n) >= STALL_WINS)
+                brk = {"stall": stall, "since_ext": st.n - st.s_ext_n, "newext": bool(newext), "brk_lots": dom, "brk_x": (dom / ref5) if (ref5 and dom) else None,
+                       "day_up": bool(st.px0 and st.last > st.px0)}
+                st.ev.append({"kind": "flip", "t": tt, "d": st.d, "n": st.n, "nb5": st.s_nb5, "px": st.last,
+                              "avg": st.s_cum / st.n, **brk})   # 亮燈(≥10)連攻段轉色；是否『竭盡』見 is_exhaustion
             if st.d != 0 and st.n >= BREAK_MIN_N:      # 原連攻段在此被中斷或反向 → 結算事件
                 out.append({"t": tt, "d": st.d, "n": st.n, "nb5": st.s_nb5, "vmax": st.s_vmax,
                             "win_lots": st.last_dom})
+            if st.d != 0:
+                st.last_break = {"t": tt, "d": st.d, "n": st.n, "nb5": st.s_nb5, "vmax": st.s_vmax, **(brk or {})}
             if st.d > 0:
                 st.last_break_up = {"t": tt, "n": st.n, "nb5": st.s_nb5, "vmax": st.s_vmax}
             if d != 0:
                 st.d, st.n = d, 1
                 st.s_vmax, st.s_nb5, st.s_cum = dom, (1 if is_burst else 0), dom
+                st.s_ext, st.s_ext_n = (st.hi if d > 0 else st.lo), 1
             else:
                 st.d, st.n, st.s_vmax, st.s_nb5, st.s_cum = 0, 0, 0.0, 0, 0.0
+                st.s_ext, st.s_ext_n = None, 0
         st.last_dom = dom
         return out
 
     # ---- 讀取 -------------------------------------------------------------
+    def events(self, sid: str) -> list:
+        """當日事件史（複本，dict）：kind=lit|flip，t=窗收盤秒，d=方向（flip 的 d＝被打斷的連攻方向，+1＝買盤竭盡側、−1＝賣盤竭盡側），
+        n 連次、nb5 爆窗數、px 價、avg 窗均張；flip 另有 stall（漲不動）、brk_lots／brk_x（打斷窗量）、day_up（當時價>開盤）。"""
+        st = self._s.get(sid)
+        return list(st.ev) if st else []
+
     def snapshot(self, sid: str, now: float | None = None) -> dict | None:
         st = self._s.get(sid)
         if st is None:
@@ -184,8 +246,18 @@ class StreakTracker:
         if st.hp and st.ht:
             p0 = self._px_before(st, st.ht[-1] - WIN)
             ret15 = (st.hp[-1] / p0 - 1) * 1e4 if p0 else None
+        ret2m = None
+        if st.hp and st.ht:
+            p2 = self._px_before(st, st.ht[-1] - 120.0)
+            ret2m = (st.hp[-1] / p2 - 1) * 1e4 if p2 else None
+        lbk = st.last_break
+        flip = None
+        if lbk and now is not None and now - lbk["t"] <= JUST_BROKE_SEC and lbk["n"] >= LIT_N and lbk.get("stall") is not None:
+            flip = {"d": lbk["d"], "n": lbk["n"], "nb5": lbk["nb5"], "age": now - lbk["t"],
+                    "stall": lbk.get("stall"), "brk_lots": lbk.get("brk_lots"), "brk_x": lbk.get("brk_x"),
+                    "day_up": lbk.get("day_up"), "exh": is_exhaustion({"kind": "flip", **lbk})}   # 亮燈(≥10)連攻段剛轉色
         status = "剛中斷" if broke else ("攻擊中" if abs(st.n) >= ATTACK_N else "")
-        risk = bool(broke and lb["n"] >= LIT_N and lb["nb5"] >= RISK_NB5)
+        risk = bool(broke and lb["n"] >= LIT_N and lb["nb5"] >= RISK_NB5 and ret15 is not None and ret15 >= RISE_BPS)
         win_lots = st.last_dom if st.d else 0.0
         return {"d": st.d, "n": st.n,
                 "win_lots": win_lots,                                  # 連量（單窗解讀）：最近一窗主導方向成交張數
@@ -193,4 +265,5 @@ class StreakTracker:
                 "win_x": (win_lots / ref5) if (ref5 and win_lots) else None,   # 該窗 ÷ 每 5 秒均量
                 "nb5": st.s_nb5 if st.d else 0, "vmax": st.s_vmax if st.d else 0.0,
                 "lit": abs(st.n) >= LIT_N,
-                "ret15": ret15, "status": status, "risk": risk, "bid_ask": (st.bid, st.ask)}
+                "ret15": ret15, "ret2m": ret2m, "flip": flip, "px0": st.px0, "px": (st.hp[-1] if st.hp else None),
+                "status": status, "risk": risk, "bid_ask": (st.bid, st.ask), "burst_src": "p90" if st.thr else "x5"}

@@ -16,7 +16,8 @@ from __future__ import annotations
 import sys
 
 import biglot_dashboard
-from biglot.detail_charts import _stock_series, _svg_detail, _svg_mini
+from biglot import fut_basis as _fb
+from biglot.detail_charts import _fut_overlay, _stock_series, _svg_detail, _svg_mini
 from biglot.utils import _px_class
 from biglot.html_fragments import _book_table
 from biglot.scoring_support import _book_of
@@ -50,6 +51,11 @@ def render_stock_frag(sid, day):
             f"散戶淨 <b class='{'up' if ret_day>0 else 'dn'}'>{ret_day/1e4:+,.0f}萬</b> · "
             f"成交 {tot_day/1e4:,.0f}萬</span></div>")
     chart = _svg_detail(sid, day, st, pc)
+    try:
+        _finfo, _bas = _fut_overlay(sid, day, st)
+        hdr += _fb.header_html(_finfo, (_bas[max(_bas)] if _bas else None))
+    except Exception:  # noqa: BLE001
+        pass
     book = _book_table(_book_of(sid, day))
     return (hdr + "<div class='sgrid'><div class='schart'>" + chart + "</div>"
             "<div class='sbook'>" + book + "</div></div>")
@@ -64,7 +70,7 @@ HOVER_JS = """<script>(function(){
     const r=svg.getBoundingClientRect(), sc=r.width/parseFloat(svg.dataset.vw||'940'), x=(e.clientX-r.left)/sc;
     let best=null,bd=1e9; for(const p of svg._pts){const d=Math.abs(p[0]-x); if(d<bd){bd=d;best=p;}}
     if(!best||bd>8){tip.style.display='none';ln.style.display='none';return;}
-    tip.innerHTML=best[2]+' <b>'+best[3]+'</b><br>大戶累計 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span> · 散戶累計 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span><br>權證簽號累計 <span style="color:#d2a8ff">'+(best[7]||0).toLocaleString()+'萬</span> · 該分鐘量 '+best[6].toLocaleString()+' 張';
+    tip.innerHTML=best[2]+' <b>'+best[3]+'</b><br>大戶累計 <span style="color:#ff7b72">'+best[4].toLocaleString()+'萬</span> · 散戶累計 <span style="color:#58a6ff">'+best[5].toLocaleString()+'萬</span><br>權證簽號累計 <span style="color:#d2a8ff">'+(best[7]||0).toLocaleString()+'萬</span> · 該分鐘量 '+best[6].toLocaleString()+' 張'+(best[8]!=null?'<br>期貨中價 <span style="color:#2dd4bf">'+best[8]+'</span>'+(best[9]!=null?' · 基差 <b>'+(best[9]>=0?'+':'')+best[9]+'%</b>':''):'');
     tip.style.display='block'; const lx=r.left+best[0]*sc;
     ln.style.left=lx+'px'; ln.style.top=r.top+'px'; ln.style.height=r.height+'px'; ln.style.display='block';
     tip.style.left=Math.min(lx+10,window.innerWidth-230)+'px'; tip.style.top=(r.top+best[1]*sc-40)+'px';
@@ -90,6 +96,9 @@ def render_grid_frag(sort="ind"):
         px = r.get("px"); chg = r.get("chg_pct")
         cls = "up" if (chg or 0) > 0 else ("dn" if (chg or 0) < 0 else "")
         pxs = f"<span class='{cls}' style='font-weight:700'>{px:g}</span> <span class='{cls}'>{chg:+.2f}%</span>" if (px and chg is not None) else "<span class='dim'>—</span>"
+        _fbp = r.get("fut_basis_pct")
+        if _fbp is not None:                                  # 期貨中價÷現貨中價−1（與主表、個股頁同一定義）
+            pxs += f" <span class='dim' title='基差%=期貨中價÷現貨中價−1(紅=正價差、綠=逆價差)'>基<span class='{'up' if _fbp > 0 else 'dn' if _fbp < 0 else ''}'>{_fbp:+.2f}%</span></span>"
         bd = r.get("bigday") or 0; rd = r.get("retday") if r.get("retday") is not None else (st.get("ret_day") or 0)
         tags = (r.get("bull_txt") or "").split("·")[:1] + (r.get("bear_txt") or "").split("·")[:1]
         tagh = "".join(f"<span class='{'sigup' if i == 0 else 'sigdn'}'>{t}</span>" for i, t in enumerate(tags) if t)
@@ -126,7 +135,7 @@ def render_grid_frag(sort="ind"):
             tx_row = "<div class='txrow'>" + _tp.replace("<div id='txsrc' hidden>", "<div>", 1) + "</div>"
     except Exception as _e:  # noqa: BLE001
         print(f"[grid-tx] {_e!r}", file=sys.stderr)
-    return tx_row + f"<div class='meta' style='margin:0 0 2px'>更新 {biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 紫=累計權證簽號淨 · 底=量 · 點格子開詳情</div>" + "".join(cells)
+    return tx_row + f"<div class='meta' style='margin:0 0 2px'>更新 {biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 紫=累計權證簽號淨 · 底=量 · <span style='color:#f0883e'>▼橙=買盤竭盡</span> <span style='color:#56d4dd'>▲青=賣盤竭盡</span>(小哥三要件:連次≥10後轉色∧多次爆量(爆窗≥3;單窗大量=該股同時段前10日P90,自訂)∧爆量漲不動(末2窗未創段內新高/低,自訂);日均量&lt;3,000張的標的不標;實心=順大勢(買盤竭盡配今日黑K/賣盤竭盡配紅K),空心=逆大勢)·標注非進出場訊號 · 點格子開詳情</div>" + "".join(cells)
 
 
 GRID_SHELL = """<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
