@@ -121,6 +121,17 @@ class CancelGuardTest(unittest.TestCase):
         self.assertEqual(self.broker.calls, [])
         self.assertTrue(any(r.get("event") == "skip_not_stock_future" for r in recs))
 
+    def test_root_with_stopped_collector_is_skipped(self):
+        import os
+        old = self.tmp / "ck_books"; old.mkdir()                     # CKF 的買賣簿目錄存在，但檔案很舊＝已停收
+        f = old / "ck_books_2026-09-01.jsonl"; f.write_text("{}\n")
+        os.utime(f, (T0 - 10 * 86400, T0 - 10 * 86400))
+        self.assertFalse(cg.books_live("ck", self.tmp))
+        self._ev([_order("K1", 0, price=100.0, sym="FICKF")])
+        recs = self.g.step(self._sw(enabled=True, auto_cancel=True), False)
+        self.assertTrue(any(r.get("event") == "skip_no_books" for r in recs))
+        self.assertNotIn("K1", self.g.orders)
+
     def test_stale_book_record_never_cancels(self):
         self._setup_buy(); self._w(self.bk, [_book(2, 98.5, 99.0)])
         self.now = T0 + 120                                         # 買賣簿紀錄已是 2 分鐘前

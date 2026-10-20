@@ -110,6 +110,15 @@ def root_of(code: str, cache_dir: Path = CACHE_DIR) -> str | None:
     return None
 
 
+def books_live(root: str, cache_dir: Path = CACHE_DIR, max_age_sec: float = 3 * 86400) -> bool:
+    """該商品的買賣簿目前還有在收（目錄內最新檔 3 天內有更新）。曾經收過、現已停收的商品（例 CKF、DQF）不算。"""
+    try:
+        newest = max((f.stat().st_mtime for f in (cache_dir / f"{root}_books").glob(f"{root}_books_*.jsonl")), default=0.0)
+    except OSError:
+        return False
+    return (time.time() - newest) <= max_age_sec
+
+
 def against_ticks(sgn: int, ref_mid: float, mid: float, tick: float) -> float:
     """往不利方向的 tick 數（正＝不利）。買單 sgn=+1：中價下跌不利；賣單 sgn=-1：中價上漲不利。"""
     return -sgn * (mid - ref_mid) / tick
@@ -238,7 +247,7 @@ class Guard:
                     self._note("skip_not_stock_future", order_no=no, symbol=p.get("symbol"))
                     continue
                 root = root_of(code, self.cache_dir)
-                if not root:
+                if not root or not books_live(root, self.cache_dir):
                     self._note("skip_no_books", order_no=no, symbol=p.get("symbol"))
                     continue
                 self.orders[no] = OpenOrder(
