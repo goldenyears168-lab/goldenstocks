@@ -150,11 +150,30 @@ class CancelGuardTest(unittest.TestCase):
         self.assertEqual(self.g.step(self._sw(enabled=True, auto_cancel=True), False), [])
         self.assertEqual(self.broker.calls, [])
 
-    def test_stale_book_record_never_cancels(self):
+    def test_collector_dead_never_cancels(self):
         self._setup_buy(); self._w(self.bk, [_book(2, 98.5, 99.0)])
-        self.now = T0 + 120                                         # 買賣簿紀錄已是 2 分鐘前
-        recs = self.g.step(self._sw(enabled=True, auto_cancel=True), False)
+        g = cg.Guard(broker=self.broker, cache_dir=self.tmp, order_dir=self.tmp, clock=lambda: self.now, feed_alive=lambda n: False)
+        g.set_day("2026-10-21")
+        recs = g.step(self._sw(enabled=True, auto_cancel=True), False)
         self.assertEqual(recs[0]["action"], "alert_feed_stale_no_cancel"); self.assertEqual(self.broker.calls, [])
+
+    def test_price_recovered_no_action(self):
+        self._setup_buy(); self._w(self.bk, [_book(2, 98.5, 99.0), _book(3, 99.5, 100.0)])   # 先跌 1 元(2tick)又回來
+        self.assertEqual(self.g.step(self._sw(enabled=True, auto_cancel=True), False), [])
+        self.assertEqual(self.broker.calls, [])
+
+    def test_off_reads_but_never_acts_then_on_catches_existing_drift(self):
+        self._setup_buy(); self._w(self.bk, [_book(2, 98.5, 99.0)])
+        self.assertEqual(self.g.step(self._sw(), False), [])                                 # 關閉：不動作
+        snap = self.g.snapshot()
+        self.assertEqual(len(snap), 1); self.assertEqual(snap[0]["against_ticks"], 10.0)     # 但頁面看得到離觸發多遠（99.75→98.75，tick 0.1＝10 tick）
+        recs = self.g.step(self._sw(enabled=True, auto_cancel=True), False)                  # 打開開關：用最新買賣簿立刻檢查既有的單
+        self.assertEqual(recs[0]["action"], "cancelled"); self.assertEqual(self.broker.calls, ["A1"])
+
+    def test_save_switch_roundtrip(self):
+        p = self.tmp / "sw.json"
+        sw = cg.save_switch({"enabled": True, "auto_cancel": True, "bogus": 1}, "test", p)
+        self.assertTrue(sw["enabled"] and sw["auto_cancel"]); self.assertNotIn("bogus", json.loads(p.read_text()))
 
     def test_fill_and_cancel_events_stop_guarding(self):
         self._setup_buy(); self.g.step(self._sw(enabled=True), False)

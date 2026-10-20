@@ -17,7 +17,7 @@
   3. 實際撤單走 fubon_futopt_orders.cancel_futopt_order → live_submit_guard（需 ORDER_MASTER_ENABLED=1）。
   4. 只呼叫 cancel；本模組沒有任何下單／改價程式。每日撤單上限、每張單最多嘗試一次、只處理 apply_to 內的委託類型（預設新倉＋平倉；
      平倉單被撤後部位暫無出場單，通知會註明。不想撤平倉單：cancel_guard_switch.py types New）。
-  5. 觸發所依據的買賣簿紀錄若已超過 30 秒前（收集器落後／重啟補讀）→ 不撤單（只告警）。
+  5. 收集器 30 秒內完全沒寫任何買賣簿檔（死了）→ 不撤單（只告警）；觸發時以最新一筆買賣簿為準，行情已回來就不動作。
 """
 from __future__ import annotations
 
@@ -124,6 +124,17 @@ def rec_will_cancel(mode: str, sw: dict[str, Any]) -> bool:
     return mode in ("dry_cancel", "live_cancel") and sw.get("auto_cancel") is True
 
 
+def coverage(cache_dir: Path = CACHE_DIR) -> list[dict[str, Any]]:
+    """目前可監控的個股期貨（在期交所個股期貨清單內，且買賣簿檔仍在更新）。"""
+    names = {r["futures_id"]: r["name"] for r in json.loads(_MAP_PATH.read_text(encoding="utf-8"))["rows"] if r.get("is_future")}
+    out = []
+    for code, shares in sorted(stock_future_codes().items()):
+        root = root_of(code, cache_dir)
+        if root and books_live(root, cache_dir):
+            out.append({"code": code, "name": names.get(code, ""), "shares": shares})
+    return out
+
+
 def against_ticks(sgn: int, ref_mid: float, mid: float, tick: float) -> float:
     """往不利方向的 tick 數（正＝不利）。買單 sgn=+1：中價下跌不利；賣單 sgn=-1：中價上漲不利。"""
     return -sgn * (mid - ref_mid) / tick
@@ -203,6 +214,7 @@ class Guard:
     orders: dict[str, OpenOrder] = field(default_factory=dict)
     cancels_today: int = 0
     log: list[dict[str, Any]] = field(default_factory=list)
+    feed_alive: Any = None          # 測試用：(now)->bool；預設以今天買賣簿檔的寫入時間判斷
 
     def __post_init__(self) -> None:
         self._ev: Tail | None = None
@@ -210,6 +222,8 @@ class Guard:
         self._hist: dict[str, deque] = {}
         self._last_wall: dict[str, float] = {}
         self._last_any_book = 0.0
+        self._alive_t = 0.0
+        self._alive_v = False
 
     # ---------- 日期切換 ----------
     def set_day(self, day: str) -> None:
@@ -295,48 +309,74 @@ class Guard:
                 break
         return best
 
+    # ---------- 收集器是否活著 ----------
+    def _collector_alive(self, now: float) -> bool:
+        """今天任一個買賣簿檔 30 秒內有寫入＝收集器活著。個別商品安靜（沒有報價變動）不算收集器死掉。"""
+        if self.feed_alive is not None:
+            return bool(self.feed_alive(now))
+        if now - self._alive_t >= 2.0:
+            newest = 0.0
+            for f in self.cache_dir.glob(f"*_books/*_books_{self.day}.jsonl"):
+                try:
+                    newest = max(newest, f.stat().st_mtime)
+                except OSError:
+                    pass
+            self._alive_v, self._alive_t = (time.time() - newest) <= STALE_FEED_SEC, now
+        return self._alive_v
+
     # ---------- 規則 ----------
     def step(self, sw: dict[str, Any], dry: bool, now: float | None = None) -> list[dict[str, Any]]:
-        """讀新資料、評估規則、依模式動作。回傳這一步產生的紀錄。"""
+        """讀新資料、評估規則、依模式動作。回傳這一步產生的紀錄。
+        關閉（off）時仍會讀委託與買賣簿（只讀、供頁面顯示），但不評估、不通知、不撤單。"""
         now = self.clock() if now is None else now
         self.log = []
         self.ingest_events()
         mode = mode_of(sw, dry)
-        if mode == "off":
-            return self.log
         active = {o.root for o in self.orders.values() if o.state in ("open", "triggered")}
         for root in active:
             new = self._poll_root(root)
+            for o in [x for x in self.orders.values() if x.root == root and x.state == "open" and x.ref_mid is None]:
+                self._init_ref(root, o)                              # 關閉時也要算參考中價（頁面顯示用）
+            if mode == "off":
+                continue
+            h = self._hist.get(root)
+            check = new if new else ([h[-1]] if h else [])          # 剛打開開關時，也要用最新一筆買賣簿檢查既有的單
             for o in [x for x in self.orders.values() if x.root == root and x.state == "open"]:
                 if o.otype not in sw["apply_to"] or (sw["symbols_allow"] and o.code not in sw["symbols_allow"]):
                     continue
                 if o.ref_mid is None:
-                    o.ref_mid = self._ref_mid(root, o.ts)
-                    if o.ref_mid is None:
-                        continue
-                    o.tick = tick_size(o.ref_mid)
-                    # 已可立即成交（跨價差）的單不是被動單，略過
-                    hist = [h for h in self._hist[root] if h[0] <= o.ts]
-                    o.sym = hist[-1][3] if hist else ""
-                    if hist and ((o.sgn > 0 and o.price >= hist[-1][2]) or (o.sgn < 0 and o.price <= hist[-1][1])):
-                        o.state, o.note = "done", "marketable"
-                        continue
-                for wall, bid, ask, sym in new:
+                    continue
+                for wall, bid, ask, sym in check:
                     if wall <= o.ts or (o.sym and sym != o.sym):      # 換月（結算日）後的紀錄是另一個合約，不能和掛單時的中價比
                         continue
-                    mid = (bid + ask) / 2
-                    ag = against_ticks(o.sgn, o.ref_mid, mid, o.tick)
+                    ag = against_ticks(o.sgn, o.ref_mid, (bid + ask) / 2, o.tick)
                     if ag >= sw["against_ticks"] - 1e-9:
+                        lw, lb, la, ls = h[-1]                        # 以最新一筆為準：若行情已回來就不動作
+                        if ls == o.sym or not o.sym:
+                            if against_ticks(o.sgn, o.ref_mid, (lb + la) / 2, o.tick) < sw["against_ticks"] - 1e-9:
+                                continue
                         self._trigger(o, mode, sw, ag, wall, now)
                         break
         return self.log
 
+    def _init_ref(self, root: str, o: OpenOrder) -> None:
+        """記下掛單當下的中價與合約；已可立即成交（跨價差）的單不是被動單，標記略過。"""
+        o.ref_mid = self._ref_mid(root, o.ts)
+        if o.ref_mid is None:
+            return
+        o.tick = tick_size(o.ref_mid)
+        hist = [x for x in self._hist[root] if x[0] <= o.ts]
+        o.sym = hist[-1][3] if hist else ""
+        if hist and ((o.sgn > 0 and o.price >= hist[-1][2]) or (o.sgn < 0 and o.price <= hist[-1][1])):
+            o.state, o.note = "done", "marketable"
+
     def _trigger(self, o: OpenOrder, mode: str, sw: dict[str, Any], ag: float, book_wall: float, now: float) -> None:
         o.state = "triggered"
         rec = {"event": "trigger", "order_no": o.order_no, "code": o.code, "side": "買" if o.sgn > 0 else "賣", "price": o.price,
-               "type": o.otype, "exit_unprotected": o.otype == "Close" and rec_will_cancel(mode, sw), "ref_mid": o.ref_mid, "against_ticks": round(ag, 2), "mode": mode,
-               "detect_lag_s": round(now - book_wall, 3), "ts": datetime.fromtimestamp(now, TZ).isoformat(timespec="milliseconds")}
-        feed_ok = (now - self._last_any_book) <= STALE_FEED_SEC
+               "type": o.otype, "exit_unprotected": o.otype == "Close" and rec_will_cancel(mode, sw), "ref_mid": o.ref_mid,
+               "against_ticks": round(ag, 2), "mode": mode, "detect_lag_s": round(now - book_wall, 3),
+               "ts": datetime.fromtimestamp(now, TZ).isoformat(timespec="milliseconds")}
+        feed_ok = self._collector_alive(now)
         if mode == "alert" or not feed_ok:
             rec["action"] = "alert" if feed_ok else "alert_feed_stale_no_cancel"
         elif self.cancels_today >= int(sw["max_cancels_per_day"]):
@@ -357,3 +397,32 @@ class Guard:
 
     def _note(self, event: str, **kw: Any) -> None:
         self.log.append({"event": event, **kw})
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        """給頁面顯示：目前監控中的委託與離觸發還差多少。"""
+        out = []
+        for o in self.orders.values():
+            if o.state not in ("open", "triggered"):
+                continue
+            h = self._hist.get(o.root)
+            mid = (h[-1][1] + h[-1][2]) / 2 if h else None
+            ag = against_ticks(o.sgn, o.ref_mid, mid, o.tick) if (mid is not None and o.ref_mid is not None and o.tick) else None
+            out.append({"order_no": o.order_no, "code": o.code, "side": "買" if o.sgn > 0 else "賣", "price": o.price, "type": o.otype,
+                        "ref_mid": o.ref_mid, "mid": mid, "tick": o.tick, "against_ticks": None if ag is None else round(ag, 2), "state": o.state,
+                        "age_s": round(self.clock() - o.ts, 1), "book_age_s": None if not h else round(self.clock() - h[-1][0], 1)})
+        return sorted(out, key=lambda r: r["age_s"])
+
+
+def save_switch(updates: dict[str, Any], by: str, path: Path | None = None) -> dict[str, Any]:
+    """寫開關檔（原子寫入）。只接受 DEFAULT_SWITCH 內的欄位。"""
+    sw = load_switch(path)
+    for k, v in updates.items():
+        if k in DEFAULT_SWITCH:
+            sw[k] = v
+    d = {**{k: sw[k] for k in DEFAULT_SWITCH}, "updated_at": datetime.now(TZ).isoformat(timespec="seconds"), "by": by}
+    p = path or SWITCH_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+    return load_switch(p)

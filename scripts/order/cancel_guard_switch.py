@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """撤單神器開關。 status | off | alert（只通知）| on（符合條件就撤；仍受 .env DRY_RUN 與 ORDER_MASTER_ENABLED 約束）
-| types New,Close（設定要監控的委託類型；只要新倉：types New）。"""
+| types New,Close（設定要監控的委託類型；只要新倉：types New）
+| test-cancel <order_no> --yes（真的撤掉你指定的那一張單並量撤單來回秒數；用來驗證撤單通路，請先掛一張離市價很遠的測試單）。"""
 from __future__ import annotations
 
 import json
@@ -31,6 +32,15 @@ def main(argv: list[str]) -> int:
         SWITCH_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = SWITCH_PATH.with_suffix(".tmp"); tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8"); os.replace(tmp, SWITCH_PATH)
         sw = load_switch()
+    elif cmd == "test-cancel":
+        if len(argv) < 4 or argv[3] != "--yes":
+            print("用法: test-cancel <order_no> --yes（會真的撤掉該張委託）"); return 2
+        import time
+        from order.cancel_guard import FubonBroker
+        t0 = time.time()
+        res = FubonBroker().cancel(argv[2])
+        print(json.dumps({**res, "roundtrip_s_including_login": round(time.time() - t0, 3)}, ensure_ascii=False))
+        return 0 if res.get("ok") else 1
     elif cmd != "status":
         print(__doc__); return 2
     dry = env_dry_run()

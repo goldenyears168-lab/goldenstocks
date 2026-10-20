@@ -16,7 +16,7 @@ import time
 import traceback
 from datetime import datetime
 
-from order.cancel_guard import (ORDER_DIR, TZ, DryBroker, FubonBroker, Guard, env_dry_run, load_switch, mode_of)
+from order.cancel_guard import (ORDER_DIR, TZ, DryBroker, FubonBroker, Guard, coverage, env_dry_run, load_switch, mode_of)
 from project_dotenv import load_project_dotenv
 
 _STOP = False
@@ -68,14 +68,23 @@ def run(once: bool = False) -> int:
     dry = env_dry_run()
     guard = Guard(broker=DryBroker() if dry else FubonBroker())
     print(json.dumps({"event": "worker_start", "dry_run_env": dry, "switch": load_switch()}, ensure_ascii=False), flush=True)
-    last_beat = 0.0
+    last_beat = last_status = last_cov = 0.0
+    try:
+        cov: list[dict] = coverage()
+        last_cov = time.time()
+    except Exception:  # noqa: BLE001
+        cov = []
     while not _STOP:
         now = datetime.now(TZ)
         sw = load_switch(); mode = mode_of(sw, dry)
         if not (now.weekday() < 5 and WINDOW[0] <= now.strftime("%H:%M") <= WINDOW[1]):
-            time.sleep(30); 
+            _atomic(ORDER_DIR / "cancel_guard_status.json", {
+                "ts": now.isoformat(timespec="seconds"), "pid": os.getpid(), "mode": mode, "dry_run_env": dry, "idle": True,
+                "order_master_enabled": os.environ.get("ORDER_MASTER_ENABLED", "0"), "day": guard.day, "orders": [],
+                "cancels_today": guard.cancels_today, "coverage": cov})
             if once:
                 break
+            time.sleep(15)
             continue
         guard.set_day(now.strftime("%Y-%m-%d"))
         try:
@@ -83,6 +92,17 @@ def run(once: bool = False) -> int:
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             time.sleep(2)
+        if time.time() - last_cov > 60:
+            try:
+                cov = coverage(); last_cov = time.time()
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+        if time.time() - last_status > 1.0:
+            _atomic(ORDER_DIR / "cancel_guard_status.json", {
+                "ts": now.isoformat(timespec="seconds"), "pid": os.getpid(), "mode": mode, "dry_run_env": dry,
+                "order_master_enabled": os.environ.get("ORDER_MASTER_ENABLED", "0"), "day": guard.day,
+                "orders": guard.snapshot(), "cancels_today": guard.cancels_today, "coverage": cov})
+            last_status = time.time()
         if time.time() - last_beat > 5:
             _atomic(ORDER_DIR / "cancel_guard_heartbeat.json", {
                 "ts": now.isoformat(timespec="seconds"), "pid": os.getpid(), "mode": mode, "dry_run_env": dry,
