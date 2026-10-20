@@ -171,6 +171,44 @@ def _load_beta(conn, sid: str) -> tuple[float | None, str | None]:
     return (row[0], row[1]) if row else (None, None)
 
 
+def _load_branch_concentration(conn, sid: str, top_n: int = 15, min_branches: int = 100, min_side: int = 10):
+    """籌碼集中度(分點口徑,2026-10-09 jack 交辦,對標財報狗/CMoney「1日籌碼集中度」):
+    (買超前N名分點買超股數合計 − 賣超前N名分點賣超股數合計) ÷ 當日成交量 × 100。
+    分母用同一份分點 tape 自己的總買進股數,避免 stock_daily_bars 雙來源(finmind/twse)差 ~2%。
+    分點 tape 覆蓋不足(< min_branches 席,例如收集池縮小時)回 None,不顯示假值。
+    2026-10-17 起 FinMind 停用:分點來源改富邦行情站,每檔只有『買超前15 + 賣超前15 名』(加專家/席位分點)。
+    這時主力張數不變(本來就只用前 N 名),分母改用當日成交量(官方日線;財報狗/CMoney 的口徑本來就是除以成交量);
+    要求至少 min_side 個買超與 min_side 個賣超分點,否則回 None。有 FinMind 全分點的日子維持原算法。
+    即時查詢不落地,理由同 _load_holder_tiers。回傳 (trade_date, pct, net_lots) 或 (None,)*3。"""
+    row = conn.execute(
+        "SELECT trade_date FROM stock_broker_branch_daily WHERE stock_id=? "
+        "ORDER BY trade_date DESC LIMIT 1", (sid,)).fetchone()
+    if not row:
+        return None, None, None
+    td = row[0]
+    rows = conn.execute(
+        "SELECT buy, sell, source FROM stock_broker_branch_daily WHERE stock_id=? AND trade_date=?",
+        (sid, td)).fetchall()
+    nets = sorted((b or 0) - (s or 0) for b, s, _ in rows)
+    net = sum(n for n in nets[::-1][:top_n] if n > 0) + sum(n for n in nets[:top_n] if n < 0)
+    if len(rows) >= min_branches and any(src == "finmind" for _, _, src in rows):
+        total_buy = sum(b or 0 for b, _, _ in rows)            # 全分點底稿:維持原算法(分母=分點買進合計)
+        if total_buy <= 0:
+            return None, None, None
+        return td, net / total_buy * 100, net / 1000
+    # 前段分點(富邦):買超/賣超各至少 min_side 個才算抓全;分母=當日成交量(優先官方日線)
+    if sum(1 for n in nets if n > 0) < min_side or sum(1 for n in nets if n < 0) < min_side:
+        return None, None, None
+    vrow = conn.execute(
+        "SELECT volume FROM stock_daily_bars WHERE stock_id=? AND trade_date=? AND volume>0 "
+        "AND source IN ('twse_mi_index','tpex_daily') LIMIT 1", (sid, td)).fetchone() or conn.execute(
+        "SELECT MAX(volume) FROM stock_daily_bars WHERE stock_id=? AND trade_date=? AND volume>0", (sid, td)).fetchone()
+    vol = vrow[0] if vrow else None
+    if not vol:
+        return None, None, None
+    return td, net / vol * 100, net / 1000
+
+
 def compute_for_stock(conn, sid: str, now_iso: str) -> list[tuple]:
     dates, closes, vols, shares = _load_bars(conn, sid)
     n = len(dates)

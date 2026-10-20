@@ -23,12 +23,13 @@ biglot_dashboard。
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import sys
 from collections import defaultdict
 from datetime import datetime
 
-from compute_xq_style_metrics import _load_beta, _load_holder_tiers
+from compute_xq_style_metrics import _load_beta, _load_branch_concentration, _load_holder_tiers
 from source_dedup import dedup_query
 from stock_db import DATA_DIR, DEFAULT_DB_PATH
 
@@ -76,12 +77,12 @@ def _load_prev_close_db():
     """昨收改抓官方 stock_daily_bars 的收盤競價價(權威),取代 EOD 快照的『最後一筆 tick』。
     快照 tick 收盤與官方收盤常差 1~2 檔,會讓漲跌%失真——南電 2026-09-21 快照 1055 vs
     官方 1060,今日漲停 1165 就被算成 +10.4%(超過±10%上限,不可能)。用『<今日的最近交易日』
-    避免抓到今日盤中殘影;雙來源同價,取一筆即可。"""
-    out = {}
+    避免抓到今日盤中殘影;雙來源同價,取一筆即可。同一批列順便回傳每檔日內波動 sig。"""
+    out, sig, out2 = {}, {}, {}
     try:
         today = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
-        sids = list(biglot_dashboard.NAMES)
+        sids = list(biglot_dashboard.NAMES) + list(biglot_dashboard.REF_EXTRA)   # 池外參考列也要昨收(漲跌%)
         ph = ",".join("?" * len(sids))
         # 2026-09-27 DB清理Step2:改成一次撈全部42檔再Python分組,不要逐檔各開一次窗函數查詢
         # (逐檔查詢實測42次各~15秒,SQLite沒辦法對包了ROW_NUMBER()的巢狀子查詢逐檔下推索引;
@@ -90,18 +91,154 @@ def _load_prev_close_db():
                               inner_where=f"WHERE stock_id IN ({ph}) AND trade_date<? AND close IS NOT NULL "
                                           f"AND trade_date>=date(?,'-30 day')")
         rows = conn.execute(
-            f"SELECT stock_id, trade_date, close FROM ({dd_sql}) ORDER BY stock_id, trade_date DESC",
+            f"SELECT stock_id, trade_date, close, high, low FROM ({dd_sql}) ORDER BY stock_id, trade_date DESC",
             (*sids, today, today)).fetchall()
         conn.close()
-        seen = set()
-        for sid, _td, c in rows:
-            if sid in seen:
-                continue
-            seen.add(sid)
-            if c:
-                out[sid] = float(c)
+        seen, lr = set(), defaultdict(list)
+        for sid, _td, c, h, lo in rows:
+            if sid not in seen:
+                seen.add(sid)
+                if c:
+                    out[sid] = float(c)
+            elif sid not in out2 and sid in out and c:
+                out2[sid] = float(c)   # 再前一個交易日收盤:休市日用來還原「最近一個交易日收盤當時的漲跌」
+            if h and lo and len(lr[sid]) < 10:
+                lr[sid].append(math.log(h / lo) ** 2)
+        # 前 ≤10 日 Parkinson 日內波動(bps),≥3 日才給;虛拉標籤的 z30 = 30分漲幅 ÷ (σ日 × √(30/270))
+        for sid, v in lr.items():
+            if len(v) >= 3:
+                sig[sid] = math.sqrt(sum(v) / len(v) / (4 * math.log(2))) * 1e4
     except Exception:
         pass
+    return out, sig, out2
+
+
+def _load_prev2d_totals():
+    """前一交易日(非今天)全天 大戶/散戶/成交額/權證購售簽號 總額(2026-10-03 jack 交辦:
+    新增「近兩日」尺度=昨開盤累積到現在=本函式回傳的昨日全天 + 今天即時累計)。
+
+    換日時載入一次(見 biglot/ingest.py 的危險全域重載區塊),全天沿用——「昨天全天」這個
+    數字本來就是歷史事實,不會隨今天盤中變動,跟 DAILY_TREND/ATR_STATE 等既有日頻欄位同一個
+    刷新節奏。
+
+    2026-10-03 jack 交辦(第二次):同一份重放順便多算散戶版SMFI(尾盤−開盤散戶淨額佔比)
+    的前一交易日版本(`ret_open_sh`/`ret_close_sh`/`ret_smfi`),供假日/非交易日或收盤後
+    該檔今天整天零成交時,render_main.py 把「全日大戶/全日散戶/權證全日/大戶-散戶/
+    大戶佔比/散戶背離」這組欄位回退顯示上一交易日定格數字用(見 render_main.py 的
+    `_eod_fallback`);邏輯逐字對齊 `trade_ingest.py::_stk_trade` 的 09:00-09:25／
+    12:55-13:20 開盤/尾盤窗口判斷,不是另外發明一套。⚠ 2026-10-04 jack 把 render_main.py
+    活頁的「現在」這一側改成近30分滾動窗(≥SMFI_ACTIVE_FROM 起算,見該檔與
+    biglot_dashboard.py::SMFI_ACTIVE_FROM)之後,這裡仍然沿用固定尾盤(12:55-13:20)窗口
+    不變——對一個已經結束的交易日,「尾盤」就是「收盤前最後30分鐘」,跟滾動窗撐到收盤
+    那一刻收斂到的答案是同一個數字,兩種算法殊途同歸,所以這裡不用跟著改。
+
+    大戶/散戶/成交額:單趟重放前一交易日的 `raw_{日期}.jsonl`。
+    ⚠ 2026-10-03 效能踩坑:第一版借用個股詳情頁的 `_stock_series(sid, day)`,對 42 檔各
+    呼叫一次——該函式設計成「一檔一次獨立重放整份檔案」，42 檔等於把同一份 raw 檔(當日
+    盤中量可達近百 MB)從頭掃 42 遍，正式站重啟時卡在 import 階段近 1 分鐘(`/`、`/frag`
+    全部無回應)才跑完，影響太大，已改寫成本函式這個「整份檔案只讀一遍、同時替全部
+    sid 累加」的版本，邏輯對齊 `biglot/trade_ingest.py::_stk_trade`(試撮/開收盤競價排除、
+    空窗跳量排除、BIG_AMT/RETAIL_CAP 大戶散戶門檻全部比照,只是狀態改成每個 sid 自己的
+    本地 dict,不是 `_stk_trade` 綁定的單一 sid 參數,也不寫 `biglot_dashboard.ST`),不中
+    `DETAIL` 快取、不影響個股詳情頁既有邏輯。
+    權證:直接讀前一交易日收盤時最後一次覆寫的 `warrantflow_{日期}.json` 快照(poller 每5秒
+    整檔覆寫、每天各自一個檔,前一天的檔案收盤後就不會再變,其 call_day/put_day/bull_day/
+    bear_day 就是當天全天的最終累計,不需要重放)。
+
+    找不到前一交易日的 raw_*.jsonl(例如系統剛上線第一天)時回傳 {}，呼叫端要 None-safe
+    (比照其餘 _load_xxx() 失敗時的降級慣例,不讓整個換日流程因為這個新欄位而掛掉)。
+    """
+    out: dict = {}
+    try:
+        cache_dir = DATA_DIR.parent / "cache" / "biglot_live_watch"
+        today = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
+        prev_days = sorted(p.stem[len("raw_"):] for p in cache_dir.glob("raw_*.jsonl")
+                            if p.stem[len("raw_"):] < today)
+        if not prev_days:
+            return out
+        prev_day = prev_days[-1]
+        sids = set(biglot_dashboard.NAMES)
+        big_amt, retail_cap = biglot_dashboard.BIG_AMT, biglot_dashboard.RETAIL_CAP
+        gap_jump_amt, gap_seconds = biglot_dashboard.GAP_JUMP_AMT, biglot_dashboard.GAP_SECONDS
+        state: dict = {sid: {"lastvol": 0.0, "first_done": False, "last_px": None, "last_seen": None}
+                       for sid in sids}
+        totals = {sid: {"big": 0.0, "ret": 0.0, "tot": 0.0,
+                        "ret_open": 0.0, "tot_open": 0.0, "ret_close": 0.0, "tot_close": 0.0}
+                  for sid in sids}
+        raw_path = cache_dir / f"raw_{prev_day}.jsonl"
+        with open(raw_path, "rb") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                if rec.get("kind") != "message":
+                    continue
+                msg = rec.get("payload") or {}
+                if msg.get("channel") != "trades" or msg.get("event") not in (None, "data"):
+                    continue
+                d = msg.get("data") or {}
+                sid = str(d.get("symbol", ""))
+                st = state.get(sid)
+                if st is None:
+                    continue
+                px, vol = d.get("price"), d.get("volume")
+                if px is None or vol is None or d.get("isTrial"):
+                    continue
+                px, vol = float(px), float(vol)
+                dv = vol - st["lastvol"]
+                st["lastvol"] = vol
+                if dv <= 0 or d.get("isOpen") or d.get("isClose"):
+                    continue
+                if not st["first_done"]:
+                    st["first_done"] = True
+                    continue
+                b, a = d.get("bid"), d.get("ask")
+                side = 1 if (a is not None and px >= float(a)) else (
+                    -1 if (b is not None and px <= float(b)) else 0)
+                if side == 0:
+                    p = st["last_px"]
+                    side = 0 if p is None else (1 if px > p else (-1 if px < p else 0))
+                st["last_px"] = px
+                ts = rec.get("ts")
+                if not ts:
+                    continue
+                t = biglot_dashboard.datetime.fromisoformat(ts)
+                gap = st["last_seen"] is not None and (t - st["last_seen"]).total_seconds() > gap_seconds
+                st["last_seen"] = t
+                amt = px * dv * 1000
+                if gap and amt >= gap_jump_amt:
+                    continue
+                tt = totals[sid]
+                tt["tot"] += amt
+                sgn = 1 if side > 0 else (-1 if side < 0 else 0)
+                if amt >= big_amt:
+                    tt["big"] += sgn * amt
+                elif dv == 1 and amt < retail_cap:
+                    tt["ret"] += sgn * amt
+                    _hm = t.strftime("%H:%M")              # 散戶版SMFI(尾盤−開盤):邏輯逐字對齊
+                    if "09:00" <= _hm < "09:25":           # trade_ingest.py::_stk_trade,這裡只是
+                        tt["ret_open"] += sgn * amt; tt["tot_open"] += amt   # 改成重放版本的本地累加
+                    elif "12:55" <= _hm < "13:20":
+                        tt["ret_close"] += sgn * amt; tt["tot_close"] += amt
+        for sid in sids:
+            tt = totals[sid]
+            ret_open_sh = (tt["ret_open"] / tt["tot_open"] * 100) if tt["tot_open"] else None
+            ret_close_sh = (tt["ret_close"] / tt["tot_close"] * 100) if tt["tot_close"] else None
+            ret_smfi = (ret_close_sh - ret_open_sh) if (ret_open_sh is not None and ret_close_sh is not None) else None
+            out[sid] = {**tt, "day": prev_day, "ret_open_sh": ret_open_sh,
+                        "ret_close_sh": ret_close_sh, "ret_smfi": ret_smfi}
+        wf_path = cache_dir / f"warrantflow_{prev_day}.json"
+        if wf_path.exists():
+            wf = json.loads(wf_path.read_text(encoding="utf-8"))
+            for sid, rec in out.items():
+                w = wf.get(sid) or {}
+                rec["call_day"] = w.get("call_day") or 0.0
+                rec["put_day"] = w.get("put_day") or 0.0
+                rec["bull_day"] = w.get("bull_day")
+                rec["bear_day"] = w.get("bear_day")
+    except Exception as e:  # noqa: BLE001
+        print(f"[prev2d] load failed: {e}", file=sys.stderr)
     return out
 
 
@@ -136,10 +273,27 @@ def _load_daily_trend():
             ma10 = sum(closes[:10]) / len(closes[:10]) if len(closes) >= 6 else None
             ma20 = sum(closes[:20]) / len(closes[:20]) if len(closes) >= 20 else None   # 20MA(月線),供正乖離率欄
             ret5 = (last / closes[5] - 1) * 100 if len(closes) >= 6 and closes[5] else None
+            # 距近10日最高收盤%(2026-10-04 jack 交辦):區分「盤整中的短暫回檔」與
+            # 「逆勢接刀」。實測 2026-09-29~10-02 的 44 張手動新倉買進,此欄是唯一
+            # 能把兩者分開的結構判準——盤整回檔組全距 −3.5~0.0%、接刀組 −15.0~−1.0%
+            # (Mann-Whitney p=0.001,幾乎不重疊);20MA 乖離 p=0.151 分不開(接刀組
+            # 混了「漲多才回」與「真的弱」兩群)。⚠ 勿用 ATR 盤整壓縮欄當盤整判準:
+            # 它是 ATR14÷收盤 的歷史分位,強勢股漲多會把分母撐大而偽裝成波動收縮
+            # (景碩 3189 ATR% 由中位 7.63 掉到 4.65 全是股價 795→1050 造成),44 張
+            # 樣本裡該欄百分位全部 ≤0.30、零判別力。
+            hi10 = max(closes[:10]) if len(closes) >= 10 else None
+            dist_hi10 = (last / hi10 - 1) * 100 if hi10 else None
+            # 20日區間位置%:0=區間低點 100=區間高點(搭配上欄判斷是追高還是回檔)
+            pos20 = None
+            if len(closes) >= 20:
+                hi20, lo20 = max(closes[:20]), min(closes[:20])
+                if hi20 > lo20:
+                    pos20 = (last - lo20) / (hi20 - lo20) * 100
             out[sid] = {"above_ma5": last > ma5,
                         "above_ma10": (last > ma10) if ma10 else None,
                         "ma20": ma20,
-                        "ret5d": ret5, "last": last, "asof": sid_rows[0][0]}
+                        "ret5d": ret5, "last": last, "asof": sid_rows[0][0],
+                        "dist_hi10": dist_hi10, "pos20": pos20}
     except Exception as e:
         print(f"[daily_trend] load failed: {e}", file=sys.stderr)
     return out
@@ -238,6 +392,18 @@ def _load_pe_peer():
     快照可以放著不必每次渲染重抓 FinMind——但分子(價格)不該是快照的舊收盤價,渲染時用即時價重算
     (見 _score_rows 的 r["pe_live"]),這才符合她說的「EPS慢、股價快,本益比要用即時股價每天重算」。
 
+    ⚠ 2026-10-03 jack 糾正:上一版只有「本檔自己」在渲染時用即時價重算(r["pe_live"]),
+    族群裡**其餘 peer** 的 pe 欄位卻原封不動停在快照當天(2026-09-25)算出的舊股價,
+    百分位排名因此是「本檔即時」vs「別人一週多前」的不公平比較。本版改成:換日時(跟
+    DAILY_TREND/ATR_STATE 等既有日頻全域同一個刷新節奏)額外查一次 `stock_daily_bars`
+    抓每個 peer 最新可得收盤價(T-1,不是真即時,但遠比「凍結在產生快照那天」準),
+    用「最新收盤÷快照裡的 TTM EPS」重算每個 peer 的 pe 欄位,原地覆寫進 table。
+    rank/pctile 不必在這裡重算——render_main.py 的 _pe_list 本來就是每次渲染當場用
+    PE_TABLE 裡**當下的** pe 值重新排序算出來的(見該檔案 _pe_list 那段),只要這裡把
+    pe 值刷新,下游排名自動跟著對,不需要改 render_main.py。
+    族群成員名單本身不動(2026-10-03 jack 定案:這次只改價格,不改名單——矽晶圓組
+    是否該把嘉晶移除是另一個待決定的問題,不在這次範圍內)。
+
     ⚠ 誠實揭露:她的方法分母是「預估EPS」(法說會/營收/毛利率推算的未來EPS),我們沒有分析師預估
     EPS 的資料源,只能用「已公布 TTM EPS」——落後指標,不是預估指標。這是與原方法唯一的實質差異。
     族群清單沿用既有 SUBCAT 細分類人工擴充真實上市櫃同業,已用 TaiwanStockInfo 驗證代號存在,
@@ -252,20 +418,53 @@ def _load_pe_peer():
             for _r in _rows:
                 if _r.get("eps_ttm") is not None:
                     eps[_r["sid"]] = (_r["eps_ttm"], _r.get("eps_asof"))
+        _refresh_pe_peer_prices(table)
         return table, d.get("peers", {}), d.get("generated"), eps
     except Exception as e:  # noqa: BLE001
         print(f"[pe_peer] load failed: {e}", file=sys.stderr)
         return {}, {}, None, {}
 
 
-def _load_etf981_holdings():
-    """00981A(中信ARK創新)持股市值 + 對前一快照的變動金額(2026-09-27 jack 交辦)。
+def _refresh_pe_peer_prices(table: dict) -> None:
+    """原地把 table 裡每個 peer 的 pe 欄位,用 stock_daily_bars 最新可得收盤價重算
+    (收盤÷快照裡已有的 eps_ttm),取代凍結在產生快照那天的舊股價。查無收盤價或
+    eps_ttm 缺值/非正數的 peer 跳過、沿用原本的 pe(不讓單一查詢失敗拖垮整張表)。"""
+    sids = sorted({_r["sid"] for _rows in table.values() for _r in _rows})
+    if not sids:
+        return
+    latest_close: dict[str, float] = {}
+    try:
+        conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
+        ph = ",".join("?" * len(sids))
+        dd = dedup_query("stock_daily_bars", ("stock_id", "trade_date"), inner_where=f"WHERE stock_id IN ({ph})")
+        rows = conn.execute(
+            f"SELECT stock_id, trade_date, close FROM ({dd}) ORDER BY stock_id, trade_date DESC", sids).fetchall()
+        conn.close()
+        seen = set()
+        for sid, _td, close in rows:
+            if sid in seen or close is None:
+                continue
+            seen.add(sid)
+            latest_close[sid] = float(close)
+    except Exception as e:  # noqa: BLE001
+        print(f"[pe_peer] price refresh query failed: {e}", file=sys.stderr)
+        return
+    for _rows in table.values():
+        for _r in _rows:
+            close = latest_close.get(_r["sid"])
+            eps_ttm = _r.get("eps_ttm")
+            if close is not None and eps_ttm:
+                _r["pe"] = round(close / eps_ttm, 2)
 
-    讀 etf_holdings(etf_code='00981A')最新兩個 snapshot_date 的 amount 欄(ezmoney 快照
-    當日市值=股數×當時收盤價,非即時重算)。只在最新快照出現=新進(視為從 0 增加);
-    只在前一快照出現=出清(視為降到 0)——兩者都是真實變動金額,不是資料缺漏。
-    與跟單研究線 00981a-l1h9(見 copytrade_l1h9_daily.py)共用同一張表,純展示欄,
-    不進分數、不影響任何評分或訊號。
+
+def _load_etf981_holdings():
+    """00981A(統一台股增長)持股市值 + 對前一快照的「實際買賣金額」(2026-09-27 jack 交辦)。
+
+    amount=最新快照市值(ezmoney 股數×當時收盤價,非即時)。delta=(股數變動)×最新快照收盤價
+    ——只反映經理人買賣,不含價格漲跌(2026-10-10 修正:舊版用市值差,股數沒變的股票也會因
+    漲跌顯示成加減碼,例如 10-08 健策股數 0 變動卻顯示 +9 億)。只在最新快照出現=新進
+    (delta=+全額);只在前一快照出現=出清(delta=−前次市值)。未扣贖回造成的等比例縮減。
+    與跟單研究線 00981a-l1h9(見 copytrade_l1h9_daily.py)共用同一張表,純展示欄,不進分數。
     """
     out: dict[str, dict] = {}
     asof = prev_asof = None
@@ -277,17 +476,20 @@ def _load_etf981_holdings():
         if dates:
             asof = dates[0]
             prev_asof = dates[1] if len(dates) > 1 else None
-            cur = dict(conn.execute(
-                "SELECT stock_id, amount FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
-                (asof,)).fetchall())
-            prev = dict(conn.execute(
-                "SELECT stock_id, amount FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
-                (prev_asof,)).fetchall()) if prev_asof else {}
-            for sid, amt in cur.items():
-                out[sid] = {"amount": amt or 0.0, "delta": (amt or 0.0) - (prev.get(sid) or 0.0)}
-            for sid, amt in prev.items():
+            cur = conn.execute(
+                "SELECT stock_id, amount, shares FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
+                (asof,)).fetchall()
+            prev = {r[0]: (r[1], r[2]) for r in conn.execute(
+                "SELECT stock_id, amount, shares FROM etf_holdings WHERE etf_code='00981A' AND snapshot_date=?",
+                (prev_asof,)).fetchall()} if prev_asof else {}
+            for sid, amt, sh in cur:
+                amt, sh = amt or 0.0, sh or 0.0
+                psh = (prev.get(sid) or (0.0, 0.0))[1] or 0.0
+                px = amt / sh if sh else 0.0
+                out[sid] = {"amount": amt, "delta": (sh - psh) * px}
+            for sid, (pamt, _psh) in prev.items():
                 if sid not in out:
-                    out[sid] = {"amount": 0.0, "delta": -(amt or 0.0)}
+                    out[sid] = {"amount": 0.0, "delta": -(pamt or 0.0)}
         conn.close()
     except Exception as e:  # noqa: BLE001
         print(f"[etf981] load failed: {e}", file=sys.stderr)
@@ -371,7 +573,8 @@ def _load_xq_style():
     compute_xq_style_metrics 的 _load_holder_tiers()/_load_beta() 即時查詢
     stock_holding_dispersion_weekly/stock_beta,merge 回同一個 dict。"""
     live_keys = ("holder_asof_week", "big800_holder_pct", "big800_holder_pct_chg_w",
-                 "retail10_holder_pct", "retail10_holder_pct_chg_w", "beta", "beta_asof")
+                 "retail10_holder_pct", "retail10_holder_pct_chg_w", "beta", "beta_asof",
+                 "branch_conc_asof", "branch_conc_pct", "branch_conc_net_lots")
     out = {}
     try:
         conn = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
@@ -404,6 +607,8 @@ def _load_xq_style():
                         d["big800_holder_pct_chg_w"] = d["big800_holder_pct"] - big800_wk[pwk]
                     if d["retail10_holder_pct"] is not None and retail10_wk.get(pwk) is not None:
                         d["retail10_holder_pct_chg_w"] = d["retail10_holder_pct"] - retail10_wk[pwk]
+            d["branch_conc_asof"], d["branch_conc_pct"], d["branch_conc_net_lots"] = \
+                _load_branch_concentration(conn, sid)
             beta_val, beta_asof = _load_beta(conn, sid)
             if beta_val is not None:
                 d["beta"] = beta_val
@@ -546,10 +751,16 @@ def _load_holder_big800():
                 by_sid_week[sid][asof][lo] = pct
                 src_used[sid][asof][lo] = src
         for sid, weeks in by_sid_week.items():
-            latest = max(weeks)
-            tiers = weeks[latest]
-            big800 = sum(v for lo, v in tiers.items() if lo >= 800001)
-            out[sid] = (big800, latest)
+            asof_sorted = sorted(weeks)
+            latest = asof_sorted[-1]
+            big800 = sum(v for lo, v in weeks[latest].items() if lo >= 800001)
+            # 2026-10-03 jack交辦:補上對前一週快照的變動幅度(pp),比照00981A持股欄同款Δ寫法。
+            prev_asof = asof_sorted[-2] if len(asof_sorted) >= 2 else None
+            delta = big800_prev = None
+            if prev_asof is not None:
+                big800_prev = sum(v for lo, v in weeks[prev_asof].items() if lo >= 800001)
+                delta = big800 - big800_prev
+            out[sid] = (big800, latest, delta, prev_asof)
     except Exception as e:  # noqa: BLE001
         print(f"[holder_big800] load failed: {e}", file=sys.stderr)
     return out

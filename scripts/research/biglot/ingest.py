@@ -4,10 +4,10 @@
 **這是這整個重構風險最高的一支搬移**，原因：
 1. 這正是 docs/biglot-refactor-roadmap.md 最開頭那個過日重載 bug 的所在地
    （HIST_BIG/Y_PMLOW/UNI5/ETF981_* 曾經漏刷新）。
-2. 它一次會 `global X; X = ...` 整包重新賦值 **17 個**危險全域（`DAILY_TREND`/
+2. 它一次會 `global X; X = ...` 整包重新賦值 **18 個**危險全域（`DAILY_TREND`/
    `KEY_LINE`/`PE_TABLE`/`PE_PEERS`/`PE_GEN`/`PE_EPS`/`ATR_STATE`/`XQ_STYLE`/
    `VIXTWN`/`HIST_BIG`/`Y_PMLOW`/`UNI5`/`ETF981_HOLD`/`ETF981_ASOF`/
-   `ETF981_PREV_ASOF`/`PREOPEN`/`FUT_PX`/`WRT`），比第四批唯一的寫入案例
+   `ETF981_PREV_ASOF`/`PREOPEN`/`FUT_PX`/`WRT`/`PREV2D`[2026-10-03新增]），比第四批唯一的寫入案例
    `_refresh_vol_risk_if_needed`（只寫 2 個）高一個量級。
 3. `loop()` 每 1~300 秒呼叫一次，是全站台唯一處理即時 tick 的路徑——這裡任何
    錯誤都會立刻反映在正式站台上，不是研究頁面的裝飾性 bug。
@@ -80,6 +80,16 @@ def ingest():
                 if not line or not line.endswith("\n"):
                     break                     # 尾行未寫完,下輪再讀
                 biglot_dashboard.ST.raw_off = f.tell()
+                _ingest_trade(line)
+    refraw = raw.with_name(f"raw_ref_{today}.jsonl")      # 池外參考列(收集器另檔落)
+    if refraw.exists():
+        with open(refraw) as f:
+            f.seek(biglot_dashboard.ST.ref_raw_off)
+            while True:
+                line = f.readline()
+                if not line or not line.endswith("\n"):
+                    break
+                biglot_dashboard.ST.ref_raw_off = f.tell()
                 _ingest_trade(line)
     bookf = DATA_DIR / "cache" / "watchlist_books" / f"watchlist_books_{today}.jsonl"
     if bookf.exists():
@@ -161,4 +171,4 @@ def ingest():
                         continue
     except Exception:  # noqa: BLE001
         pass
-    _ingest_mini_fut(today)                        # 期散:小型契約 1 口成交(FUT_MINI 檔)
+    _ingest_fut_bigflow(today)                      # 現貨+期貨大戶加權合併欄(FUT_ROOT 42 檔)

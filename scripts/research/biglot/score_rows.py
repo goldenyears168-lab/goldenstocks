@@ -23,7 +23,7 @@ from biglot.score_v2 import _score_v2
 from biglot.scoring_support import _active_tags
 
 
-def _score_rows(rows, mkt30, nts, mkt30_r=None):
+def _score_rows(rows, mkt30, nts):
     """隔夜分 / 盤中分:各項權重只用 0/±1/±2,依 127 日基準率;權證依 jack 要求納入盤中分(±1,未驗證)。
     寫入 r["sc_ov"], r["sc_in"], r["sc_ov_items"], r["sc_in_items"], r["sc_in_nowrt"]。"""
     for r in rows:
@@ -56,37 +56,39 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
             ovi.append(("日線↑多(正式擬合無顯著性,不計)", 0))
         elif r.get("rs_live") is not None and r["rs_live"] > 1 and dt:
             ov -= 1; ovi.append(("相對強弱>+1∧日線↓空", -1))
-        # 散戶版SMFI背離(2026-09-25 採納;scratch/smfi_score_design_2026-09-25.txt):尾盤(12:55-13:20)散戶淨額佔比 −
-        # 開盤(09:00-09:25)散戶淨額佔比。127日精確重建 ov 控制後 IS ret_smfi 係數 t+2.95(次日跳空)/t+1.70(收對收);
-        # 門檻掃描發現正負不對稱——正向(≥10pp)IS/OOS 單調一致(OOS t+2.11~+3.15 隨門檻走強),負向(≤−門檻)OOS 在
-        # ≥15pp 反號(t−0.66~−1.29),故**只計正向、不設負向對稱項**。單邊規則 vs 基準 ov:IS IC 0.155→0.163(跳空)、
-        # 0.063→0.069(收對收);OOS 0.068→0.074、−0.012→−0.007;觸發時勝率 IS 64%→71%、OOS 52%→58%,兩期同向提升。
+        # 散戶背離(SMFI,2026-09-25 採納;scratch/smfi_score_design_2026-09-25.txt):原始版本是
+        # 尾盤(12:55-13:20)散戶淨額佔比 − 開盤(09:00-09:25)散戶淨額佔比,127日精確重建 ov 控制後
+        # IS ret_smfi 係數 t+2.95(次日跳空)/t+1.70(收對收);門檻掃描發現正負不對稱——正向(≥10pp)
+        # IS/OOS 單調一致(OOS t+2.11~+3.15 隨門檻走強),負向(≤−門檻)OOS 在≥15pp 反號(t−0.66~−1.29),
+        # 故**只計正向、不設負向對稱項**。單邊規則 vs 基準 ov:IS IC 0.155→0.163(跳空)、0.063→0.069
+        # (收對收);OOS 0.068→0.074、−0.012→−0.007;觸發時勝率 IS 64%→71%、OOS 52%→58%,兩期同向提升。
         # IS 樣本本身邊緣(單變量控制後 IS t 未必 ≥2 於所有口徑),依使用者明確指示採納,非嚴格 IS/OOS 雙關口徑通過。
+        # 2026-10-04 jack 交辦「盤中隨時取得、即時變化較好」:r["ret_smfi"] 的「現在」這一側已經在
+        # render_main.py 改成近30分滾動窗(≥biglot_dashboard.SMFI_ACTIVE_FROM 起算,之前為 None),
+        # 本欄的 ≥10pp 判準照舊沿用、未針對滾動窗版本重新優化閾值,但 scripts/research/
+        # retail_smfi_rolling30_timing.py 的47點時段回測證實該時間點起的連續性/強度不輸原尾盤版本
+        # (12:05~12:30 甚至更強:跳空 OOS t+2.9~+4.6,收對收 t+2.0~+3.4)。
         if r.get("ret_smfi") is not None and r["ret_smfi"] >= 10:
             ov += 1; ovi.append(("散戶背離(SMFI)≥+10pp", +1))
         # ---- 盤中分 ----
         act = _active_tags(sid, nts)
         sc, sci = 0, []
-        # 同源不累加(2026-09-24 jack 定案):同一筆大戶買會同時點亮 主力點火/純機構/深接30/深接5m → 取最大值一次;
-        # 散戶側 散戶虛拉/勿追 同源 → 取一次 −1;機構暗退、噴後過熱 各自獨立來源
-        # (破昨防線已於 2026-09-28 移除計分,見下方註記,不再是計分來源之一)。
-        # 時間衰減(2026-09-24 jack 要求):標籤價值 = 權重 × (1 − 經過/時距),基準率是「首次觸發起未來30分」,越晚看剩越少;小數一位
-        # 2026-09-28 移除「純機構」:跟 score_v2.py 的同名項幾乎重複定義(共線性診斷 phi 高度重疊),
-        # V2.5 版多了 hm>=10:00 閘門更精確,不在這裡重複計分(tag 本身仍會觸發、仍會在其他地方顯示徽章)。
-        bull_src = [(t, p * act[t]) for t, p in (("主力點火", 2), ("深接30", 1), ("深接5m", 1)) if t in act]
-        if bull_src:
-            best = max(bull_src, key=lambda x: x[1])
-            sc += best[1]; sci.append(("大戶買[" + "·".join(f"{t}×{act[t]:.2f}" for t, _ in bull_src) + "]取最大", round(best[1], 1)))
-        for tag, pts in (("機構暗退", -2), ("噴後過熱", -2)):
-            if tag in act:
-                sc += pts * act[tag]; sci.append((f"{tag}×{act[tag]:.2f}", round(pts * act[tag], 1)))
-        ret_src = [t for t in ("散戶虛拉", "勿追30", "勿追5m") if t in act]
-        if ret_src:
-            if ("散戶虛拉" not in ret_src) and mkt30 > 0:
-                sci.append(("勿追(市場30分>0,記0)", 0))
+        # 同源不累加;時間衰減 權重×(1−經過/時距)。2026-10-08 盤點(144 日面板、日聚類、延遲 1 桶、IS/OOS):
+        # 只留三項有穩定證據者:深接30 +1(+7.1/延遲+4.1)、噴後過熱 −1(+6.5/延遲+3.1)、勿追5m −1(+9.2/延遲+2.7,逐月皆正)。
+        # 機構暗退/散戶虛拉降為觀察標籤(不計分):144 日整體顯著,但 9 月衰減(+0.6/+1.3)、前瞻 7 日方向未確認;
+        # 勿追30(延遲+1.1)/主力點火/深接5m/純機構/竭盡候選 無證據,已刪。
+        deep = act.get("深接30")
+        if deep:
+            sc += deep; sci.append((f"深接30×{deep:.2f}", round(deep, 1)))
+        pump = act.get("噴後過熱")
+        if pump:
+            sc -= pump; sci.append((f"價漲過頭[噴後過熱]×{pump:.2f}", round(-pump, 1)))
+        chase = act.get("勿追5m")
+        if chase:
+            if mkt30 > 0:
+                sci.append(("勿追5m(市場30分>0,記0)", 0))
             else:
-                w_ = max(act[t] for t in ret_src)
-                sc -= w_; sci.append(("散戶側[" + "·".join(ret_src) + f"]×{w_:.2f}", round(-w_, 1)))
+                sc -= chase; sci.append((f"散戶側[勿追5m]×{chase:.2f}", round(-chase, 1)))
         # 2026-09-28 移除「破昨防線」計分:正式擬合(控制急跌類格子後)IS t=+1.9996(差0.0004沒過
         # 門檻)、方向翻正而非現行的利空-1,OOS t=+0.77不顯著。文獻(短期反轉/52週低點)+內部已驗證
         # 的zscore-normalized-spike-reversion都支持「跌深後短期反彈」,現行-1的方向本身可能是
@@ -94,22 +96,10 @@ def _score_rows(rows, mkt30, nts, mkt30_r=None):
         if r.get("pmlow_warn"):
             sci.append(("破昨防線(正式擬合方向相反且OOS不顯著,不計)", 0))
         sc_nowrt = sc
-        # 2026-09-28 移除權證三分支(原本 sh>=0.6∧r30>0 / sh>=0.6∧b30<=-3e7 / sh<=0.4∧b30>=3e7,
-        # 各±1未驗證):判斷式跟 score_v2.py 的「權證」項逐字相同,那邊已有 IS 擬合權重(±3.0),
-        # 留在這裡只是重複計分同一件事,不是獨立驗證(2026-09-28 共線性診斷發現)。
-        # 委託簿竭盡候選(尚非策略,jack 要求先計分;定義來自 09-23/24 tick 案例,未驗證):
-        #   急殺中(近5分 ≤−0.20%)∧ 近30秒主動賣 ≤40% ∧ 買深 ≥3 分 → +1;急拉中 ∧ 主動買 ≤40%(sell≥60%)∧ 賣深 ≥3 分 → −1
-        sp = r.get("sell30s_r"); w5 = r.get("w_ret_r") or 0
-        bm, am = r.get("bid_min"), r.get("ask_min")
-        if sp is not None:
-            if w5 <= -20 and sp <= 0.40 and (bm or 0) >= 3:
-                sc += 1; sci.append((f"賣盤竭盡候選(30s主動賣{sp*100:.0f}%·買深{bm:.1f}分,未驗證)", +1))
-            elif w5 >= 20 and sp >= 0.60 and (am or 0) >= 3:
-                sc -= 1; sci.append((f"買盤竭盡候選(30s主動買{(1-sp)*100:.0f}%·賣深{am:.1f}分,未驗證)", -1))
         r["sc_ov"], r["sc_in"], r["sc_in_nowrt"] = ov, sc, sc_nowrt
         try:
             _hm = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%H:%M")
-            r["sc_v2"], r["sc_v2_items"] = _score_v2(r, mkt30 if mkt30_r is None else mkt30_r, _hm)
+            r["sc_v2"], r["sc_v2_items"] = _score_v2(r, _hm)
         except Exception as _e:  # noqa: BLE001
             r["sc_v2"], r["sc_v2_items"] = None, [(f"計分失敗:{type(_e).__name__}", 0)]
         r["sc_ov_items"], r["sc_in_items"] = ovi, sci

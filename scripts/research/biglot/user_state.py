@@ -1,17 +1,20 @@
 """biglot dashboard 重構：使用者手動輸入的持久化狀態——頁首自由筆記(`_load_notes`)、
-個股筆記(`_stock_note_td`/`_save_stock_note`)、持倉監控事件日誌(`_hold_log`/`_hold_save`)、
-持倉監控按鈕/自動出場判斷(`_hold_toggle`/`_hold_update`)、OOS 帳本讀取與彙總/收盤結算
+個股筆記(`_stock_note_td`/`_save_stock_note`)、OOS 帳本讀取與彙總/收盤結算
 (`_oos_load`/`_oos_summary`/`_oos_update_at_close`)。
+
+⚠ 2026-10-05 移除:手動持倉按鈕/自動出場判斷(`_hold_toggle`/`_hold_update`/`_hold_log`/
+`_hold_save`)連同 `HOLDS`/`HOLDS_PATH` 全域一併刪除(jack 交辦,這組功能用不到)。
+`HOLD_BAD` 常數保留在 biglot_dashboard.py,仍被 paper_trading.py 的紙上交易自動出場
+邏輯讀取,不受影響。
 
 依 docs/biglot-refactor-roadmap.md 訂下的規則搬移：只 `import biglot_dashboard`
 （模組本身，不指名字），函式本體內對 `biglot_dashboard.py` 自己定義的全域一律用
 `biglot_dashboard.NAME` 屬性存取（`NOTES_PATH`/`DEFAULT_NOTES`/`STOCK_NOTES_PATH`/
-`STOCK_NOTES`/`HOLDS_PATH`/`HOLDS`/`HOLD_BAD`/`OOS_FILE`/`TZ`/`ST`/`NAMES`/
+`STOCK_NOTES`/`OOS_FILE`/`TZ`/`ST`/`NAMES`/
 `PREV_CLOSE`/`RET_UNM`/`DAILY_TREND`/`UNI5`）——不只是「危險全域」（會被
 `ingest()` 整包重新賦值的那 18 個，`DAILY_TREND`/`UNI5` 就在其中），是全部，
 因為屬性存取本來就不比 bare name 貴，一律用同一個安全模式比逐一分類「這個要
-不要小心」更不容易出錯。`DATA_DIR` 例外：它來自 `stock_db`、不是
-`biglot_dashboard.py` 自己定義的全域，直接 `from stock_db import DATA_DIR` 匯入。
+不要小心」更不容易出錯。
 
 參見 scripts/research/biglot/xq_style.py 開頭的完整說明（同一套規則第一次
 被端到端驗證的地方）。
@@ -20,9 +23,6 @@ from __future__ import annotations
 
 import html as html_mod
 import json
-import time
-
-from stock_db import DATA_DIR
 
 import biglot_dashboard
 
@@ -45,20 +45,6 @@ def _stock_note_td(sid):
             f"<span class='nt dim'>{when}</span></td>")
 
 
-def _hold_save():
-    biglot_dashboard.HOLDS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    biglot_dashboard.HOLDS_PATH.write_text(json.dumps(biglot_dashboard.HOLDS, ensure_ascii=False, indent=0), encoding="utf-8")
-
-
-def _hold_log(rec: dict):
-    try:
-        f = DATA_DIR.parent / "cache" / "biglot_live_watch" / f"hold_events_{biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime('%Y-%m-%d')}.jsonl"
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"ts": biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%H:%M:%S"), **rec}, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def _save_stock_note(sid, txt):
     now = biglot_dashboard.datetime.now(biglot_dashboard.TZ)
     biglot_dashboard.STOCK_NOTES[sid] = {"txt": txt[:2000], "t": now.strftime("%H:%M:%S"), "d": now.strftime("%Y-%m-%d")}
@@ -73,50 +59,6 @@ def _oos_load():
     except Exception:
         return {"intraday": [], "overnight": [], "overnight_pending": [],
             "overnight_short": [], "overnight_short_pending": []}
-
-
-def _hold_toggle(sid: str, action: str, px):
-    now = time.time()
-    if action == "open" and sid not in biglot_dashboard.HOLDS:
-        biglot_dashboard.HOLDS[sid] = {"t0": now, "hm": biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%H:%M:%S"), "px0": px, "low_since": None, "fired": []}
-        _hold_log({"ev": "open", "sid": sid, "px0": px})
-    elif action == "close" and sid in biglot_dashboard.HOLDS:
-        h = biglot_dashboard.HOLDS.pop(sid); pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
-        _hold_log({"ev": "close", "sid": sid, "px0": h.get("px0"), "px": px, "pnl_bps": pnl, "hold_min": (now - h["t0"]) / 60, "reason": "manual", "fired": h.get("fired", [])})
-    _hold_save()
-
-
-def _hold_update(rows):
-    """每輪:持倉分=當下 V2.5;分數≤PAPER_EXIT_TH 連續 30 秒 / 壞標籤 / 60 分到期 → 出場旗標;獲利≥50 提示。首次觸發落地。
-
-    門檻與紙上交易共用 `biglot_dashboard.PAPER_EXIT_TH`(2026-09-30 起為 −5),避免顯示給人看的
-    提示與紙上帳跑兩套規則。
-    """
-    now = time.time()
-    for r in rows:
-        h = biglot_dashboard.HOLDS.get(r["sid"])
-        if not h:
-            r["hold"] = None; continue
-        px = r.get("px"); sc = r.get("sc_v2"); items = [k for k, _ in (r.get("sc_v2_items") or [])]
-        pnl = ((px / h["px0"] - 1) * 1e4) if (px and h.get("px0")) else None
-        hold_min = (now - h["t0"]) / 60
-        if sc is not None and sc <= biglot_dashboard.PAPER_EXIT_TH:
-            if h.get("low_since") is None: h["low_since"] = now
-        else:
-            h["low_since"] = None
-        flags = []
-        if h.get("low_since") is not None and now - h["low_since"] >= 30:
-            flags.append(f"分數≤{biglot_dashboard.PAPER_EXIT_TH:g}·30秒")
-        bad = [k for k in items if any(k.startswith(b) for b in biglot_dashboard.HOLD_BAD)]
-        if bad: flags.append("壞標籤:" + "/".join(x.split("(")[0] for x in bad))
-        if hold_min >= 60: flags.append("到期60分")
-        hint = "停利+50" if (pnl is not None and pnl >= 50) else ""
-        for fl in flags:
-            key = fl.split(":")[0]
-            if key not in h.setdefault("fired", []):
-                h["fired"].append(key); _hold_log({"ev": "flag", "sid": r["sid"], "flag": fl, "pnl_bps": pnl, "hold_min": hold_min, "score": sc})
-        r["hold"] = {"hm": h["hm"], "px0": h.get("px0"), "pnl": pnl, "min": hold_min, "score": sc, "flags": flags, "hint": hint,
-                     "low_s": (now - h["low_since"]) if h.get("low_since") is not None else 0}
 
 
 def _oos_summary():

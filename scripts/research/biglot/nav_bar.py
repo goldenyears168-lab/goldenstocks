@@ -12,16 +12,18 @@ MAIN = (
 )
 TOOLS = (
     ("處置監測", "/disposal", ("/disposal",)),
+    ("籌碼SOP", "/chips", ("/chips",)),
     ("小哥筆記本", "/xiaoge", ("/xiaoge",)),
-    ("期貨大戶−散戶", "/futflow", ("/futflow",)),
+    ("期貨內外盤", "/futflow", ("/futflow",)),
     ("紙上模擬", "/paper", ("/paper",)),
+    ("撤單神器", "/guard", ("/guard",)),
     ("圖形總覽", "/grid", ("/grid",)),
     ("歷史回放", "/timeline", ("/timeline",)),
     ("歷史分頁", "/history", ("/history", "/day")),
     ("故事", "/stories", ("/stories",)),
     ("欄位說明", "/help", ("/help",)),
 )
-SKIP = {"/assets/ui.css", "/assets/live.js", "/health", "/frag", "/gridfrag", "/agentfrag", "/timelinefrag", "/stockfrag", "/agentsig", "/agentjs", "/futflowfrag"}
+SKIP = {"/assets/ui.css", "/assets/live.js", "/health", "/frag", "/gridfrag", "/agentfrag", "/timelinefrag", "/stockfrag", "/agentsig", "/agentjs", "/futflowfrag", "/guardfrag"}
 
 CSS = (
     '<link rel="stylesheet" href="/assets/ui.css?v=1">'   # 設計代幣(docs/ui-standard.md);頁面以 var(--名稱,備援值) 引用

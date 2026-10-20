@@ -75,7 +75,7 @@ NAMES = {r["sid"]: r["name"] for r in _cal["universe"]}
 from biglot_roles import load_roles as _load_roles  # noqa: E402
 ROLES = _load_roles()
 REF_POOL = {r["sid"]: r for r in ROLES.get("reference_in_pool", []) if r["sid"] in NAMES}
-REF_EXTRA = {r["sid"]: r for r in ROLES.get("reference_off_pool", [])}      # 池外:不在 calib/NAMES,走獨立訂閱
+REF_EXTRA = {r["sid"]: r for r in ROLES.get("reference_off_pool", []) if r["sid"] not in NAMES}      # 池外:不在 calib/NAMES,走獨立訂閱
 REF_SIDS = set(REF_POOL) | set(REF_EXTRA)
 REF_NAMES = {sid: (NAMES.get(sid) or r["name"]) for sid, r in {**REF_POOL, **REF_EXTRA}.items()}
 INDEP = {r["sid"]: r for r in ROLES.get("independent", []) if r["sid"] in NAMES}
@@ -105,6 +105,29 @@ SUBCAT = {
 }
 RET_UNM = {r["sid"] for r in _cal["universe"] if r.get("px", 0) * 1000 >= RETAIL_CAP}
 FUT_MINI = {r["sid"] for r in _cal["universe"] if r.get("is_mini")}   # 期貨為小型契約(100 股):期貨買/賣欄標「小」、1 口名目=價×100
+
+# ---- 現貨+期貨大戶加權合併欄(2026-10-06 jack 交辦,見 biglot/futures_bigflow.py docstring 的
+#      探索性研究結論——純觀察、不進分數)。FUT_ROOT:sid -> 逐筆成交目錄 root(來自
+#      collect_stock_futures_books.py 落地的 `{root}_trades_{日}.jsonl`);找不到對應目錄的
+#      (理論上不會發生,42 檔全部對映成功過)就不進 FUT_ROOT,該欄對那檔退回只顯示現貨值。
+_FUT_ROOT_OVERRIDE = {"SFF": "sf"}   # 2383台光電:sff目錄是2026-09-01前就停寫的舊命名殘留,現行是sf
+def _resolve_fut_root(fut_code, existing_dirs):
+    if fut_code in _FUT_ROOT_OVERRIDE:
+        return _FUT_ROOT_OVERRIDE[fut_code]
+    cand1 = fut_code.lower()
+    cand2 = fut_code[:-1].lower() if len(fut_code) == 3 and fut_code.endswith("F") else None
+    cands = [c for c in (cand1, cand2) if c and c in existing_dirs]
+    return cands[0] if cands else None
+_existing_fut_trade_dirs = {p.name.replace("_trades", "") for p in (DATA_DIR.parent / "cache").glob("*_trades") if p.is_dir()}
+FUT_ROOT = {r["sid"]: _resolve_fut_root(r["fut_code"], _existing_fut_trade_dirs)
+            for r in _cal["universe"] if r.get("fut_code")}
+FUT_ROOT = {sid: root for sid, root in FUT_ROOT.items() if root}
+FUT_CONTRACT_SIZE = {r["sid"]: float(r.get("contract_size") or 2000) for r in _cal["universe"]}
+FUT_BIGFLOW: dict = {"day": None, "off": {}, "net": {}, "n": {}, "rnet": {}, "rn": {}, "seen": {}}
+FUT_RETFLOW_WEIGHT = 8.0            # 2026-10-12校準:現貨散戶(1張<500萬)/期貨1口 日|淨額|中位數比8.4(15日136股日,相關0.37)
+FUT_BIG_LOTS_OPEN = 10              # 2026-10-12 jack 定:08:45–09:00 標準契約期貨大戶門檻改 ≥10 口(09:00 後仍=BIG_AMT 1000萬)
+FUT_BIGFLOW_WEIGHT = 10.0            # 2026-10-06探索性研究:現貨/期貨大戶單日|淨額|中位數比值≈10.37,取整10
+FUT_BIGFLOW_DIVERGE_MIN = 3 * BIG_AMT  # 背離標記門檻:期貨大戶淨額(未加權)至少約3筆大戶單
 # 公司描述/看盤標籤(純靜態;主表名稱 hover 提示 + 詳情頁區塊)。查無則不顯示。
 try:
     from biglot_stock_info import INFO as STOCK_INFO, BLOCKS as STOCK_BLOCKS, tooltip as _stock_tip
@@ -142,15 +165,11 @@ except Exception:  # noqa: BLE001
     STOCK_NOTES = {}
 
 
-# ---- 持倉監控(jack 2026-09-25):手動標記持倉,持有中每輪重算 V2.5 當「持倉分」,出場提示依 127 日面板對照
-#      (scratch/exit_rules_2026-09-25.txt):分數≤0 出 +23.1/+23.2(t5.2/6.2,均持 11 分,SD 94)、壞標籤出 +24.5/+26.0、
-#      到期 60 分;移動停利/硬停損/破昨低出場皆較差,不做。純提示,不送單。
-HOLDS_PATH = DATA_DIR.parent / "cache" / "biglot_live_watch" / "holds.json"
-try:
-    HOLDS: dict = json.loads(HOLDS_PATH.read_text(encoding="utf-8"))
-except Exception:  # noqa: BLE001
-    HOLDS = {}
-HOLD_BAD = ("散戶虛拉", "噴後過熱", "急跌·竭盡∧散戶接")
+# ---- 壞標籤(jack 2026-09-25):出場規則/紙上交易共用——分數≤0 出 +23.1/+23.2(t5.2/6.2,均持 11 分,
+#      SD 94)、壞標籤出 +24.5/+26.0、到期 60 分;移動停利/硬停損/破昨低出場皆較差,不做。
+#      ⚠ 2026-10-05 手動持/出按鈕(持倉監控)已移除,HOLD_BAD 現在只被 paper_trading.py 的紙上交易
+#      自動出場邏輯讀取,勿連這個常數一起刪。
+HOLD_BAD = ("噴後過熱", "急跌·竭盡∧散戶接")
 
 
 # 固定產業鏈排序(避免5秒隨大戶流跳位):相近產業相鄰,半導體上游→下游→非半導體。
@@ -174,6 +193,7 @@ _CLUSTERS = [
     ("系統品牌", ["2357"]),
     ("塑化", ["1303"]),
     ("航運", ["2615", "2609"]),
+    ("處置監測(有期貨)", []),   # 動態列:disposal_futures_pool.json(收盤後產生)
 ]
 # 池外參考列接在各自族群末尾(池內參考列 6770/4958 已直接寫在上面各組末尾)
 _CLUSTERS_ALL = [(n, sids + [s for s, r in REF_EXTRA.items() if r["group"] == n]) for n, sids in _CLUSTERS]
@@ -193,7 +213,9 @@ SNAP_DIR.mkdir(parents=True, exist_ok=True)
 HIST_BIG, PREV_CLOSE, Y_PMLOW, UNI5 = _load_hist()
 
 
-PREV_CLOSE.update(_load_prev_close_db())   # 官方收盤優先,快照昨收僅作 fallback
+_pc_db, SIG_DAY, _pc2_db = _load_prev_close_db()
+PREV_CLOSE.update(_pc_db)   # 官方收盤優先,快照昨收僅作 fallback
+PREV2_CLOSE = dict(_pc2_db)  # 前前一交易日收盤:休市日主表顯示最近交易日收盤當時的漲跌用
 
 
 DAILY_TREND = _load_daily_trend()
@@ -286,44 +308,178 @@ _DISPOSAL_BADGE = _disposal_badge()
 # 外殼反而會變成巢狀 <script>(不合法,瀏覽器會提早在第一個 </script> 截斷);
 # 要獨立成頁的呼叫端(biglot/timeline_snap.py)自己在插入處包 <script>...</script>。
 TABLE_INTERACT_JS = """
-// 表格點標題排序(仿 XQ 全球贏家;2026-09-29 jack 交辦)。#app 的內容可能被整包 innerHTML 換掉,
-// 不能像靜態頁那樣原地重排 <tr> 就結束——排序「狀態」記在這個閉包的變數裡(不受換頁影響),
-// 事件也代理到 #app(不會被砍掉)而不是綁在每次都重生的 <th> 上。呼叫端每次把新內容塞進
-// #app 後呼叫 window.__applySort() 用同一份狀態重新排一次,體感上是「持續排序」。
-// 排序鍵一律讀 <td data-sort> 屬性(渲染時後端已經把原始數值塞進去,不猜畫面文字格式)。
-// 第一欄「股票」不是排序鍵——現行順序本來就是固定產業鏈排序,點它=清空排序狀態、回到這個預設順序。
+// 表格互動(排序＋比例淡化過濾 30~70%)——單一狀態、單一流程:點表頭 → 選單(排序/過濾)→ applyView()。
+// 2026-10-05 jack 交辦:手機沒有右鍵/hover,所以統一「左鍵(點/觸)表頭開選單」,不再有「點表頭直接排序」。
+// #app 的內容每秒被整包 innerHTML 換掉,所以:狀態記在這個閉包(不受換頁影響)、事件代理到 #app、
+// 選單與工具列放在 #app 外面;呼叫端每次換完內容呼叫 window.__applySort()(=applyView 的別名,
+// 即時頁/回放頁的呼叫鏈不用改)。欄位一律用「表頭文字」當鍵再換算序號,不用序號
+// (前幾天才插過欄,序號會漂移)。排序鍵讀 <td data-sort>,渲染時後端已塞好原始數值。
+// 流程順序固定:還原原始列序 → 排序 → 過濾(淡化)→ 標示表頭;凍結欄寬度由呼叫端在它之後量測。
+// 過濾規則:每個條件各有保留比例 pct(30/40/50/60/70,預設 50);多條件 AND(任一條件落在淘汰段就淡化);缺值不計分;平手用 midrank(同 story_tags._pct_rank),
+// 邊界上的平手不淡化;所有列一視同仁,沒有豁免列(2026-10-05 jack 指定:參考列/獨立檔/持倉/訊號亮燈列都照數值排名)。
+// 淡化用 filter 不用 opacity:股票欄/凍結欄是 sticky 且底色不透明,opacity 會讓橫向捲動的內容透出來。
+// ⚠ 此常數是非 raw 字串:JS 裡不能寫反斜線(Python 會先吃掉跳脫字元)。
 (function(){
-  const app=document.getElementById('app');
-  let sortIdx=null, sortDir=1;   // sortIdx=null → 預設順序(產業鏈);sortDir 1=大到小 −1=小到大
-  function applySort(){
-    const table=app.querySelector('table'); if(!table) return;
-    const theadRow=table.querySelector('thead tr'); const tbody=table.querySelector('tbody');
-    if(!theadRow||!tbody) return;
-    table.classList.toggle('sorted', sortIdx!==null);
-    const ths=[...theadRow.children];
-    if(sortIdx!==null && ths[sortIdx]){
-      ths[sortIdx].insertAdjacentHTML('beforeend', ' <span class="sortind">'+(sortDir>0?'▼':'▲')+'</span>');
-    }
-    if(sortIdx===null) return;   // 預設順序:吃伺服器算好的原始列順序,不重排
-    const rows=[...tbody.children];
-    rows.sort((a,b)=>{
-      const av=a.children[sortIdx]&&a.children[sortIdx].dataset.sort, bv=b.children[sortIdx]&&b.children[sortIdx].dataset.sort;
-      const an=(av===undefined||av==='')?null:parseFloat(av), bn=(bv===undefined||bv==='')?null:parseFloat(bv);
-      if(an===null&&bn===null) return 0;
-      if(an===null) return 1; if(bn===null) return -1;   // 缺值一律排最後,不受方向影響
-      return sortDir*(bn-an);
-    });
-    rows.forEach(r=>tbody.appendChild(r));
+  const app=document.getElementById('app'); if(!app) return;
+  let sort=null;                     // {k:欄名, dir:1 大到小 | -1 小到大};不存檔(同舊行為)
+  const PCTS=[30,40,50,60,70];       // 可選保留比例(%);要加 20/80 只改這裡
+  const AGENT=__AGENT_RULES__;       // 複製人規則(config/clone_agent_rules.json 啟動時內嵌);null=沒讀到,按鈕隱藏
+  let flt={on:false, agent:false, items:[]};   // items:[{k:欄名, keep:'top'|'bottom', pct:保留比例} | {k:欄名, keep:'ge'|'le', th:門檻值}];agent=套用代理人規則(存 localStorage 'tfilter';舊資料無 pct → 50)
+  try{ const j=JSON.parse(localStorage.getItem('tfilter')||'null');
+    if(j&&Array.isArray(j.items)) flt={on:!!j.on, agent:!!j.agent&&!!AGENT, items:j.items.filter(x=>x&&x.k&&(x.keep==='top'||x.keep==='bottom'||((x.keep==='ge'||x.keep==='le')&&typeof x.th==='number'))).map(x=>(x.keep==='ge'||x.keep==='le')?{k:x.k, keep:x.keep, th:x.th}:{k:x.k, keep:x.keep, pct:PCTS.includes(x.pct)?x.pct:50})}; }catch(e){}
+  const lab=it=>it.keep==='ge'?('≥'+it.th):it.keep==='le'?('≤'+it.th):it.pct===50?(it.keep==='top'?'留前半':'留後半'):((it.keep==='top'?'大的留 ':'小的留 ')+it.pct+'%');
+  const save=()=>{ try{ localStorage.setItem('tfilter', JSON.stringify(flt)); }catch(e){} };
+  const keyOf=th=>{ for(const n of th.childNodes){ if(n.nodeType===3&&n.textContent.trim()) return n.textContent.trim(); } return th.textContent.trim(); };
+  const idxOf=(ths,k)=>ths.findIndex(th=>keyOf(th)===k);
+  const num=(r,i)=>{ const c=r.children[i]; const raw=c&&c.dataset.sort; if(raw===undefined||raw==='') return null; const v=parseFloat(raw); return isNaN(v)?null:v; };
+
+  const st=document.createElement('style');
+  st.textContent='tr.fdim td{filter:grayscale(.7) brightness(.5)}table.fon tbody tr:not(.fdim) td{filter:brightness(1.3)}'
+    +'.sortind{color:#58a6ff}.fmark{color:#e3b341}'
+    +'#ftool{font-size:11px;margin:2px 0 4px;color:#8b949e}'
+    +'#ftool button{font:inherit;cursor:pointer;color:#c9d1d9;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:1px 8px}'
+    +'#ftool button.on{background:#12263f;border-color:#2f6feb;color:#79c0ff}'
+    +'#tmenu .prow{display:flex;gap:4px;padding:2px 8px 6px}#tmenu .prow button{flex:1;width:auto;text-align:center;padding:8px 0;border:1px solid #30363d}#tmenu .prow button.on{background:#12263f;border-color:#2f6feb}'
+    +'#tmenu{position:fixed;z-index:1000;display:none;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px;min-width:250px;box-shadow:0 4px 14px rgba(0,0,0,.5);font-size:13px;text-align:left}'
+    +'#tmenu .mh{color:#8b949e;padding:4px 12px;font-size:11px}'
+    +'#tmenu button{display:block;width:100%;text-align:left;font:inherit;color:#c9d1d9;background:none;border:0;border-radius:4px;padding:8px 12px;cursor:pointer}'
+    +'#tmenu button:hover{background:#21262d}#tmenu button.on{color:#79c0ff}#tmenu button:disabled{color:#484f58;cursor:default}'
+    +'#tmenu hr{border:0;border-top:1px solid #30363d;margin:4px 0}';
+  document.head.appendChild(st);
+  const bar=document.createElement('div'); bar.id='ftool';
+  bar.innerHTML='<button type="button" id="fbtn"></button> '+(AGENT?'<button type="button" id="fagent" title="一鍵套用複製人規則 '+AGENT.ver+':①大戶佔比②距30分高%③30分大戶佔比④30分散戶佔比⑤30分成交額百分位,並淡化不在名單內的列;09:30前與12–13點整表淡化">套用代理人規則</button> ':'')+'<span id="fnote"></span> <button type="button" id="fclr" style="display:none">清除全部過濾</button>';
+  app.parentNode.insertBefore(bar, app);
+  const btn=bar.querySelector('#fbtn'), note=bar.querySelector('#fnote'), clr=bar.querySelector('#fclr'), abtn=bar.querySelector('#fagent');
+  const twNow=()=>new Date(Date.now()+(new Date().getTimezoneOffset()+480)*60000);
+  function agentIdle(table){   // 代理人現在不出卡的理由(只在盤中即時頁判斷;盤後/回放頁不套時段)
+    if(!AGENT||!table||table.dataset.live!=='1') return '';
+    const d=twNow(), h=d.getHours(), hm=h*60+d.getMinutes(), s=AGENT.start.split(':');
+    if(hm<(+s[0])*60+(+s[1])) return AGENT.start+' 前人工判斷,代理人不出卡';
+    if(AGENT.skip.includes(h)) return AGENT.skip.join('、')+' 點代理人不出卡';
+    return '';
   }
-  app.addEventListener('click', e=>{
-    const th=e.target.closest&&e.target.closest('thead th'); if(!th) return;
-    const theadRow=th.closest('tr'); const ths=[...theadRow.children]; const i=ths.indexOf(th);
-    if(i===0){sortIdx=null; sortDir=1; applySort(); return;}   // 股票欄=回到預設順序
-    if(th.dataset.nosort!==undefined) return;   // 不可排序欄(期貨買/賣·順逆大盤·訊號·隱形大戶·筆記)
-    if(sortIdx===i){sortDir=-sortDir;} else {sortIdx=i; sortDir=1;}   // 同欄再點=反向,首次點=大到小
-    applySort();
-  });
-  window.__applySort=applySort;
+  const menu=document.createElement('div'); menu.id='tmenu'; document.body.appendChild(menu);
+  let menuKey=null;
+
+  function refreshBar(info){
+    btn.classList.toggle('on', flt.on); btn.textContent='淡化過濾:'+(flt.on?'開':'關');
+    if(abtn) abtn.classList.toggle('on', flt.agent);
+    clr.style.display=flt.items.length?'':'none';
+    if(!flt.items.length){ note.style.color=''; note.textContent='點任一欄標題 → 選「過濾」加入條件(可連續加多欄,全部符合才不淡化)'; return; }
+    const names=(flt.agent?'代理人規則 '+AGENT.ver+':':'')+flt.items.map(x=>x.k+'('+lab(x)+')').join(' ＋ ');
+    const strict=!!(info&&flt.on&&info.total>0&&info.kept===0&&!info.idle);
+    note.style.color=strict?'#e3b341':'';
+    note.textContent=names+(info&&flt.on?'　保留 '+info.kept+'/'+info.total+' 檔'+(strict?'　條件太嚴,沒有任何檔留下':'')+(info.miss.length?'　找不到欄:'+info.miss.join('、'):'')+(info.idle?'　整表淡化:'+info.idle:''):'');
+  }
+
+  function applyView(){
+    const table=app.querySelector('table'); if(!table){ refreshBar(null); return; }
+    const head=table.querySelector('thead tr'), tbody=table.querySelector('tbody'); if(!head||!tbody) return;
+    const ths=[...head.children];
+    ths.forEach(th=>th.querySelectorAll('.sortind,.fmark').forEach(e=>e.remove()));
+    let rows=[...tbody.children];
+    rows.forEach((r,i)=>{ if(r.dataset.o===undefined) r.dataset.o=i; r.classList.remove('fdim'); });
+    // 排序(取消排序=依 data-o 還原伺服器原始列序)
+    const si=sort?idxOf(ths,sort.k):-1;
+    table.classList.toggle('sorted', si>=0);
+    if(si>=0){
+      ths[si].insertAdjacentHTML('beforeend',' <span class="sortind">'+(sort.dir>0?'▼':'▲')+'</span>');
+      rows.sort((a,b)=>{
+        const an=num(a,si), bn=num(b,si);
+        if(an===null&&bn===null) return 0;
+        if(an===null) return 1; if(bn===null) return -1;   // 缺值一律排最後,不受方向影響
+        return sort.dir*(bn-an);
+      });
+    } else rows.sort((a,b)=>a.dataset.o-b.dataset.o);
+    if(rows.some((r,i)=>tbody.children[i]!==r)) rows.forEach(r=>tbody.appendChild(r));
+    // 過濾
+    const ag=flt.on&&flt.agent&&!!AGENT;   // 代理人模式:排名母體=池內 42 檔(不含池外參考列);缺值=不出卡→淡化
+    const pool=ag?rows.filter(r=>r.dataset.offpool===undefined):rows; const bad=new Set(); const miss=[]; let active=0;
+    if(flt.on) flt.items.forEach(it=>{
+      const idx=idxOf(ths,it.k); if(idx<0){ miss.push(it.k); return; }
+      ths[idx].insertAdjacentHTML('beforeend',' <span class="fmark" title="過濾:'+lab(it)+'">◐'+(it.keep==='top'?'▲':'▼')+'</span>');
+      active++;
+      if(it.keep==='ge'||it.keep==='le'){
+        rows.forEach(r=>{ const v=num(r,idx); if(v===null){ if(ag) bad.add(r); } else if(it.keep==='ge'?v<it.th:v>it.th) bad.add(r); });
+        return;
+      }
+      const vals=[]; pool.forEach(r=>{ const v=num(r,idx); if(v!==null) vals.push([r,v]); else if(ag) bad.add(r); });
+      const n=vals.length, dir=it.keep==='top'?1:-1;
+      vals.forEach(([r,v])=>{
+        let ahead=0, tie=0;
+        for(const q of vals){ if(q[1]===v) tie++; else if(dir>0? q[1]>v : q[1]<v) ahead++; }
+        if((ahead+tie/2)*100>it.pct*n) bad.add(r);   // 整數比較,避免浮點邊界誤差
+      });
+    });
+    let idle='';
+    if(ag){
+      const mem=new Set(AGENT.members);
+      rows.forEach(r=>{ if(!mem.has(r.dataset.sid)) bad.add(r); });   // 不在代理人名單(戰場 23 檔)的列一律不會出卡
+      idle=agentIdle(table);
+      if(idle) rows.forEach(r=>bad.add(r));
+    }
+    bad.forEach(r=>r.classList.add('fdim'));
+    table.classList.toggle('fon', active>0&&bad.size>0);   // 有淡化時,沒被淡化的列提亮,對比更明顯
+    refreshBar({kept:rows.length-bad.size, total:ag?AGENT.members.length:rows.length, miss, idle});
+  }
+
+  function closeMenu(){ menu.style.display='none'; menuKey=null; }
+  function act(a,k,p){
+    if(a==='sort1') sort={k,dir:1}; else if(a==='sortm1') sort={k,dir:-1}; else if(a==='sortoff') sort=null;
+    else if(a==='agent'){
+      if(flt.agent){ flt={on:flt.on, agent:false, items:[]}; }
+      else flt={on:true, agent:true, items:[
+        {k:'大戶佔比', keep:'top', pct:AGENT.pct}, {k:'距30分高%', keep:'le', th:AGENT.pull},
+        {k:'30分大戶佔比', keep:'top', pct:AGENT.pct}, {k:'30分散戶佔比', keep:'bottom', pct:AGENT.pct},
+        {k:'30分成交額百分位', keep:'ge', th:AGENT.amtmin}]};
+      save();
+    }
+    else if(a==='ftop'||a==='fbot'){
+      flt.agent=false;
+      const keep=a==='ftop'?'top':'bottom'; const it=flt.items.find(x=>x.k===k);
+      if(it&&it.keep===keep&&it.pct===p) flt.items=flt.items.filter(x=>x!==it);   // 再點同一格=取消
+      else if(it){ it.keep=keep; it.pct=p; } else flt.items.push({k,keep,pct:p});
+      flt.on=true; save();
+    } else if(a==='foff'){ flt.items=flt.items.filter(x=>x.k!==k); flt.agent=false; save(); }
+    else if(a==='fclr'){ flt.items=[]; flt.agent=false; save(); }
+    closeMenu(); applyView(); if(window.__applyFreeze) window.__applyFreeze();
+  }
+  function openMenu(th){
+    const k=keyOf(th), ths=[...th.parentNode.children], i=ths.indexOf(th);
+    if(menu.style.display==='block' && menuKey===k){ closeMenu(); return; }
+    menuKey=k; menu.textContent=''; let cur=null;
+    const mh=t=>{ const d=document.createElement('div'); d.className='mh'; d.textContent=t; menu.appendChild(d); };
+    const mb=(label,a,on,dis)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=(on?'✓ ':'')+label; if(on) b.className='on'; b.disabled=!!dis; b.addEventListener('click',()=>act(a,k)); menu.appendChild(b); };
+    const hr=()=>menu.appendChild(document.createElement('hr'));
+    const prow=(label,a,keep)=>{ mh(label); const d=document.createElement('div'); d.className='prow';
+      PCTS.forEach(p=>{ const b=document.createElement('button'); b.type='button'; b.textContent=(cur&&cur.keep===keep&&cur.pct===p?'✓':'')+p+'%';
+        if(cur&&cur.keep===keep&&cur.pct===p) b.className='on'; b.addEventListener('click',()=>act(a,k,p)); d.appendChild(b); });
+      menu.appendChild(d); };
+    if(i===0){   // 股票欄:不是排序/過濾鍵,只提供還原
+      mh('股票'); mb('取消排序(回到產業鏈原序)','sortoff',false,!sort); mb('清除全部過濾','fclr',false,!flt.items.length);
+    } else if(th.dataset.nosort!==undefined){
+      mh(k+' — 此欄不可排序/過濾');
+    } else {
+      cur=flt.items.find(x=>x.k===k); const sd=sort&&sort.k===k?sort.dir:0;
+      mh(k+' · 排序');
+      mb('由大到小','sort1',sd===1); mb('由小到大','sortm1',sd===-1); mb('取消排序','sortoff',false,!sd);
+      hr(); mh(k+' · 淡化過濾(其餘淡化;再點同格取消)');
+      prow('大的留下','ftop','top'); prow('小的留下','fbot','bottom'); mb('取消此欄過濾','foff',false,!cur);
+      if(flt.items.length>1){ hr(); mb('清除全部過濾','fclr'); }
+    }
+    menu.style.display='block';
+    const r=th.getBoundingClientRect(), w=menu.offsetWidth, h=menu.offsetHeight;
+    menu.style.left=Math.max(4,Math.min(r.left, window.innerWidth-w-4))+'px';
+    menu.style.top=((r.bottom+2+h>window.innerHeight)?Math.max(4,r.top-h-2):r.bottom+2)+'px';
+  }
+  app.addEventListener('click', e=>{ const th=e.target.closest&&e.target.closest('thead th'); if(th) openMenu(th); });
+  document.addEventListener('click', e=>{ if(menu.style.display==='block' && !menu.contains(e.target) && !(e.target.closest&&e.target.closest('#app thead th'))) closeMenu(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeMenu(); });
+  btn.addEventListener('click',()=>{ flt.on=!flt.on; save(); applyView(); });
+  clr.addEventListener('click',()=>act('fclr',null));
+  if(abtn) abtn.addEventListener('click',()=>act('agent',null));
+  window.__applySort=applyView; window.__applyView=applyView;
+  applyView();
 })();
 // 凍結欄(2026-09-29 jack 交辦):股票/現價/期貨買/期貨賣共四欄橫向捲動時固定不動。股票欄(th.stk/td.nm)
 // 本來就是 left:0 寫死不用量;後三欄(class=frz)的實際寬度會隨內容變動(價格位數/委託量字數),
@@ -347,12 +503,32 @@ TABLE_INTERACT_JS = """
 })();
 """
 
+
+def _agent_rules_js() -> str:
+    """複製人規則(config/clone_agent_rules.json)→ TABLE_INTERACT_JS 的 AGENT 常數;讀不到回 'null'(按鈕隱藏,不影響儀表板)。
+    members = 規則名單 − 參考列/獨立檔/2481/1303(同 trader_signal_watch.core_universe ∩ universe_sids)。"""
+    try:
+        from clone_agent.rules_version import load_rules, universe_sids
+        r = load_rules()
+        sg = r["signal"]
+        drop = set(REF_POOL) | set(INDEP) | {"2481", "1303"}
+        return json.dumps({"ver": r["version"], "pct": int(sg["rank_keep_pct"]), "pull": float(sg["pullback_max"]),
+                           "amtmin": float(sg["amt_pct_min"]), "skip": [int(h) for h in sg["skip_hours"]],
+                           "start": str(sg["start_hm"]), "members": sorted(universe_sids(r) - drop)}, ensure_ascii=False)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[agent-rules] 讀取失敗,「套用代理人規則」按鈕停用:{_e!r}", file=sys.stderr)
+        return "null"
+
+
+TABLE_INTERACT_JS = TABLE_INTERACT_JS.replace("__AGENT_RULES__", _agent_rules_js())
+
 # 主表格排版(2026-10-04 jack 交辦「排版跟字體盡量跟原本的儀表板一樣」「能不能共用排版的
 # css,我想要程式碼簡單化」):在這之前,SHELL(即時頁)跟 ARC_CSS(歷史回放/個股詳情/歷史
 # 分頁)各自維護一份高度相似但不完全一樣的表格 CSS——字體大小(12px vs 13px)、儲存格留白
 # (7px vs 9px)、邊界margin(8px vs 10px)微妙不同,而且各自都漏了對方有的規則:SHELL 沒有
-# `.rolechip`/`tr.refrow`/`tr.indep`/`tr.hold` 這組參考列/獨立標注/持倉列的底色樣式(雖然
-# render_main.py 確實有輸出這些 class,等於即時頁這幾個視覺提示長期沒有樣式、不是故意的);
+# `.rolechip`/`tr.refrow`/`tr.indep`(2026-10-05 起 `tr.hold`/`tr.hexit`/`tr.hbad`/`tr.hexp`
+# 隨手動持倉按鈕功能一併移除)這組參考列/獨立標注的底色樣式(雖然 render_main.py 確實有
+# 輸出這些 class,等於即時頁這幾個視覺提示長期沒有樣式、不是故意的);
 # ARC_CSS 沒有 `.cat`(族群分類小字)/`th.g5`/`th.g30`/`th.gd`(5分/30分/全日欄位色碼)/
 # `.warnv`/`.sigup`/`.sigdn`/`.rk1`/`.rkN`/`.lup`/`.ldn` 這些訊號與排版強調色,導致歷史回放
 # 頁看起來「族群分類沒有分開、沒那麼好讀」——使用者在 2026-10-04 的截圖比對就是在講這個。
@@ -363,6 +539,13 @@ body{background:#0d1117;color:#c9d1d9;font:12px/1.5 -apple-system,'PingFang TC',
 h3{margin:4px 0;font-size:14px}
 a{color:#79c0ff;text-decoration:none}
 .meta{color:#8b949e;font-size:11px;margin-bottom:6px}
+/* 2026-10-04 jack 交辦「橫向滑桿只要影響表格就好,不要影響到時間/置頂按鈕/筆記」:
+   #app(放表格的容器)自己變成獨立的橫向捲動容器,表格變寬只在 #app 內部出現捲軸,
+   不會往外撐到 body——這樣 #app 外面的東西(標題/滑桿列/筆記/台指圖面板)天生就不會
+   被橫向捲動影響,不需要再一個一個額外補 sticky;left:0。表格內部既有的凍結欄
+   (td.nm/th.stk/th.frz,見下面)完全不用跟著改,position:sticky 本來就是「對最近的
+   捲動容器」生效,容器從 body 換成 #app 對它們是透明的。 */
+#app{overflow-x:auto}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
 th,td{padding:2px 7px;text-align:right;border-bottom:1px solid #21262d}
 th{position:sticky;top:0;z-index:2;background:#161b22;color:#8b949e;font-weight:600;cursor:pointer;user-select:none}
@@ -399,7 +582,6 @@ tr.refrow td{background:#12161c}tr.refrow td.nm{box-shadow:inset 3px 0 #30363d}
 tr.indep td{opacity:.72}tr.indep td.nm{box-shadow:inset 3px 0 #7d6a1a}
 .rolechip{display:inline-block;font-size:9px;line-height:1.3;padding:0 3px;margin-left:3px;border-radius:2px;vertical-align:1px}
 .rref{background:#30363d;color:#c9d1d9}.rind{background:#4d3f0f;color:#e3b341}
-tr.hold td{box-shadow:inset 3px 0 #58a6ff}tr.hexit td{background:#3a3300 !important}tr.hbad td{background:#4a1a1a !important}tr.hexp td{background:#2a2a2a !important}
 .top5{color:#ffd700;font-weight:700}.bot5{color:#3fb950;font-weight:700}
 .up{color:var(--price-up,#ff7b72)} .dn{color:var(--price-down,#3fb950)} .dim{color:var(--text-dim,#484f58)} .nx{background:#161b22}
 .lup{background:var(--limit-up-bg,#d1242f);color:#fff;font-weight:700}
@@ -505,7 +687,7 @@ td.snote{{text-align:left;min-width:170px;white-space:nowrap;font-weight:400}}
 <a href="#" id="sndtog" onclick="event.preventDefault();const v=localStorage.getItem('sigsound')==='1'?'0':'1';localStorage.setItem('sigsound',v);this.textContent=v==='1'?'🔔 提示音開':'🔕 提示音關';return false" style="font-size:11px;margin-left:6px;padding:1px 7px;border-radius:4px;background:#161b22;border:1px solid #30363d;color:#8b949e;text-decoration:none">🔕 提示音關</a>
 
 </h3>
-<a href="/stories" target="_blank" style="font-size:11px;margin-left:8px;color:#79c0ff">📚 故事</a>
+<script src="/agentjs"></script>
 <div id="agentbox" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:14px;align-items:stretch">
 <details class="disc" open style="flex:1 1 auto;margin-bottom:6px"><summary>📝 筆記（自由書寫 · 自動儲存）</summary>
@@ -587,19 +769,44 @@ async function __sigTick(){{
 (function(){{const s=document.getElementById('sndtog');
   if(s) s.textContent = localStorage.getItem('sigsound')==='1' ? '🔔 提示音開' : '🔕 提示音關';}})();
 __sigTick();
-// 代理人待批准區：獨立慢速輪詢(15s)。刻意跟主表的 tick() 分開——
-// 它壞掉/變慢都不能影響每秒更新的大戶表,而且正在編輯委託欄位時不可以被換掉。
-async function agtick(){{
+// 代理人待批准區：獨立輪詢(5s)。刻意跟主表的 tick() 分開——它壞掉/變慢都不能影響每秒更新的大戶表。
+// 按鈕邏輯在外部腳本 /agentjs(innerHTML 注入的 <script> 不會執行,這是之前按鈕點不動的原因)。
+// 用「合併」而不是整塊替換:已有的卡片原地保留(正在改的價格/口數/備註不會被洗掉),只新增新卡、移除已裁決的卡。
+function __agMerge(box,html){{
+  const nb=new DOMParser().parseFromString(html,'text/html').querySelector('.ag');
+  const ob=box.querySelector('.ag');
+  const oc=ob?[...ob.querySelectorAll('.card')]:[], nc=nb?[...nb.querySelectorAll('.card')]:[];
+  if(!ob||!nb||!oc.length||!nc.length){{
+    if(!box.contains(document.activeElement)) box.innerHTML=html;
+    return;
+  }}
+  ob.dataset.day=nb.dataset.day;
+  const want=new Set(nc.map(c=>c.dataset.iid)), have=new Set(oc.map(c=>c.dataset.iid));
+  oc.forEach(c=>{{if(!want.has(c.dataset.iid)) c.remove();}});
+  let prev=null;
+  nc.forEach(c=>{{
+    if(have.has(c.dataset.iid)){{prev=ob.querySelector('.card[data-iid="'+c.dataset.iid+'"]');}}
+    else{{(prev?prev.after(c):ob.appendChild(c));prev=c;}}
+  }});
+  const oh=ob.querySelector(':scope > .hd .tag'), nh=nb.querySelector(':scope > .hd .tag');
+  if(oh&&nh) oh.textContent=nh.textContent;
+}}
+let __agBusy=false,__agAgain=false;
+window.__agRefresh=async function(){{
+  if(__agBusy){{__agAgain=true;return;}}
+  __agBusy=true;
   try{{
-    const box=document.getElementById('agentbox');
-    const ae=document.activeElement;
-    // 正在改價格/口數/理由就跳過這一輪,否則輸入到一半會被洗掉
-    if(box && !(ae && box.contains(ae))){{
+    do{{
+      __agAgain=false;
+      const box=document.getElementById('agentbox');
       const r=await fetch('/agentfrag?_='+Date.now());
-      if(r.ok) box.innerHTML=await r.text();
-    }}
-  }}catch(e){{}}
-  setTimeout(agtick,15000);
+      if(box&&r.ok) __agMerge(box,await r.text());
+    }}while(__agAgain);
+  }}catch(e){{}}finally{{__agBusy=false;}}
+}};
+async function agtick(){{
+  await window.__agRefresh();
+  setTimeout(agtick,5000);
 }}
 agtick();
 async function tick(){{
@@ -648,11 +855,6 @@ tick();
     if((e.metaKey||e.ctrlKey)&&e.key==='s'){{e.preventDefault();clearTimeout(tm[el.dataset.sid]);save(el,true);}}
     if(e.key==='Escape'){{el.blur();}}}});
 }})();
-// 持倉按鈕:持/出 → POST /hold(純提示,不送單)
-(function(){{const app=document.getElementById('app');
-  app.addEventListener('click',async e=>{{const b=e.target.closest&&e.target.closest('.hbtn'); if(!b) return; e.preventDefault(); e.stopPropagation();
-    try{{await fetch('/hold',{{method:'POST',body:JSON.stringify({{sid:b.dataset.sid,action:b.dataset.action}})}});}}catch(_){{}}}});
-}})();
 {TABLE_INTERACT_JS}
 {CHART_HOVER_JS}
 </script>
@@ -678,18 +880,9 @@ TAG_STATE: dict = {}          # (sid, tag) -> {"pend": ts|None, "t0": ts|None, "
 TAG_LOG_DAY = {"d": None}
 #: (tag, 方向, 時距秒, 條件(r)->bool|None, 反向失效(r)->bool, 顯示名(r)->str)
 TAG_DEFS = [
-    ("主力點火", "bull", 1800,
-     lambda r: (r.get("big30_r") or 0) >= 3e7 and (_par30(r) is None or _par30(r) < 45),
-     lambda r: (r.get("big30_r") or 0) < 0, lambda r: "主力點火"),
-    ("機構暗退", "bear", 1800,
-     lambda r: (r.get("big30_r") or 0) <= -3e7 and (_par30(r) is None or _par30(r) < 15),
-     lambda r: (r.get("big30_r") or 0) > 0, lambda r: "機構暗退"),
     ("噴後過熱", "bear", 1800,
      lambda r: (r.get("r30_r") or 0) >= 150,
      lambda r: (r.get("r30_r") or 0) < 50, lambda r: "噴後過熱"),
-    ("勿追30", "bear", 1800,
-     lambda r: (r.get("r30_r") or 0) > 30 and (((r.get("dsh30_r") or 0) > 10 and not r["unm"]) or (_b30n(r) is not None and _b30n(r) < -5)),
-     lambda r: (r.get("r30_r") or 0) < 0, lambda r: "勿追"),
     ("勿追5m", "bear", 300,
      lambda r: (r.get("w_ret_r") or 0) > 20 and (((r.get("dshare5_r") or 0) > 5 and not r["unm"]) or (_b5n(r) is not None and _b5n(r) < -5)),
      lambda r: (r.get("w_ret_r") or 0) < 0,
@@ -697,31 +890,19 @@ TAG_DEFS = [
     ("深接30", "bull", 1800,
      lambda r: (r.get("r30_r") or 0) < -30 and _b30n(r) is not None and _b30n(r) > 5,
      lambda r: (r.get("big30_r") or 0) < 0, lambda r: "深接"),
-    ("深接5m", "bull", 300,
-     lambda r: (r.get("w_ret_r") or 0) < -20 and _b5n(r) is not None and _b5n(r) > 5 and (r.get("rvol5_r") or 0) >= 0.5,
-     lambda r: (r.get("big5_r") or 0) < 0, lambda r: "深接5m"),
-    ("虛胖接刀", "ex", 300,
-     lambda r: (r.get("w_ret_r") or 0) < -20 and _b5n(r) is not None and _b5n(r) > 5 and r.get("rvol5_r") is not None and r["rvol5_r"] < 0.5,
-     lambda r: False, lambda r: "▫虛胖接刀(枯量)"),
-    ("散戶虛拉", "bear", 300,
-     lambda r: (r.get("w_ret_r") or 0) > 20 and (r.get("rbuy5_r") or 0) >= 5 and not r["unm"],
-     lambda r: (r.get("w_ret_r") or 0) < 0, lambda r: "散戶虛拉"),
-    ("純機構", "bull", 1800,
-     lambda r: (_b5n(r) or 0) > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not r["unm"]
-     and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0,
-     lambda r: (r.get("big5_r") or 0) < 0,
-     lambda r: "巨資機構" if (r.get("big5_r") or 0) >= 3e7 else "純機構"),
+    # 觀察標籤(2026-10-08 稽核降級:不計分,只顯示並落 tag_events 供前瞻追蹤;定義已凍結,勿再調門檻)
+    ("機構暗退", "bear", 1800,
+     lambda r: (r.get("big30_r") or 0) <= -3e7 and (r.get("retn30_r") or 0) > 0 and r.get("z30_r") is not None and abs(r["z30_r"]) < 1 and not r["unm"],
+     lambda r: (r.get("big30_r") or 0) > 0, lambda r: "機構暗退?"),
+    ("散戶虛拉", "bear", 1800,
+     lambda r: (r.get("z30_r") or 0) >= 2.5 and (r.get("retn30_r") or 0) > 0 and not r["unm"],
+     lambda r: (r.get("r30_r") or 0) < 0, lambda r: "散戶虛拉?"),
 ]
 
 
-#: 各訊號的時間價值曲線 (平台秒數, 歸零秒數):經過 < 平台 → 1.0;之後線性降到 歸零秒 = 0。依各格驗證時距設定(2026-09-24):
-#:   主力點火/深接/勿追/噴後過熱:基準率=首次觸發後 30 分 → 0 平台、30 分歸零
-#:   純機構:30 分 +24~29、45 分 +36 仍成長 → 5 分平台、45 分歸零
-#:   機構暗退:流量領先價 ~2h → 60 分平台、120 分歸零(標籤顯示仍 30 分熄,計分延續)
-#:   散戶虛拉:留不到收盤 → 10 分平台、60 分歸零
-TAG_DECAY = {"主力點火": (0, 1800), "純機構": (300, 2700), "深接30": (0, 1800), "深接5m": (0, 1800),
-             "機構暗退": (3600, 7200), "噴後過熱": (0, 1800), "散戶虛拉": (600, 3600),
-             "勿追30": (0, 1800), "勿追5m": (0, 1800), "虛胖接刀": (0, 300)}
+#: 各訊號的時間價值曲線 (平台秒數, 歸零秒數):經過 < 平台 → 1.0;之後線性降到 歸零秒 = 0(預設 0 平台、時距歸零)。
+#: 2026-10-08 盤點:標籤 10→5;主力點火/深接5m/虛胖接刀/純機構/勿追30 無證據移除;機構暗退/散戶虛拉降為觀察(9 月衰減、前瞻 7 日不足)。
+TAG_DECAY = {"深接30": (0, 1800), "噴後過熱": (0, 1800), "勿追5m": (0, 1800)}
 
 
 SC_HIST: dict = {}   # sid -> deque[(ts, score)] 近 60 分盤中分歷史(V2.2「近60分極端分」用)
@@ -741,15 +922,13 @@ SC_HIST: dict = {}   # sid -> deque[(ts, score)] 近 60 分盤中分歷史(V2.2�
 #: 增 OOS 子窗最大 |t| 僅 1.67),故追加歸零。急跌≤−600 OOS 全期仍顯著(t+2.44)方向不變,人工鎖定
 #: +40 維持不動。
 V23_W = {   # 名稱沿用;內容為 V2.5(2026-09-24 晚,2026-09-28 依 v26 驗證追加歸零 5 項)
-    "散戶虛拉": -4.5, "勿追5m": -3.0,
+    "勿追5m": -3.0,
     "急跌≤−600": +40.0,                       # 擬合 +45~49,受 |分|≤40 上限
-    "逆弱≤−100": +5.5,
-    "純機構": +9.0,
     "蓄勢": +4.5, "倒貨": -2.5,  # V2.4 分級蓄勢
     # V2.5 竭盡狀態格(biglot_score_v25_fit.py;近5分 ≤−0.2% 為「急跌」、≥+0.2% 為「急拉」;30秒主動賣占比 ≤40%=竭盡、≥60%=未竭):
     #   單獨的「賣盤竭盡」是負的(−5.5/−5.1):賣壓退了=反彈已在桶內發生;反轉指紋是「賣壓還在」或「沒人賣價卻掉(真空)」
     "急跌·賣壓未竭": +3.0, "急跌·真空": +12.5, "急跌·竭盡散戶接": -5.5, "急跌·大戶接∧未竭": +6.0, "急跌·末30秒續跌": +2.0,
-    "急拉·買壓竭盡": +4.5, "急拉·末30秒續漲": -3.5,
+    "急拉·末30秒續漲": -3.5,
     "權證": 3.0,                               # tick 項,面板測不到,沿用暫定 ±3(散戶接跌 +2.5 已被狀態格吸收 → 0)
 }
 
@@ -759,13 +938,6 @@ SC_LOGGED: set = set()   # (日, 5分桶, sid) 已落地
 
 # ---- 成因標籤(jack 2026-09-24:極值分數進場前要知道「為什麼」——處置/跌停/族群/MOPS,每項標來源與時間)----
 _DISP_CACHE: dict = {"date": None, "sids": {}, "mtime": None}
-
-
-# ---- 期散(小型契約 1 口成交 = 期貨市場散戶代理;jack 2026-09-25):只對 FUT_MINI 檔顯示,描述性、不進分數 ----
-from collections import deque as _deque_mini
-MINI_ROOT = {r["sid"]: (r["fut_code"][:-1] if len(r.get("fut_code", "")) == 3 and r["fut_code"].endswith("F") else r.get("fut_code", "")).lower()
-             for r in _cal["universe"] if r.get("is_mini")}
-MINI_ST: dict = {"day": None, "off": {}, "q": {}}       # off: root -> 檔案讀取位移;q: sid -> deque[(ts, px, size, sgn, amt)]
 
 
 # ---- 紙上交易(paper trading;jack 2026-09-25 交辦,2026-09-29 起累 20 日)--------------------------------------------
@@ -870,9 +1042,9 @@ _HELP_GROUPS = [
         ("量能x", "5分窗成交金額 ÷ 近5日同時段中位(rvol)。", "≥5=爆量。三合一吸貨窗(大戶≥3千萬∧rvol≥5∧散＜25%)的量能條件。"),
     ]),
     ("訊號(合併欄:原章/跌訊/漲訊/旗標整成一格,去重,顏色分方向)", [
-        ("紅=看多", "主力點火(30分大戶買≥3千萬∧散＜45%,健康首發、唯一正格;台股『抬轎』易誤解為散戶故改名)·純機構/巨資機構(逆勢純機構買單+24~29/t5.2,巨資=≥3千萬)·深接(跌深大戶接RVOL≥0.5,正EV,+11~14/t3.4)·蓄勢隔夜(全日佔比≥10%∧壓縮＜0,隔夜雙鍵IC t7.1)·連3買(持續)。", "多方計分;蓄勢隔夜是收盤導向、盤中格是條件式基準率。"),
-        ("綠=看空", "噴後過熱(30分漲≥150,峰後均−32)·勿追(漲×參與跳升或大戶賣,−5~−9.6,趨勢日−32)·機構暗退(30分大戶賣≥3千萬∧散＜15%,流量領先價~2h)·散戶虛拉(5分漲＞20∧散買≥5%,留不到收盤)·同賣(大戶賣∧散戶賣,隔夜−28/t−6)·破昨防線@價(觸昨日午後低,−125bps/73%貫穿)。", "空方計分;每格都附127日基準率。"),
-        ("黃=注記", "↓弱開=明日弱開候選 · ▫虛胖接刀=枯量RVOL＜0.5、超額≈0的無效帶。", "⚠『深接』(正EV,紅)與『虛胖接刀』(無效,黃)語意近但一好一壞,別搞混。"),
+        ("紅=看多", "深接(30分跌≥30bps∧大戶佔比>5%,+7.1/t5.1、延遲1桶仍+4.1,計分+1)·蓄勢隔夜(全日佔比≥10%∧壓縮＜0,隔夜雙鍵IC t7.1)·連3買(持續)。", "多方計分;蓄勢隔夜是收盤導向、盤中格是條件式基準率。"),
+        ("綠=看空", "噴後過熱(30分漲≥150,60分+6.5、到收盤+13,OOS同號,計−2)·勿追5m(5分漲≥20∧散戶參與跳升或大戶賣,+9.2/t13.7,逐月穩定,枯量RVOL＜1.0最強)·同賣(大戶賣∧散戶賣,隔夜−28/t−6)·破昨防線@價(觸昨日午後低,−125bps/73%貫穿)。【觀察·不計分】機構暗退?(大戶賣≥3千萬∧散戶淨買∧不急動)、散戶虛拉?(30分漲≥2.5σ∧散戶淨買):歷史顯著但9月衰減、前瞻7日不足,定義凍結,只記tag_events待前瞻驗證。", "空方計分;觀察標籤帶「?」不入分。"),
+        ("黃=注記", "↓弱開=明日弱開候選。", "注記不計分。"),
         ("整格粗體", "同一列命中的多方+空方訊號合計 ≥3 個時整格加粗。", "多格共振,最該優先看的列。原本四欄拆開看容易漏掉『同一檔同時有多空』的背離,合併後一眼看到。"),
     ]),
 ]

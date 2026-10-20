@@ -53,11 +53,6 @@ class MtxRetailProxyTests(unittest.TestCase):
         self.assertIn("估計多空比", html)
         self.assertIn("不是反指標", html)
 
-    def test_page_only_on_mxf(self):
-        from biglot import futflow_view as F
-        src = Path(F.__file__).read_text(encoding="utf-8")
-        self.assertIn('if root == "MXF":', src)
-
 
 if __name__ == "__main__":
     unittest.main()

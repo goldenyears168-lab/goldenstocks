@@ -23,9 +23,11 @@ class S:
     def __init__(self):
         self.date = None
         self.raw_off = 0
+        self.ref_raw_off = 0
         self.book_off = 0
         self.lastvol = defaultdict(float)
         self.last_px = {}
+        self.close_px = {}                      # 收盤競價價（isClose）：只供「現價」顯示，不進 last_px 以免汙染買賣方向判定
         self.last_bid = {}; self.last_ask = {}     # 逐筆帶的買一/賣一(紙上交易掛價用)
         self.last_seen = {}
         self.first_done = set()

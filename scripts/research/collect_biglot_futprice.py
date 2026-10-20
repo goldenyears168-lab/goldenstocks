@@ -11,7 +11,8 @@
 
 啟動時對 biglot 宇宙每檔用 tickers(product=root) 解析近月合約(標準契約 F 優先,
 避開減資調整後契約 FT1/IX1 的低流動性坑)。之後每 interval 秒把 REST px 與 WS 買賣簿
-合併,寫 sid -> {px,sym,t, bid,bidsz,ask,asksz,bt} 到 futprice_{date}.json(整檔覆寫)。
+合併,寫 sid -> {px,sym,t, bid,bidsz,ask,asksz, bid5sz,ask5sz, bt} 到
+futprice_{date}.json(整檔覆寫)。bid5sz/ask5sz = 五檔累計張數(委買/委賣簿厚度)。
 買賣簿逾 STALE_SEC 秒沒更新(疑似 ws 斷線)就從輸出剔除,避免儀表板顯示凍結價。
 13:45 自動退出。唯讀、不碰任何 order layer 送單路徑。
 """
@@ -113,9 +114,16 @@ def _ws_loop(symbols):
                 asks = data.get("asks") or []
                 b0 = bids[0] if bids else {}
                 a0 = asks[0] if asks else {}
+                # 五檔累計張數(2026-10-04 jack 交辦):委買簿厚度決定限價單排不排得到。
+                # 實測 9/29~10/02 的 10 張「掛在賣一下方 3~6 檔」委託只成交 2 張,
+                # 落空那 8 張的委買一前面平均排 31 張(華邦電兩張排 164/114 張),
+                # 而價格最接近時只差 1~5 檔——不是掛太遠,是排不到。
+                # ws books channel 本來就推五檔,原本只取第一檔,這裡補累計量。
                 BOOK[sym] = {
                     "bid": b0.get("price"), "bidsz": b0.get("size"),
                     "ask": a0.get("price"), "asksz": a0.get("size"),
+                    "bid5sz": sum(int(x.get("size") or 0) for x in bids[:5]),
+                    "ask5sz": sum(int(x.get("size") or 0) for x in asks[:5]),
                     "mono": time.monotonic(),
                     "t": _now().strftime("%H:%M:%S"),
                 }
@@ -155,10 +163,88 @@ def _ws_loop(symbols):
         if _RUN["on"]:
             time.sleep(RECONNECT_SLEEP_SEC)
 
+GAP_JSON = DATA_DIR / "disposal" / "disposal_gap.json"
+EARLY_JSON = GAP_JSON.with_name("disposal_early.json")
+QUOTE_RATE = float(os.environ.get("DISPOSAL_QUOTE_RATE", "5"))   # 檔/秒,遠低於實測可承受的 15 req/s
+QUOTE_SWEEP_SEC = 15.0
+
+
+def _quote_loop(stk, today):
+    """處置觀察清單(disposal_gap.json 的 watch)的現貨即時價/累計量 → disposal_live_{date}.json。
+
+    與期貨輪詢共用同一條 REST session(不新增登入);獨立執行緒,任何失敗只印出不影響期貨價。
+    清單於啟動時讀一次,盤中不換。total.tradeVolume 單位=張(2026-10-10 實測:5228 4,765 張 vs 日線 4,797,986 股)。
+    """
+    try:
+        watch = list(json.loads(GAP_JSON.read_text(encoding="utf-8")).get("watch", []))
+    except Exception as exc:  # noqa: BLE001
+        print(f"處置觀察清單讀取失敗(略過現貨輪詢): {exc}", flush=True)
+        return
+    try:   # 全市場早期預警候選(disposal_early.py,至多 45 檔);缺檔不影響原清單
+        watch += [s for s in json.loads(EARLY_JSON.read_text(encoding="utf-8")).get("watch", []) if s not in watch]
+    except Exception as exc:  # noqa: BLE001
+        print(f"早期預警清單讀取失敗(略過): {exc}", flush=True)
+    try:   # 處置中的股票(日內路徑研究要用):disposal_risk.json 的 in_disposal,至多 30 檔
+        risk = json.loads((GAP_JSON.with_name("disposal_risk.json")).read_text(encoding="utf-8")).get("stocks", {})
+        watch += [s for s, v in sorted(risk.items()) if v.get("in_disposal") and s not in watch][:30]
+    except Exception as exc:  # noqa: BLE001
+        print(f"處置中清單讀取失敗(略過): {exc}", flush=True)
+    if not watch:
+        return
+    out = OUT_DIR / f"disposal_live_{today}.json"
+    ts_out = OUT_DIR / f"disposal_live_ts_{today}.jsonl"
+    snap: dict = {}
+    print(f"處置現貨輪詢 {len(watch)} 檔,{QUOTE_RATE:g} 檔/秒", flush=True)
+    while _RUN["on"] and _now().strftime("%H:%M") < END_HHMM:
+        t0 = time.monotonic()
+        nxt = t0
+        err = 0
+        rows: list[str] = []
+        for sid in watch:
+            nxt += 1.0 / QUOTE_RATE
+            d = nxt - time.monotonic()
+            if d > 0:
+                time.sleep(d)
+            try:
+                q = stk.intraday.quote(symbol=sid)
+                px = _last_px(q)
+                tot = (q.get("total") or {}) if isinstance(q, dict) else {}
+                if px:
+                    snap[sid] = {"px": px, "pc": q.get("previousClose"), "vol": tot.get("tradeVolume"),
+                                 "val": tot.get("tradeValue"), "t": _now().strftime("%H:%M:%S")}
+                    rows.append(json.dumps({**snap[sid], "s": sid, "o": q.get("openPrice"), "h": q.get("highPrice"),
+                                            "l": q.get("lowPrice"), "n": tot.get("transaction")}, ensure_ascii=False))
+            except Exception as exc:  # noqa: BLE001
+                err += 1
+                if "429" in str(exc):
+                    print(f"{_now():%H:%M:%S} 現貨輪詢被節流,退讓 60s", flush=True)
+                    time.sleep(60)
+                    nxt = time.monotonic()
+        try:
+            out.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            print(f"處置現貨寫檔失敗: {exc}", flush=True)
+        if rows:   # 追加式時間序列:日內路徑研究(釘價/封頂)用,整日約 6~10MB
+            try:
+                with ts_out.open("a", encoding="utf-8") as f:
+                    f.write("\n".join(rows) + "\n")
+            except Exception as exc:  # noqa: BLE001
+                print(f"處置現貨時間序列寫檔失敗: {exc}", flush=True)
+        left = QUOTE_SWEEP_SEC - (time.monotonic() - t0)
+        if left > 0:
+            time.sleep(left)
+
 
 def main():
     cal = json.loads(CALIB.read_text())
     uni = {r["sid"]: (r.get("fut_code") or "") for r in cal["universe"]}
+    try:   # 處置/注意股(有期貨)監測池:核心宇宙之外的動態列,期貨價/買賣簿一併收
+        from biglot_roles import load_roles
+        for r in load_roles().get("reference_off_pool", []):
+            if r.get("fut_code"):
+                uni.setdefault(r["sid"], r["fut_code"])
+    except Exception as exc:  # noqa: BLE001
+        print(f"處置監測池讀取失敗(忽略): {exc}", flush=True)
     sess = connect_fubon(realtime=True)
     fut = sess.sdk.marketdata.rest_client.futopt
     today = _now().strftime("%Y-%m-%d")
@@ -194,6 +280,9 @@ def main():
         ).start()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not once:
+        threading.Thread(target=_quote_loop, args=(sess.sdk.marketdata.rest_client.stock, today),
+                         name="disposal-quote", daemon=True).start()
     out = OUT_DIR / f"futprice_{today}.json"
     while _now().strftime("%H:%M") < END_HHMM:
         feed_alive = (time.monotonic() - _WS_LAST["mono"]) <= STALE_SEC
@@ -219,7 +308,9 @@ def main():
             if b and feed_alive:
                 rec.setdefault("sym", sym)
                 rec.update({"bid": b["bid"], "bidsz": b["bidsz"],
-                            "ask": b["ask"], "asksz": b["asksz"], "bt": b["t"]})
+                            "ask": b["ask"], "asksz": b["asksz"],
+                            "bid5sz": b.get("bid5sz"), "ask5sz": b.get("ask5sz"),
+                            "bt": b["t"]})
             if rec:
                 snap[sid] = rec
         try:

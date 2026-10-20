@@ -28,7 +28,7 @@ def health() -> dict:
         out["futflow"][root] = {"freshness": fr, "age_sec": age, "last_trade_ts": last_ts, "latest_file": os.path.basename(files[-1]) if files else None,
                                 "latest_file_age_sec": _file_age(files[-1]) if files else None, "checkpoint_age_sec": _file_age(F._ckpt_path(root)),
                                 "sessions_loaded": len(b.sessions) if b else 0}
-    worst = [v["freshness"] for v in out["futflow"].values()]
+    worst = [v["freshness"] for r, v in out["futflow"].items() if r in F.CORE_ROOTS]    # 台積電期貨夜盤本來就稀疏,不拿來判斷整體是否中斷
     out["overall"] = "stale" if "stale" in worst else ("missing" if "missing" in worst else ("idle" if all(w == "idle" for w in worst) else "fresh"))
     return out
 

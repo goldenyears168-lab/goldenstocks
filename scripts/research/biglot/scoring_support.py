@@ -79,9 +79,9 @@ def _iceberg_trade_confirms(sid, ts_lo, ts_hi, price):
 def _rolling(sid, nts):
     """每秒滾動窗:5分=(now−300s, now]、30分=(now−1800s, now]、參與Δ=本30分 − 前30分。
     只供欄位顯示;標籤照舊用完成的 5 分桶。無逐筆時回 None。"""
-    out = {k: None for k in ("big5_r", "big30_r", "retn5_r", "rbuy5_r", "rsell5_r",
+    out = {k: None for k in ("big5_r", "big30_r", "retn5_r", "retn30_r", "rbuy5_r", "rsell5_r",
                              "rbuy30_r", "rsell30_r", "dsh30_r", "w_ret_r", "r30_r",
-                             "tot5_r", "tot30_r", "big5p_r", "bigp30_r", "share5_r", "dshare5_r", "sell30s_r", "r30s_r")}
+                             "tot5_r", "tot30_r", "big5p_r", "bigp30_r", "share5_r", "dshare5_r", "sell30s_r", "r30s_r", "dhi30_r", "z30_r")}
     q = biglot_dashboard.ST.recent.get(sid)
     if not q:
         return out
@@ -92,6 +92,7 @@ def _rolling(sid, nts):
     big5p = tot5p = ret2_5p = bigp30 = 0.0
     t30s = nts - 30
     sbuy = ssell = 0.0                        # 近 30 秒主動買/賣金額(竭盡狀態格用)
+    hi30 = None                               # 近30分最高成交價(代理人規則②的回檔參考高點)
     px5 = px30 = px30s = None                 # px30s = 30 秒前成交價(近30秒報酬,V2.5 真空/已止跌判定)
     for ts, px, amt, sgn, isbig, isret in q:
         if ts <= t60:
@@ -111,6 +112,7 @@ def _rolling(sid, nts):
                 ret2_p += amt
             continue
         tot30 += amt
+        hi30 = px if hi30 is None else max(hi30, px)
         if isbig:
             big30 += sgn * amt
         if isret:
@@ -135,7 +137,7 @@ def _rolling(sid, nts):
     pxnow = q[-1][1]
     if px5 is None:
         px5 = px30
-    out["big5_r"], out["big30_r"], out["retn5_r"] = big5, big30, retn5
+    out["big5_r"], out["big30_r"], out["retn5_r"], out["retn30_r"] = big5, big30, retn5, retn30
     out["tot5_r"], out["tot30_r"], out["big5p_r"], out["bigp30_r"] = tot5, tot30, big5p, bigp30
     if sbuy + ssell > 0:
         out["sell30s_r"] = ssell / (sbuy + ssell)
@@ -156,6 +158,11 @@ def _rolling(sid, nts):
         out["w_ret_r"] = (pxnow / px5 - 1) * 10000
     if px30:
         out["r30_r"] = (pxnow / px30 - 1) * 10000
+        sd = biglot_dashboard.SIG_DAY.get(sid)
+        if sd:
+            out["z30_r"] = out["r30_r"] * 3 / sd              # √(30/270)=1/3:30分漲幅 ÷ 同窗期望波動
+    if hi30 and pxnow:
+        out["dhi30_r"] = (pxnow / hi30 - 1) * 100       # 距近30分高(%,≤0)
     return out
 
 
@@ -257,9 +264,7 @@ def _log_scores(rows, day):
         biglot_dashboard.SC_LOGGED.add(key)
         out.append(json.dumps({"date": day, "bucket": bk, "ts": now.strftime("%H:%M:%S"), "sid": r["sid"], "px": r.get("px"),
                                "sc_v23": r["sc_v2"], "sc_ov": r.get("sc_ov"), "sc_v1": r.get("sc_in"),
-                               "items": r.get("sc_v2_items") or [], "cause": [t for t, _ in (r.get("cause") or [])],
-                               "mini": ({k: (v if k != "n30" and k != "n5" else list(v)) for k, v in r["mini"].items()} if r.get("mini") else None),
-                               "hold": r.get("hold")}, ensure_ascii=False))
+                               "items": r.get("sc_v2_items") or [], "cause": [t for t, _ in (r.get("cause") or [])]}, ensure_ascii=False))
     if out:
         try:
             logp.parent.mkdir(parents=True, exist_ok=True)
@@ -321,21 +326,13 @@ def _score_td(r):
     for bk_, q in pp.items():
         if q:
             paper_html += (f" <span style='font-size:9px;color:#d2a8ff'>紙{bk_[:1]} {q['pnl']:+.0f} · {q['min']:.0f}分{'·嚴' if q['strict'] else '·樂'}{' 賣中' if q['sell'] else ''}</span>")
-    h = r.get("hold"); hold_html = paper_html
-    if h:
-        pn = f"{h['pnl']:+.0f}" if h["pnl"] is not None else "—"
-        fl = " ".join(f"<b style='color:#f85149'>{html_mod.escape(f)}</b>" for f in h["flags"])
-        hint = f" <span style='color:#3fb950'>{h['hint']}</span>" if h.get("hint") else ""
-        hold_html += (f" <span style='font-size:10px;color:#79c0ff'>持 {h['hm'][:5]} 損益 {pn} · {h['min']:.0f}分 · 分 {h['score'] if h['score'] is not None else '—'}"
-                     f"{(' 低'+str(int(h['low_s']))+'s') if h['low_s'] else ''}</span> {fl}{hint}")
-        tip += f" ‖ 持倉:進 {h['hm']} @ {h['px0']} · 出場規則=分數≤-5 連續 30 秒 / 壞標籤(虛拉·過熱·竭盡∧散戶接) / 60 分到期;獲利≥50 可停利;不設移動停利/硬停損/破昨低(面板對照較差)"
     _col = {"處置": "#f0883e", "跌停鎖": "#f85149", "觸跌停": "#f85149", "族群": "#d29922", "MOPS?": "#8b949e", "MOPS": "#a371f7", "昨MOPS": "#7d5bbe", "跟盤殺": "#f85149", "自己殺": "#3fb950", "大盤仍跌": "#d29922"}
     def _cc(t):
         return next((v for k, v in _col.items() if t.startswith(k)), "#8b949e")
     cause_html = (" <span style='font-size:9px'>" + " ".join(f"<span style='color:{_cc(t)}'>{html_mod.escape(t)}</span>" for t, _ in cause) + "</span>") if cause else ""
     return (f"<td data-sort='{v2s}' style='text-align:left;white-space:nowrap;{bg}' title='{html_mod.escape(tip, quote=True)}'>"
             f"<span class='dim'>隔</span><b class='{_c(ov)}'{big_ov}>{ov:+d}</b> "
-            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}{cause_html}{hold_html}</td>")
+            f"<span class='dim'>盤</span><b class='{_c(v2s)}'{big_sc}>{v2s:+.0f}</b><span class='dim' style='font-size:9px'>bps</span>{pk_html}{cause_html}{paper_html}</td>")
 
 
 def _day_sig_counts():

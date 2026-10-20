@@ -27,6 +27,46 @@ def _book_table(bk):
             "<tbody>" + "".join(rows) + "</tbody></table>")
 
 
+def _mark_eod_fallback(cell_html: str, asof: str) -> str:
+    """把一個已經組好的 `<td>...</td>` 格子標記成「這是上一個交易日(asof)的全日定格
+    數字,不是今天的」——2026-10-03 jack 交辦:全日大戶/全日散戶/權證全日/大戶-散戶/
+    大戶佔比/散戶背離這組欄位,在非交易日或收盤後該檔今天確實整天零成交時(呼叫端已
+    判斷過,見 render_main.py 的 `_eod_fallback`),與其顯示一片空白,不如回退顯示
+    上一個已知交易日的最終數字,但必須清楚標註是哪一天的,不能讓它看起來像今天的
+    即時數字——跟 `_load_holder_big800` 的「較上週」標註同一個設計理由。
+    純字串插入,不改動被包裝的格子本身(`_bigret_diff_td`/`_wrt_td`/行內組字串)
+    的渲染邏輯,所以每個呼叫端各自要不要套用這層標記互不影響。"""
+    if not cell_html.endswith("</td>"):
+        return cell_html
+    return cell_html[:-len("</td>")] + f"<span class='dim' style='font-size:9px'> {asof}</span></td>"
+
+
+def _bigret_diff_td(big_amt, ret_amt, tot_amt, unm=False, full_stats=False):
+    """大戶−散戶格(=大戶佔比−散戶佔比,%),含A/B/C/D分類(2026-09-24定案邏輯,原本只在全日尺度算)。
+    2026-10-02 jack 交辦:把這個算法延伸到5分/30分也各算一份(欄位架構重整)。
+    full_stats=True(全日專用,唯一經127日面板實測驗證的尺度)才附上具體bps數字;
+    5分/30分版本只給A/B/C/D分類名稱、不附bps——那些數字是全日尺度校準出來的,沒有
+    分別對5分/30分窗重跑驗證,不能直接挪用(避免看起來像兩個尺度都驗證過)。"""
+    if unm or big_amt is None or ret_amt is None or not tot_amt:
+        return "<td class='dim'>—</td>"
+    bp = big_amt / tot_amt * 100
+    rp = ret_amt / tot_amt * 100
+    dp = bp - rp
+    if bp >= 10 and rp < 5:
+        lab, cls = "A 大戶買·散戶未主導" + ("(127日隔夜 +124,散0~5%最佳 +185/t4.5)" if full_stats else ""), "up"
+    elif bp >= 10 and rp >= 5:
+        lab, cls = "B 大戶帶散戶(散戶≥5%" + (",127日 +75/t1.2 n15,打折)" if full_stats else ")"), "warnv"
+    elif bp <= -10 and rp >= 5:
+        lab, cls = "C 大戶倒·散戶接刀" + ("(127日隔夜 −11,低於基準 +73 約 85bps)" if full_stats else ""), "dn"
+    elif bp <= -10:
+        lab, cls = "D 大戶賣·散戶不接" + ("(127日隔夜 −13,低於基準約 85bps)" if full_stats else ""), "dn"
+    else:
+        lab, cls = "佔比未過 ±10% 門檻,不判", ""
+    bold = "font-weight:700" if abs(dp) >= 15 else ""
+    return (f"<td class='{cls or ('up' if dp > 0 else ('dn' if dp < 0 else ''))}' data-sort='{dp}' style='{bold}' "
+            f"title='大戶佔比 {bp:+.1f}% − 散戶佔比 {rp:+.1f}% = {dp:+.1f}% → {lab}'>{dp:+.1f}%</td>")
+
+
 def _wrt_td(c, p, bull, bear, tip):
     """權證多空一格:購額/售額(未簽號活動量,萬)+ 小字=簽號後多方占比(主動買call+主動賣put ÷ 全部主動額);
     顏色依簽號淨額:紅=多方>空方、綠=空方>多方、灰=皆0。簽號欄缺時退回未簽號(舊檔相容)。"""

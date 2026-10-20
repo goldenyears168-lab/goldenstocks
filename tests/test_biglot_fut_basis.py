@@ -2,9 +2,12 @@
 import json
 import sys
 import tempfile
+import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "research"))
 from biglot import fut_basis as fb  # noqa: E402
@@ -84,13 +87,16 @@ class RenderTest(unittest.TestCase):
                 for m in range(30)}
         info = {"fmid": {k: v["px"] + 0.2 for k, v in mins.items()}, "settle": True, "exdiv": {"prev_close": 100, "ref_price": 99, "kind": "息"},
                 "label": "KIFJ6", "standard": True, "sym": "KIFJ6"}
-        with mock.patch.object(dc._fb, "series", return_value=info):
+        stub = types.SimpleNamespace(datetime=datetime, TZ=ZoneInfo("Asia/Taipei"))      # 別的測試會把 biglot_dashboard 換成殘缺 stub，這裡自己備齊
+        with mock.patch.object(dc._fb, "series", return_value=info), mock.patch.object(dc, "biglot_dashboard", stub), \
+                mock.patch.object(dc, "_wrt_cum", return_value=None):
             svg = dc._svg_detail("8039", "2026-10-20", {"mins": mins, "px0": 100.0}, 100.0)
         self.assertIn("stroke='#2dd4bf'", svg)                                         # 期貨中價虛線
         self.assertIn("基差%=期貨中價÷現貨中價−1", svg)
         self.assertIn("結算日", svg)
         self.assertIn("除息日", svg)
-        with mock.patch.object(dc._fb, "series", return_value=None):
+        with mock.patch.object(dc._fb, "series", return_value=None), mock.patch.object(dc, "biglot_dashboard", stub), \
+                mock.patch.object(dc, "_wrt_cum", return_value=None):
             svg2 = dc._svg_detail("5351", "2026-10-20", {"mins": mins, "px0": 100.0}, 100.0)
         self.assertNotIn("stroke='#2dd4bf'", svg2)
         self.assertNotIn("基差%", svg2)

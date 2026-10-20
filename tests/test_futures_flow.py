@@ -151,7 +151,7 @@ class StreakGroupTests(unittest.TestCase):
     def test_slot_metadata(self):
         self.assertEqual(FF.root_slots("TXF"), ("B", "C", "M", "R"))
         self.assertEqual(FF.root_slots("MXF"), ("B", "M", "R"))
-        self.assertEqual(FF.slot_name("MXF", "B"), "1口連發")
+        self.assertEqual(FF.slot_name("MXF", "B"), "連續單口")
         self.assertEqual(FF.slot_name("TXF", "B"), "大單≥4000萬")
         self.assertEqual(FF.slot_name("QFF", "R"), "散戶")
         self.assertNotEqual(FF.slot_color("TXF", "B"), FF.slot_color("MXF", "B"))        # 大台大單(紅)≠小台連發(青)

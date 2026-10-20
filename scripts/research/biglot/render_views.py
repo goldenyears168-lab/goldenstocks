@@ -139,9 +139,9 @@ def render_grid_frag(sort="ind"):
 
 
 GRID_SHELL = """<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>36檔圖形總覽</title><style>
+<title>42檔圖形總覽</title><style>
 html,body{height:100%;margin:0;background:#0d1117;color:#c9d1d9;font:11px/1.35 -apple-system,'PingFang TC',monospace}
-#g{display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:auto 16px repeat(6,1fr);gap:4px;height:calc(100vh - 6px);padding:2px 4px 4px}
+#g{display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:auto 16px;grid-auto-rows:220px;gap:4px;min-height:calc(100vh - 6px);padding:2px 4px 4px}
 #g .txrow{grid-column:1/-1;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 8px;font-size:12px;line-height:1.5}
 #g .meta{grid-column:1/-1;height:16px;color:#8b949e;font-size:10px}
 .cell{display:flex;flex-direction:column;min-height:0;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:2px 4px;color:inherit;text-decoration:none}
@@ -186,7 +186,8 @@ def render_stock(sid, day):
     amp = biglot_dashboard.AMP20.get(sid)
     today = biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%Y-%m-%d")
     live = (day == today)
-    ampx = f" · 振幅{amp:.1f}%" if amp is not None else ""
+    ampx = (f" · <span title=\"高波動分數=20日日均振幅%((高−低)/收盤),選股門檻用,宇宙中位約6.5%,"
+            f"越高日內波段越大。2026-10-03起主表移除此欄,只在這裡看\">振幅{amp:.1f}%(20日)</span>") if amp is not None else ""
     frag = render_stock_frag(sid, day)
     js = ""
     if live:

@@ -43,6 +43,7 @@ import bisect as _bs
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 
 import biglot_dashboard
 from stock_db import DATA_DIR
@@ -56,6 +57,18 @@ _FILLS_TTL = 900.0  # 15 分鐘,jack 2026-09-29 定案
 #: src/order/fubon_session.py 的連線斷路器註解）。
 _FILLS_FAIL_TTL = 300.0
 _LOOKBACK_DAYS = 90  # 抓多久以前的成交,涵蓋任何可能的跨日留倉
+#: 2026-10-06 糾正:上面 44.6s 那次是「慢但有限」的失敗,這裡原本的 try/except 只防得住
+#: 會丟例外的失敗——2026-10-06 13:41 富邦 API 這次卡住**完全不丟例外、也不回應**,整個
+#: render() 執行緒被這一行卡死,儀表板(含台指圖、委買簿等全部欄位)凍結 26 分鐘以上都
+#: 沒人發現,直到使用者拿手機 App 損益對不上才追出來。改成用 thread 包一層強制逾時,
+#: 逾時當作失敗處理(沿用既有 5 分鐘退讓邏輯),不讓單一一次卡住的 API 呼叫凍結整個網站。
+#: ⚠ 刻意不用模組層級共用的 ThreadPoolExecutor(max_workers=1)——如果底層那次呼叫是
+#: *永久*卡住(不是只慢),固定只有 1 個 worker 的共用池會被那個卡死的任務永久佔用,
+#: 之後每一輪 `.submit()` 都排在它後面、永遠排不到,逾時雖然不會再凍結網站,但也永遠
+#: 等不到新資料——即使富邦端已經恢復正常也一樣,只有重啟整支程式才能救。改成每次呼叫
+#: 都開一個新的、只跑一次就丟棄的 executor:卡住的那次呼叫背景執行緒會變成孤兒執行緒
+#: 自己繼續等(Python 原生無法強制中止執行緒),但不會佔用下一次呼叫的名額。
+_FILLS_CALL_TIMEOUT = 30.0
 
 _ROOT_PATH_CACHE: dict = {}
 _STOCK_BY_FUTCODE_CACHE: dict | None = None
@@ -103,76 +116,96 @@ def _load_fubon_fills():
     if now - _FILLS_CACHE["t"] < _FILLS_TTL:
         return _FILLS_CACHE["fills"], _FILLS_CACHE["entry_ts_map"]
     try:
-        from datetime import date, timedelta
-
-        from order.fubon_futopt_orders import (
-            _bs_to_side,
-            _result_data,
-            base_order_no,
-            get_futopt_order_results,
-            pick_futopt_account,
-        )
-        from order.fubon_session import connect_fubon
-
-        session = connect_fubon(realtime=False)
-        acc = pick_futopt_account(session)
-        fa = session.sdk.futopt_accounting
-        end = date.today().strftime("%Y/%m/%d")
-        start = (date.today() - timedelta(days=_LOOKBACK_DAYS)).strftime("%Y/%m/%d")
-        res = fa.close_position_record(acc, start, end)
-        raw_rows = list(_result_data(res) or [])
-        fills = []
-        for idx, r in enumerate(raw_rows):
-            sym = str(getattr(r, "symbol", "") or "")
-            if not sym.startswith("FI"):
-                continue
-            fut_code = sym[2:]
-            side = _bs_to_side(getattr(r, "buy_sell", None))
-            try:
-                lots = int(getattr(r, "orig_lots", None) or 0)
-                px = float(getattr(r, "price", None))
-            except (TypeError, ValueError):
-                continue
-            if side is None or lots <= 0 or px is None:
-                continue
-            d = str(getattr(r, "date", "") or "").replace("/", "-")[:10]
-            on = base_order_no(str(getattr(r, "order_no", "") or ""))
-            fills.append({"fut_code": fut_code, "sign": (1 if side == "L" else -1),
-                          "lots": lots, "px": px, "date": d, "order_no": on, "seq": idx})
-        # 精確下單時間:close_position_record 只給 date,get_futopt_order_results 只覆蓋今天
-        # 但精確到秒——今天的成交用這個補時間,今天以前的成交沒有精確時間也沒關係(見檔頭說明)。
-        entry_ts_map: dict[str, float] = {}
+        # 每次呼叫都開一支新的、用完即丟的 executor(理由見上面常數旁的註解:固定共用
+        # 1-worker 池會被永久卡住的任務佔死,之後再也排不到)。
+        ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fubon-fills")
         try:
-            order_rows = get_futopt_order_results(session, acc=acc)
-            for orow in order_rows:
-                on = base_order_no(str(getattr(orow, "order_no", "") or ""))
-                if not on or on in entry_ts_map:
-                    continue
-                d, t = getattr(orow, "date", None), getattr(orow, "last_time", None)
-                if not d or not t:
-                    continue
-                try:
-                    iso = f"{d.replace('/', '-')}T{t[:8]}+08:00"
-                    entry_ts_map[on] = biglot_dashboard.datetime.fromisoformat(iso).timestamp()
-                except Exception:  # noqa: BLE001
-                    continue
-        except Exception as e:  # noqa: BLE001
-            print(f"[futures_pnl] order_results lookup failed: {e}", file=sys.stderr)
+            future = ex.submit(_fetch_fubon_fills_blocking)
+            try:
+                fills, entry_ts_map = future.result(timeout=_FILLS_CALL_TIMEOUT)
+            except _FutureTimeoutError as exc:
+                # 逾時不等於呼叫結束——背景執行緒可能還卡在原本的 SDK 呼叫裡,我們只是
+                # 不再等它,讓 render() 先恢復回應;那條執行緒變成孤兒,之後完成時的
+                # 結果會被丟棄,但因為 executor 是這次呼叫專屬的,不會佔用下一輪的名額。
+                raise TimeoutError(f"fubon fills query exceeded {_FILLS_CALL_TIMEOUT:g}s, abandoning wait") from exc
+        finally:
+            ex.shutdown(wait=False)
         if fills:
             _FILLS_CACHE["fills"] = fills
             _FILLS_CACHE["entry_ts_map"] = entry_ts_map
             _FILLS_CACHE["t"] = now
             _persist_fills(fills, entry_ts_map)
     except Exception as e:  # noqa: BLE001
-        # ★ 失敗也要推進時間戳,否則每次 render 都重試（見 _FILLS_FAIL_TTL 註解）。
+        # ★ 失敗也要推進時間戳,否則每次 render 都重試(見 _FILLS_FAIL_TTL 註解)。
         #   推進量比成功時短,讓富邦恢復後 5 分鐘內就會重新嘗試。
         _FILLS_CACHE["t"] = now - _FILLS_TTL + _FILLS_FAIL_TTL
         if type(e).__name__ == "FubonBreakerOpen":
-            # 斷路器開著＝別人已經確認富邦掛了,這裡安靜退讓,不要洗版
-            print(f"[futures_pnl] 斷路器開啟中,略過本輪（{e}）", file=sys.stderr)
+            # 斷路器開著=別人已經確認富邦掛了,這裡安靜退讓,不要洗版
+            print(f"[futures_pnl] 斷路器開啟中,略過本輪({e})", file=sys.stderr)
         else:
             print(f"[futures_pnl] fills query failed, using stale cache: {e}", file=sys.stderr)
     return _FILLS_CACHE["fills"], _FILLS_CACHE["entry_ts_map"]
+
+
+def _fetch_fubon_fills_blocking():
+    """真正會打富邦 API、可能卡住的部分——獨立成函式,供 `_load_fubon_fills` 丟進
+    thread pool 執行、外面套逾時。回傳 (fills, entry_ts_map),邏輯跟搬移前逐字相同。"""
+    from datetime import date, timedelta
+
+    from order.fubon_futopt_orders import (
+        _bs_to_side,
+        _result_data,
+        base_order_no,
+        get_futopt_order_results,
+        pick_futopt_account,
+    )
+    from order.fubon_session import connect_fubon
+
+    session = connect_fubon(realtime=False)
+    acc = pick_futopt_account(session)
+    fa = session.sdk.futopt_accounting
+    end = date.today().strftime("%Y/%m/%d")
+    start = (date.today() - timedelta(days=_LOOKBACK_DAYS)).strftime("%Y/%m/%d")
+    res = fa.close_position_record(acc, start, end)
+    raw_rows = list(_result_data(res) or [])
+    fills = []
+    for idx, r in enumerate(raw_rows):
+        sym = str(getattr(r, "symbol", "") or "")
+        if not sym.startswith("FI"):
+            continue
+        fut_code = sym[2:]
+        side = _bs_to_side(getattr(r, "buy_sell", None))
+        try:
+            lots = int(getattr(r, "orig_lots", None) or 0)
+            px = float(getattr(r, "price", None))
+        except (TypeError, ValueError):
+            continue
+        if side is None or lots <= 0 or px is None:
+            continue
+        d = str(getattr(r, "date", "") or "").replace("/", "-")[:10]
+        on = base_order_no(str(getattr(r, "order_no", "") or ""))
+        fills.append({"fut_code": fut_code, "sign": (1 if side == "L" else -1),
+                      "lots": lots, "px": px, "date": d, "order_no": on, "seq": idx})
+    # 精確下單時間:close_position_record 只給 date,get_futopt_order_results 只覆蓋今天
+    # 但精確到秒——今天的成交用這個補時間,今天以前的成交沒有精確時間也沒關係(見檔頭說明)。
+    entry_ts_map: dict[str, float] = {}
+    try:
+        order_rows = get_futopt_order_results(session, acc=acc)
+        for orow in order_rows:
+            on = base_order_no(str(getattr(orow, "order_no", "") or ""))
+            if not on or on in entry_ts_map:
+                continue
+            d, t = getattr(orow, "date", None), getattr(orow, "last_time", None)
+            if not d or not t:
+                continue
+            try:
+                iso = f"{d.replace('/', '-')}T{t[:8]}+08:00"
+                entry_ts_map[on] = biglot_dashboard.datetime.fromisoformat(iso).timestamp()
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception as e:  # noqa: BLE001
+        print(f"[futures_pnl] order_results lookup failed: {e}", file=sys.stderr)
+    return fills, entry_ts_map
 
 
 def _fifo_match(fills):

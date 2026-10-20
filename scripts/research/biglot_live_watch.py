@@ -14,7 +14,7 @@
 · 離散度是**唯一通過 OOS 的擇時條件**（IS +0.362 / OOS +0.395）：
   離散度低於歷史 P30 的日子訊號弱，報告會標示
 
-連線紀律：獨立 session、單頻道 <=45 訂閱、13:32 自動退出（沿 chip_intraday_lot_probe）。
+連線紀律：獨立 session、單頻道 52 訂閱(宇宙42+池外參考列10;富邦單線上限300)、13:32 自動退出（沿 chip_intraday_lot_probe）。
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ sys.path.insert(0, "src")
 from notify_email import send_alert  # noqa: E402
 from order.fubon_session import connect_fubon  # noqa: E402
 from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
+from biglot_roles import off_pool_sids  # noqa: E402
 
 _TZ = ZoneInfo("Asia/Taipei")
 # 宇宙檔可由 BIGLOT_CALIB 覆寫（2026-09-05 起 launcher 指到 v3 相容檔 _live_calib_v3.json；
@@ -71,6 +72,8 @@ TOPN = 10
 _STOP = False
 _LOCK = threading.Lock()
 _RAW = None
+_RAW_REF = None   # 池外參考列另落 raw_ref_{日}.jsonl,避免污染既有以 raw_{日} 為輸入的研究/EOD 腳本
+_REF_SIDS: set[str] = set()
 _ACC: dict[str, dict] = {}
 # 盤前試撮快照(08:45~09:00):每檔最新試撮價/買一/賣一/撮合張。純加法,不進 _ACC 流量累積。
 _TRIAL: dict[str, dict] = {}
@@ -87,19 +90,24 @@ def _sig(signum, _f):
     print(f"signal {signum} -> stopping", flush=True)
 
 
-def _raw(kind, payload):
-    if _RAW is None:
+def _raw(kind, payload, ref=False):
+    f = _RAW_REF if ref else _RAW
+    if f is None:
         return
     with _LOCK:
-        _RAW.write(json.dumps({"ts": _now().isoformat(), "kind": kind,
-                               "payload": payload}, ensure_ascii=False) + "\n")
-        _RAW.flush()
+        f.write(json.dumps({"ts": _now().isoformat(), "kind": kind,
+                            "payload": payload}, ensure_ascii=False) + "\n")
+        f.flush()
 
 
 def on_message(raw, THR):
     try:
         msg = json.loads(raw)
     except Exception:  # noqa: BLE001
+        return
+    _d = msg.get("data")
+    if isinstance(_d, dict) and str(_d.get("symbol", "")) in _REF_SIDS:
+        _raw("message", msg, ref=True)     # 池外參考列:只落檔給儀表板,不進本程式的累計/報表
         return
     _raw("message", msg)
     if msg.get("channel") != "trades" or msg.get("event") not in (None, "data"):
@@ -655,12 +663,12 @@ def main() -> int:
     ws.on("message", lambda raw: on_message(raw, THR))
     ws.connect()
     print(f"ws connected auth={getattr(ws, 'auth_status', '?')}", flush=True)
-    for sid in THR:
+    for sid in sub_sids:
         try:
             ws.subscribe({"channel": "trades", "symbol": sid})
         except Exception as exc:  # noqa: BLE001
             _raw("subscribe_error", {"symbol": sid, "error": str(exc)})
-    print(f"subscribed {len(THR)} × trades", flush=True)
+    print(f"subscribed {len(sub_sids)} × trades (宇宙 {len(THR)} + 池外參考 {len(sub_sids) - len(THR)})", flush=True)
 
     sent = set()
     while not _STOP:
@@ -707,6 +715,7 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"final mail failed: {exc!r}", flush=True)
     _RAW.close()
+    _RAW_REF.close()
     print("done", flush=True)
     return 0
 

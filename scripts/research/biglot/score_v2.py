@@ -29,13 +29,10 @@ import biglot_dashboard
 from biglot.utils import _b30n, _b5n
 
 
-def _score_v2(r, mkt30, hm=None):
+def _score_v2(r, hm=None):
     """盤中分 V2.3(bps;2026-09-24):權重表 V23_W(IS 聯合 OLS×0.7 收縮,t<2 歸零),各項**可加**、無同源取一次
     (聯合係數已是條件增量)、無時段係數(池化擬合;09:30 前仍不計)、|分| 上限 40。
-    mkt30 應傳滾動版(與個股 r30_r 同鐘)。IS/OOS 對照見 scratch/v23_fit_2026-09-24.txt。
-    ⚠ 2026-09-28 共線性診斷發現「各項可加、無同源取一次」對散戶虛拉/勿追5m 這對不成立(互控
-    共用連續底層後雙雙塌陷),已改成取最大值一次,見下方註解;其餘項尚未逐一驗證,不保證全部
-    可加假設都站得住。"""
+    2026-10-08 移除逆弱≤−100(OOS +0.4)、純機構(IS+14/OOS−4.3 反號)、急拉·買壓竭盡(−0.6/t−0.3)三項無證據權重。"""
     hm = hm or biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime("%H:%M")
     if hm < "09:30":
         return 0.0, [("09:30 前不計分", 0)]
@@ -45,16 +42,8 @@ def _score_v2(r, mkt30, hm=None):
         v = round(sign * biglot_dashboard.V23_W[k], 1); sc += v; it.append((name or k, v))
     w5 = r.get("w_ret_r"); r30 = r.get("r30_r"); rb5 = r.get("rbuy5_r"); unm = r["unm"]
     b5n = _b5n(r)
-    # 散戶虛拉/勿追5m 同源去重(2026-09-28 共線性診斷:互控共用的連續底層 w5/b5n/dshare5/rbuy5 後
-    # 兩項雙雙塌陷至 t=-1.94/-1.20,本函式 docstring 原本「各項可加、無同源取一次」的假設在這一對
-    # 上不成立)——比照 score_rows.py 的 ret_src 取最大值一次,不兩個都加。
-    ret_v2 = []
-    if w5 is not None and w5 > 20 and rb5 is not None and rb5 >= 5 and not unm:
-        ret_v2.append("散戶虛拉")
     if w5 is not None and w5 > 20 and (((r.get("dshare5_r") or 0) > 5 and not unm) or (b5n is not None and b5n < -5)):
-        ret_v2.append("勿追5m")
-    if ret_v2:
-        add(max(ret_v2, key=lambda k: abs(biglot_dashboard.V23_W[k])))
+        add("勿追5m")
     if r30 is not None:
         if r30 >= 600:
             it.append(("噴後過熱≥600 近漲停,不計", 0))
@@ -62,13 +51,6 @@ def _score_v2(r, mkt30, hm=None):
         elif r30 >= 300: it.append(("過熱300-400(v26完整聯合重擬未過門檻,不計)", 0))
         elif r30 >= 200: it.append((f"過熱200-300(獨立事件重驗未過門檻,不計,{r30:.0f})", 0))
         if r30 <= -600: add("急跌≤−600", f"急跌≤−600({r30:.0f})")
-        if mkt30 >= 5:
-            if r30 <= -100: add("逆弱≤−100")
-            elif r30 <= -50: it.append(("逆弱50-100(v26完整聯合重擬未過門檻,不計)", 0))
-            elif r30 <= -20: it.append(("逆弱20-50(v26完整聯合重擬未過門檻,不計)", 0))
-    if (hm >= "10:00" and b5n is not None and b5n > 10 and (r.get("tot5_r") or 0) > 0 and r.get("share5_r") is not None and r["share5_r"] < 5 and not unm
-            and (r.get("bigp30_r") if r.get("bigp30_r") is not None else 0) < 0 and (r.get("big5p_r") if r.get("big5p_r") is not None else 0) < 0):
-        add("純機構", "巨資機構" if (r.get("big5_r") or 0) >= 3e7 else "純機構")
     # 壓縮(現價 ÷ 近12桶均價 −1,需≥8桶)× 近30分大戶佔比:大戶買而價被壓著 = 蓄勢;大戶倒而價仍在均價上 = 倒貨。
     # 單獨的大戶30分佔比(主力點火)在60分尺度為 0,增量只在與壓縮的交互。
     cmp_ = r.get("cmp1h"); b30n = _b30n(r)
@@ -97,7 +79,6 @@ def _score_v2(r, mkt30, hm=None):
             if r30s is not None and r30s <= -10 and not exh: add("急跌·末30秒續跌", f"急跌·末30秒續跌({r30s:+.0f}bps)")
             if exh and r30s is not None and r30s > 0: it.append((f"急跌·竭盡已止跌(30s主動賣{sp*100:.0f}%,反彈已發生,0)", 0))
         elif w5 >= 20:
-            if notexh and r30s is not None and r30s < 0: add("急拉·買壓竭盡", f"急拉·買壓竭盡(30s主動賣{sp*100:.0f}%∧末30秒{r30s:+.0f})")
             if r30s is not None and r30s >= 10: add("急拉·末30秒續漲", f"急拉·末30秒續漲({r30s:+.0f}bps)")
     if abs(sc) > 40:
         it.append((f"上限 ±40(原 {sc:+.0f})", 0)); sc = 40.0 if sc > 0 else -40.0

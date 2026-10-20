@@ -36,6 +36,8 @@ def _xq_style_block(sid):
     # 員工平均營業額是人工貼的靜態值,三者不能共用同一個時間戳,否則會誤導成「都是即時」)
     daily_tag = f"日頻·收盤{html_mod.escape(asof)}" if asof else "—"
     weekly_tag = f"週頻·集保{html_mod.escape(holder_wk)}" if holder_wk else "—"
+    branch_asof = d.get("branch_conc_asof") if d else None
+    branch_tag = f"日頻·分點{html_mod.escape(branch_asof)}" if branch_asof else "—"
     static_tag = f"人工·{html_mod.escape(biglot_dashboard.EMPLOYEE_REVENUE_ASOF)}"
     beta_asof = d.get("beta_asof") if d else None
     beta_tag = f"週頻·weekly-sync {html_mod.escape(beta_asof)}" if beta_asof else "—"
@@ -49,7 +51,10 @@ def _xq_style_block(sid):
             ("EMA-SMA(20日)", f(d["ema_sma_20d_diff"]), daily_tag),
             ("MACD(DIF/DEA/HIST)", f"{fa(d['macd_dif'])}/{fa(d['macd_dea'])}/{fa(d['macd_hist'])}", daily_tag),
             ("歷史波動率%(20日年化)", fa(d["hist_vol_20d_pct"], "%"), daily_tag),
-            ("集中度%(主力買賣超/當日量)", f(d["concentration_pct"], "%"), daily_tag),
+            ("籌碼集中度%(分點前15買超−賣超/當日量)",
+             (f"{f(d['branch_conc_pct'], '%')}({d['branch_conc_net_lots']:+,.0f}張)"
+              if d.get("branch_conc_pct") is not None else "—"), branch_tag),
+            ("集中度%(三大法人買賣超/當日量)", f(d["concentration_pct"], "%"), daily_tag),
             ("外資/投信/自營買賣超比%", f"{f(d['foreign_net_pct'])}/{f(d['trust_net_pct'])}/{f(d['dealer_net_pct'])}%", daily_tag),
             ("借券賣出餘額增減(1日/5日)", f"{f(d['sbl_sell_chg1d'])}/{f(d['sbl_sell_chg5d'])}", daily_tag),
             ("當沖比例%", fa(d["daytrade_pct"], "%"), daily_tag),
@@ -76,7 +81,12 @@ def _xq_style_block(sid):
             f"<tbody>{trs}{emp_row}{vix_row}</tbody></table>"
             "<div class='xqnote'>日頻/週頻欄由 scripts/research/compute_xq_style_metrics.py 盤後批次算,"
             "已排進 daily_sync.sh（RUN_XQ_STYLE_METRICS,見 src/pipeline_gates.py），跟著收盤管線每日推進；"
-            "不進分數。集中度%=三大法人合計買賣超÷當日成交量×100(jack 2026-09-27 確認公式)；"
+            "不進分數。籌碼集中度%(2026-10-09 新增)=(買超前15名分點買超合計−賣超前15名分點賣超合計)÷當日成交量×100,"
+            "即時查 stock_broker_branch_daily(不落地),有 FinMind 全分點的日子分母用同一份分點 tape 的總買進股數,"
+            "2026-10-17 起 FinMind 停用、分點只剩買超/賣超前段名單時分母改用當日成交量(主力張數不變);"
+            "3711 於 2026-10-08 實測各分點淨買賣超與財報狗逐家一致、買賣家數差同為−245,但此欄 8.66% vs 財報狗 8.55%,"
+            "差異來自前N名取法或分母,尚未釐清；"
+            "集中度%(三大法人)=三大法人合計買賣超÷當日成交量×100(jack 2026-09-27 確認公式,與上一列是不同口徑)；"
             "外資/投信/自營買賣超比%為同一慣例類推,分母是否與XQ相同未逐一驗證；"
             "外資持股比例%是水位(存量),外資買賣超比%是流量(當天買賣),兩者互補非重複；"
             "借券賣出餘額用 sbl_balance(TWT93U真放空口徑),非融券/借券餘額(TWT72U)；"

@@ -28,8 +28,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import biglot_dashboard
 from biglot import nav_bar
-from biglot.disposal_view import render_disposal
+from biglot.chips_view import render_chips, render_csv
 from biglot.xiaoge_notebook_view import render_xiaoge
+from biglot.disposal_view import render_disposal
 from biglot.futflow_view import render_futflow, render_futflow_frag
 from biglot.health import health_json
 from biglot.day_views import render_history, render_day, snapshot_day
@@ -72,6 +73,15 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
             return
+        if path == "/chips" and "fmt=csv" in qs:
+            data = render_csv().encode("utf-8-sig")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/frag":
             body = biglot_dashboard.PAGE["frag"].encode("utf-8")
         elif path == "/history":
@@ -89,6 +99,18 @@ class H(BaseHTTPRequestHandler):
         elif path == "/day":
             d = qs.split("d=")[-1][:10] if "d=" in qs else ""
             body = render_day(d).encode("utf-8")
+        elif path == "/guard":
+            try:
+                from biglot.guard_view import render_page as _guard_page
+                body = _guard_page().encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                body = f"<div class='meta'>guard page error: {html_mod.escape(repr(exc))}</div>".encode()
+        elif path == "/guardfrag":
+            try:
+                from biglot.guard_view import render_frag as _guard_frag
+                body = _guard_frag().encode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                body = f"<div class='dim'>guard frag error: {html_mod.escape(repr(exc))}</div>".encode()
         elif path == "/paper":
             try:
                 from clone_agent.panels import render_paper_page
@@ -151,7 +173,7 @@ class H(BaseHTTPRequestHandler):
                 body = f"<div class='meta'>agent rules page error: {html_mod.escape(repr(exc))}</div>".encode()
         elif path == "/disposal":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
-            body = render_disposal(str(q.get("tab", "all"))[:10]).encode("utf-8")
+            body = render_disposal(str(q.get("tab", "all"))[:10], show_all=q.get("all") == "1").encode("utf-8")
         elif path == "/futflowfrag":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_futflow_frag(str(q.get("root", "MXF"))[:4], str(q.get("s", ""))[:20]).encode("utf-8")
@@ -161,6 +183,9 @@ class H(BaseHTTPRequestHandler):
         elif path == "/xiaoge":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_xiaoge(str(q.get("date", ""))[:10] or None).encode("utf-8")
+        elif path == "/chips":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = render_chips(str(q.get("date", ""))[:10] or None, show_all=q.get("all") == "1").encode("utf-8")
         elif path == "/timeline":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             date, hhmm = str(q.get("date", ""))[:10] or None, str(q.get("hhmm", ""))[:5] or None
@@ -207,17 +232,22 @@ class H(BaseHTTPRequestHandler):
                 body, code = json.dumps({"ok": True, "t": t}).encode(), 200
             except Exception as exc:  # noqa: BLE001
                 body, code = f"err {exc!r}".encode(), 500
-        elif path == "/agentdecide":
+        elif path == "/agentorderswitch":
             try:
-                from clone_agent.approval import SKIP_REASONS, record_decision
+                from clone_agent.order_switch import set_switch
                 n = int(self.headers.get("Content-Length") or 0)
-                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:4000])
-                sr = str(q.get("skip_reason", ""))[:60]
-                if str(q["decision"]) == "skip" and sr and sr not in SKIP_REASONS:
-                    raise ValueError("unknown skip_reason")
-                rec = record_decision(str(q["day"])[:10], str(q["intent_id"])[:32],
-                                      str(q["decision"]), sr, q.get("edited"))
-                body, code = json.dumps({"ok": True, **rec}, ensure_ascii=False).encode(), 200
+                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:500])
+                if not isinstance(q.get("enabled"), bool):
+                    raise ValueError("enabled must be boolean")
+                body, code = json.dumps({"ok": True, **set_switch(q["enabled"], by="dashboard")}, ensure_ascii=False).encode(), 200
+            except Exception as exc:  # noqa: BLE001
+                body, code = f"err {exc!r}".encode(), 500
+        elif path == "/guardswitch":
+            try:
+                from biglot.guard_view import post_switch
+                n = int(self.headers.get("Content-Length") or 0)
+                q = json.loads(self.rfile.read(n).decode("utf-8", "replace")[:2000])
+                body, code = json.dumps({"ok": True, **post_switch(q)}, ensure_ascii=False).encode(), 200
             except Exception as exc:  # noqa: BLE001
                 body, code = f"err {exc!r}".encode(), 500
         elif path == "/notes":

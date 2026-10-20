@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import time
+
 import biglot_dashboard
 
 
@@ -42,6 +44,12 @@ def _b5n(r):
     return (r["big5_r"] / r["tot5_r"] * 100) if (r.get("big5_r") is not None and r.get("tot5_r")) else None
 
 
+def _r30n(r):
+    """近30分散戶淨額÷近30分成交額(%),跟 _b30n 同一個算法、retail 版。2026-10-04新增,
+    供散戶背離(SMFI)欄位的滾動窗版本使用(見 biglot_dashboard.py::SMFI_ACTIVE_FROM)。"""
+    return (r["retn30_r"] / r["tot30_r"] * 100) if (r.get("retn30_r") is not None and r.get("tot30_r")) else None
+
+
 def _limits(pc):
     """台股漲跌停價(±10%,對齊 tick):漲停=不超過+10%的最大tick、跌停=不低於−10%的最小tick。"""
     import math
@@ -60,6 +68,29 @@ def _in_market():
     n = biglot_dashboard.datetime.now(biglot_dashboard.TZ)
     # 08:30 起 = 期貨/現貨盤前試撮(2026-09-24:launchd 也提前到 08:30),試撮價要即時跳動
     return n.weekday() < 5 and "08:30" <= n.strftime("%H:%M") <= "13:35"
+
+
+def _rolling_now(sid):
+    """5分/30分這類「往回N秒」滾動窗該用哪個時間點當「現在」。
+
+    2026-10-03 jack 糾正:原本所有呼叫處一律傳真實 `time.time()`,在盤中這是對的,
+    但收盤後(含:當天已收盤但伺服器還開著、或任何時間重啟伺服器、或假日完全沒有
+    開盤)`time.time()` 會一路前進,往回N秒的滾動窗會算到「現在」跟「最後一筆真實
+    成交」之間那段完全沒有成交的空窗,導致5分/30分大戶/散戶/期散等欄位全部塌陷成
+    空值——使用者看到的現象是「收盤幾小時後重開伺服器,現價/5分/30分全部變成
+    —」,根因就是這裡。
+
+    修法:盤中(`_in_market()`為真)才用真實時間;收盤後一律改用「該檔最後一筆
+    已知成交時間」(`ST.last_seen[sid]`)當基準點,讓滾動窗凍結在收盤那一刻該有的
+    樣子,不會因為伺服器重啟的真實時間點不同而產生不一致的結果——不論是原本
+    收盤當下那次定格 render,還是任何時候重啟後的 render,算出來都該是同一個答案。
+    查無該檔任何成交紀錄(當天完全沒開盤、或該檔今天從未成交)時退回 `time.time()`,
+    這種情況下滾動窗本來就該算出空值,不是這支函式要處理的範圍。
+    """
+    if _in_market():
+        return time.time()
+    last = biglot_dashboard.ST.last_seen.get(sid)
+    return last.timestamp() if last else time.time()
 
 
 def _px_class(px, pc, chg):

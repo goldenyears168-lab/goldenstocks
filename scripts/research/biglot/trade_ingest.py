@@ -46,6 +46,8 @@ def _ingest_trade(line):
     if not sid or px is None or vol is None or d.get("isTrial"):
         return
     px, vol = float(px), float(vol)
+    if d.get("isClose"):
+        biglot_dashboard.ST.close_px[sid] = px
     dv = vol - biglot_dashboard.ST.lastvol[sid]
     biglot_dashboard.ST.lastvol[sid] = vol
     if dv <= 0 or d.get("isOpen") or d.get("isClose"):
@@ -113,11 +115,15 @@ def _ingest_trade(line):
         row["ret2"] += amt
         ds["ret"] += sgn * amt
         ds["ret2"] += amt
-        _hm = t.strftime("%H:%M")                                # 散戶版 SMFI 觀察欄(2026-09-25,jack 交辦研究候選;
-        if "09:00" <= _hm < "09:25":                              # OOS 聯合迴歸 t2.1~2.5,IS 邊緣未過,先觀察不計分)
-            ds["ret_open"] += sgn * amt; ds["tot_open"] += amt
-        elif "12:55" <= _hm < "13:20":
-            ds["ret_close"] += sgn * amt; ds["tot_close"] += amt
+        _hm = t.strftime("%H:%M")                                # 散戶背離(SMFI,2026-09-25採納)的
+        if "09:00" <= _hm < "09:25":                              # 固定基準窗口:開盤(永遠固定)+尾盤
+            ds["ret_open"] += sgn * amt; ds["tot_open"] += amt    # (12:55-13:20,收盤後的「最終定格值」,
+        elif "12:55" <= _hm < "13:20":                            # 供day_views.py/historical回顧與
+            ds["ret_close"] += sgn * amt; ds["tot_close"] += amt  # reference_loaders.py的PREV2D回退用)。
+            # ⚠ 2026-10-04起,render_main.py 盤中即時顯示/計分的「現在」這一側已改用近30分
+            # 滾動窗(_r30n,SMFI_ACTIVE_FROM起算),不再讀這裡的 ds["ret_close"]/["tot_close"]
+            # ——這兩個累加器仍然保留計算,只是變成「這天收盤後的定格值」專用,見
+            # render_main.py 與 reference_loaders.py::_load_prev2d_totals 的對應說明。
     else:
         row["midn"] += sgn * amt
         ds["mid"] += sgn * amt
@@ -165,17 +171,17 @@ def _stk_trade(sid, line, st):
     m = st["mins"].setdefault(t.strftime("%H:%M"),
                               {"px": None, "vol": 0.0, "big": 0.0, "ret": 0.0, "tot": 0.0})
     m["px"] = px
+    try:                                                              # 每分鐘最後一筆的買一/賣一（現貨中價用；基差見 biglot/fut_basis.py）
+        if b is not None and a is not None and float(b) > 0 and float(a) > 0:
+            m["bid"], m["ask"] = float(b), float(a)
+    except (TypeError, ValueError):
+        pass
     if st["px0"] is None:
         st["px0"] = px
     if gap and amt >= biglot_dashboard.GAP_JUMP_AMT:                       # 空窗跳量:更新價、不計流量
         return
     m["tot"] += amt
     m["vol"] += dv
-    try:                                                              # 每分鐘最後一筆的買一/賣一（現貨中價用；基差見 biglot/fut_basis.py）
-        if b is not None and a is not None and float(b) > 0 and float(a) > 0:
-            m["bid"], m["ask"] = float(b), float(a)
-    except (TypeError, ValueError):
-        pass
     sgn = 1 if side > 0 else (-1 if side < 0 else 0)
     if amt >= biglot_dashboard.BIG_AMT:
         m["big"] += sgn * amt
