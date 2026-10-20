@@ -93,6 +93,14 @@ jobs:
     schedule: "KeepAlive worker · interval≈2s in-window · weekdays 08:55-13:35"
     description: "複製人代理人(CA-R1)獨立下單層 · 讀 data/candidates 卡片 → 買一−1檔限價新倉買進(只送新倉、出場手動) · src/order/clone_agent_order.py。預設演練(ORDER_CLONE_AGENT_DRY_RUN=1,不登入券商);實彈只由 .env 設 ORDER_CLONE_AGENT_DRY_RUN=0 且 ORDER_MASTER_ENABLED=1。儀表板 /agent 的「自動送單」按鈕=data/order/clone_agent_switch.json(預設開、檔案損毀=關);保證金上限 147 萬、單日 15 筆、連 3 次失敗或額度類錯誤即停單。與 src/clone_agent/ 只透過 JSON 檔互動、互不 import"
 
+  - label: cancel-guard
+    category: order
+    order_capable: true
+    status: disabled
+    disabled_since: "2026-10-21"
+    schedule: "KeepAlive 常駐 worker（尚未安裝；weekdays 08:40-13:50，視窗外自己 sleep）"
+    description: "撤單神器 src/order/cancel_guard.py + scripts/order/run_cancel_guard.py（2026-10-21 使用者明確要求）· 只撤單、不下單：讀 futopt-fill-listener 的委託事件與各 *_books 買賣簿檔（含手動單、涵蓋 taifex_stock_futures_map 內且有買賣簿的個股期貨，不限儀表板 42 檔），被動新倉單掛出後買賣簿中價往不利走 ≥1 tick → 通知／撤單。預設全關：開關檔 data/order/cancel_guard_switch.json enabled=false；實彈需開關 auto_cancel=true、.env ORDER_CANCEL_GUARD_DRY_RUN=0 與 ORDER_MASTER_ENABLED=1 三道鎖。規格與證據：docs/ofi-cancel-prereg-20261021.md。安裝與卸載指令見 scripts/launchd/cancel-guard.command 檔頭（刻意不在 install-launchd.sh 的 LABELS）。"
+
   - label: clone-agent-supervisor
     category: agent
     order_capable: false

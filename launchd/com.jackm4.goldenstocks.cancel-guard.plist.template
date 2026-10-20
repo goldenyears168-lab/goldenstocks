@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jackm4.goldenstocks.cancel-guard</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{CANCEL_GUARD_LAUNCHER}}</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/tmp</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>GOLDENSTOCKS_DATA_DIR</key>
+		<string>/Users/jackm4/goldenstocks-data</string>
+		<key>TZ</key>
+		<string>Asia/Taipei</string>
+		<!-- 預設演練(不撤單)。實彈只由 GOLDENSTOCKS_DATA_DIR/.env 的 ORDER_CANCEL_GUARD_DRY_RUN=0 打開,且需 ORDER_MASTER_ENABLED=1 與開關檔 auto_cancel=true -->
+		<key>ORDER_CANCEL_GUARD_DRY_RUN</key>
+		<string>1</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/cancel-guard.launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/cancel-guard.launchd.err.log</string>
+</dict>
+</plist>
