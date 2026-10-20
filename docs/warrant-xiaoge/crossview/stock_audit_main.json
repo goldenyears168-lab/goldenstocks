@@ -1,0 +1,46 @@
+{
+  "fixed": [
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2256, "from": "緯創(6669)", "to": "緯創(3231)", "code": "3231", "reason": "6669 是緯穎；原文標題誤植。內文 2329/2340 等同檔已寫 3231；2023-04-19 緯創 43.45→45.65（3231）符合「股價急拉」，緯穎 1160→1155 不符"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2822, "from": "4/19 緯創(6669)當沖案例解析", "to": "4/19 緯創(3231)當沖案例解析", "code": "3231", "reason": "同上（nid=632889 標題代號誤植）"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2847, "from": "威剛(3620)", "to": "威剛(3260)", "code": "3260", "reason": "nid=664209 標題代號誤植，原文內文為威剛(3260)；同檔其他處皆 3260"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2873, "from": "保瑞(6274)", "to": "保瑞(6472)", "code": "6472", "reason": "6274 是台燿；nid=694862 標題誤植，內文為保瑞(6472)"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2957, "from": "長榮航(2610)", "to": "長榮航(2618)", "code": "2618", "reason": "2610 是華航；nid=824498 標題誤植，內文為長榮航(2618)"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2970, "from": "金像電(2367)", "to": "金像電(2368)", "code": "2368", "reason": "2367 是燿華；nid=854373 標題誤植，內文為金像電(2368)"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 752, "from": "茂聯-KY", "to": "貿聯-KY", "code": "3665", "reason": "3665 為貿聯-KY；原文「茂聯」為同音誤字（同檔 2425/2992 另兩處一併改）"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2425, "from": "茂聯-KY(3665)（含同行內文兩處）", "to": "貿聯-KY(3665)", "code": "3665", "reason": "同音誤字，3665=貿聯-KY"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2992, "from": "茂聯-KY(3665)", "to": "貿聯-KY(3665)", "code": "3665", "reason": "同音誤字（標題列）"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 1156, "from": "國賓(2707)", "to": "國賓(2704)", "code": "2704", "reason": "2707 是晶華（股價約 135–150）；文中「23 元漲到 28 元」符合國賓 2704（22–25 元）。原專欄 nid=155123 即誤植 2707"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2177, "from": "國賓(2707)", "to": "國賓(2704)", "code": "2704", "reason": "同上"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 1117, "from": "和樁(6215)", "to": "和椿(6215)", "code": "6215", "reason": "字形誤字，6215=和椿"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 1117, "from": "達方(6183)", "to": "達方(8163)", "code": "8163", "reason": "6183 是關貿；達方電子為 8163（2018 被動元件概念股，2018-06-20 83.9→08-15 50.9）。原專欄 nid=134418 誤植"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 2146, "from": "和樁", "to": "和椿", "code": "6215", "reason": "字形誤字"},
+    {"file": "xiaoge-book-vol2-columns.md", "line": 1266, "from": "全新(2355)", "to": "全新(2455)", "code": "2455", "reason": "2355 是敬鵬；原專欄 nid=139400 同篇後段寫全新(2455)，為作者代號誤植"},
+    {"file": "xiaoge-system-book.md", "line": 4554, "from": "新盛力（4391）", "to": "新盛力（4931）", "code": "4931", "reason": "資料庫 4931=新盛力，4391 不存在；數字顛倒"},
+    {"file": "validation-companion.md", "line": 530, "from": "2889、4391、4991", "to": "2889、4931、4991", "code": "4931", "reason": "同上（新盛力）"}
+  ],
+  "kept_historical": [
+    {"name": "大宇資", "code": "6111", "note": "舊名，現為光聚晶電（資料庫現名）；2016–2018 專欄用舊名，全文保留"},
+    {"name": "光磊", "code": "2340", "note": "舊名，現為台亞"},
+    {"name": "致振", "code": "3466", "note": "舊名，現為德晉"},
+    {"name": "華韡", "code": "5481", "note": "舊名，現為新華"},
+    {"name": "本盟", "code": "1475", "note": "舊名，現為業旺"},
+    {"name": "台耀", "code": "6274", "note": "舊名，現為台燿（同檔多處已用台燿）"},
+    {"name": "中橡", "code": "2103", "note": "舊名，現為台橡"},
+    {"name": "緯軟", "code": "4953", "note": "舊名，現為緯致"},
+    {"name": "景碩", "code": "3189", "note": "簡稱/舊稱，資料庫現名景碩科技"},
+    {"name": "金居", "code": "8390", "note": "舊名，現為金益鼎（2021 專欄案例用舊名）"},
+    {"name": "矽品", "code": "2325", "note": "已下市（併入日月光），歷史名稱"},
+    {"name": "華映", "code": "2475", "note": "已下市，歷史名稱"},
+    {"name": "奇力新 / 美磊 / 美桀 / 榮化 / 隆達 / 康友-KY / 綠悅-KY / 昂寶-KY / 鍇勝-KY / 科納-KY / 晶睿 / 全銓", "code": "", "note": "資料庫無（已下市或更名），代號與年代吻合，屬歷史名稱，保留"}
+  ],
+  "uncertain": [
+    {"file": "xiaoge-book-vol2-columns.md", "line": 1413, "text": "全銓(8913)", "candidates": "全銓(8913)", "reason": "全銓 8913 資料庫查不到（已下市），原專欄 nid=126220/172585 即寫 8913，保留；未能以價格驗證"}
+  ],
+  "removed": [],
+  "notes": [
+    "百合、維生、愛訊、建策、威風電在本範圍檔案中已無殘留（grep 確認）。",
+    "表格「標的」欄名稱（新光金三=CB 代號 28884、榮成三、亞泰二、台翰一、大同山、標題寫正文(4906)=正文、美德醫=美德醫療-DR 9103）皆為 CB/權證/摘要用語，非錯字，保留。",
+    "超出範圍但順手發現：docs/warrant-xiaoge/knowledge-book.md 也寫新盛力(4391)（約 2311、2342 行），應同步改 4931。",
+    "stockcheck_raw 中本範圍的「今年/案例/除息季/節目前幾天」(2022、2025 年份被誤判為代號)、「空環宇」(空＋環宇-KY)為掃描誤報，無需處理。"
+  ]
+}

@@ -1,0 +1,25 @@
+{"fixed":[
+{"file":"xiaoge-book-vol4-shows.md","line":166,"from":"威風電","to":"威鋒電子（6756）","code":"6756","reason":"轉錄 wqEE2XoqO94 0:16:13 原文為「叫做6756的威風…這一檔威風電子」，代號明確；同音誤字"},
+{"file":"xiaoge-book-vol4-shows.md","line":172,"from":"錦碩","to":"景碩","code":"3189","reason":"轉錄 2A36Gqwr5a4 1:00:09「錦硕、南電跟星星(欣興)」，與南電同為 ABF 載板三雄、有權證、離年線遠；資料庫無錦碩，景碩(景碩科技)同音近"},
+{"file":"xiaoge-book-vol4-shows.md","line":446,"from":"月豐","to":"越峰","code":"8121","reason":"2021-09 轉錄「月丰…沒有融資融券」；資料庫無月豐，越峰 8121 同音，9/1–9/15 由 22.75 漲到 41.35 連續強勢，吻合"},
+{"file":"xiaoge-book-vol4-shows.md","line":446,"from":"永存","to":"永純","code":"4711","reason":"轉錄 QHpnG7cgIks 0:19:51「永存是今天最強的」；資料庫無永存，永純 4711 在 2021-09-15 由 21.15 漲到 23.25(+9.9%) 吻合"},
+{"file":"xiaoge-book-vol4-shows.md","line":1049,"from":"永存","to":"永純","code":"4711","reason":"同上，與永光、中華化同為當時『永』字頭熱門股"},
+{"file":"xiaoge-book-vol4-shows.md","line":1049,"from":"永結","to":"永捷","code":"4714","reason":"同音(yongjie)，永捷 4714 2021-09-10 至 09-15 連漲 12.7→15.05；資料庫無永結。信心中等"},
+{"file":"xiaoge-book-vol4-shows.md","line":805,"from":"愛訊（3088）","to":"艾訊（3088）","code":"3088","reason":"代號 3088 為艾訊，愛訊為轉錄同音字"},
+{"file":"xiaoge-book-vol4-shows.md","line":806,"from":"英杰（5351）","to":"鈺創（5351）","code":"5351","reason":"代號 5351 為鈺創；2022-02-16 由 74.5 漲到 81.9(+9.9%) 漲停，與『漲停、很多隔日沖』吻合；英杰為轉錄誤字"},
+{"file":"xiaoge-book-vol4-shows.md","line":1017,"from":"張源","to":"彰源","code":"2030","reason":"鋼鐵股，與 5014 建錩、2027 大成鋼並列；彰源 2030 同音，張源不存在"},
+{"file":"xiaoge-book-vol4-shows.md","line":92,"from":"聚合","to":"聚和","code":"6509","reason":"標準高檔出貨股；資料庫僅聚和(6509)同音，2021-07 高點約 67 後走低，吻合『高檔出貨』。索引表，同冊 4.50 節標題需同步（不在本範圍）"},
+{"file":"xiaoge-book-vol4-shows.md","line":1003,"from":"聚合","to":"聚和","code":"6509","reason":"同上"},
+{"file":"xiaoge-book-vol4-shows.md","line":1025,"from":"聚合","to":"聚和","code":"6509","reason":"同上"}
+],
+"kept_historical":[
+{"name":"三晃","code":"1721","note":"2022 年時為三晃，資料庫現名國慶科技；行 830 保留"},
+{"name":"華映","code":"2475","note":"早年 30 元買華映(已下市)，保留（行 468）"},
+{"name":"康友","code":"6452","note":"資料庫名康友-KY，簡稱，保留"},
+{"name":"精華/宏觀/全新/為升/百和","code":"1565/6568/2455/2231/9938","note":"檢查無誤；為升、百和已無維生、百合殘留（範圍內 grep 為 0）"}
+],
+"uncertain":[
+{"file":"xiaoge-book-vol4-shows.md","line":804,"text":"國泰連續買把新星買上去，有機會創新高","candidates":"新興 2605、欣興 3037、新唐 4919","reason":"資料庫無新星；轉錄 8pAff-_tlr4 0:01:53 僅『新星今天非常強』，2022-02-16 欣興 +5.2%、新興 +2%、無漲停可對；未改"},
+{"file":"xiaoge-book-vol4-shows.md","line":208,"text":"永林（1.10 節，大立光案例中的分點/人物）","candidates":"轉錄原為『永林哥』摩根大通小摩，似人物綽號","reason":"非股票名稱，未改，建議後續確認是否為分點"}
+],
+"removed":[]}

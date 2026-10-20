@@ -1,0 +1,166 @@
+{
+ "fixed": [
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 226,
+   "from": "富橋",
+   "to": "富喬",
+   "code": "1815",
+   "reason": "同音；DB 無富橋；PCB 玻纖布題材，與金居並列"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 305,
+   "from": "金豪科",
+   "to": "晶豪科",
+   "code": "3006",
+   "reason": "ASR 影片 poB6 小哥說群組密碼 3006；DB 3006=晶豪科；記憶體 IC"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 307,
+   "from": "金豪科",
+   "to": "晶豪科",
+   "code": "3006",
+   "reason": "同上"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 308,
+   "from": "利基電",
+   "to": "力積電",
+   "code": "6770",
+   "reason": "同音；與旺宏、南亞科、聯電並列之半導體；工具 tok 對應 6770"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 512,
+   "from": "清雲",
+   "to": "青雲",
+   "code": "5386",
+   "reason": "同音；DB 無清雲；2026-01/02 5386 價格走勢與申報轉讓脈絡相符（ASR 原文即寫清雲）"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 520,
+   "from": "利基",
+   "to": "力積電",
+   "code": "6770",
+   "reason": "記憶體三檔（南亞科、華邦電、力積電）；利基非現存上市櫃公司，與 6770 同音"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 542,
+   "from": "波羅威",
+   "to": "波若威",
+   "code": "3163",
+   "reason": "同音；全文其他處皆為波若威"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 601,
+   "from": "建策",
+   "to": "健策",
+   "code": "3653",
+   "reason": "同音；散熱族群，文中價位 3500/3650 與 3653 在 2026-05 的 3650~5000 區間吻合"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 603,
+   "from": "建策",
+   "to": "健策",
+   "code": "3653",
+   "reason": "同上"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 604,
+   "from": "建策(3處)",
+   "to": "健策",
+   "code": "3653",
+   "reason": "同上"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 605,
+   "from": "建策(2處)",
+   "to": "健策",
+   "code": "3653",
+   "reason": "同上；3500 買 3650 賣吻合 2026-05-08 收盤 3650"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 606,
+   "from": "建策(2處)",
+   "to": "健策",
+   "code": "3653",
+   "reason": "同上"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 607,
+   "from": "建策(4處)",
+   "to": "健策",
+   "code": "3653",
+   "reason": "同上"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 694,
+   "from": "台坡",
+   "to": "台玻",
+   "code": "1802",
+   "reason": "ASR 原話金居249->304、台坡35->33；DB 1802 台玻 2025-12-22 前後 35.75/32.9 吻合"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 694,
+   "from": "雷虎配義騎",
+   "to": "雷虎配邑錡",
+   "code": "7402",
+   "reason": "同音；雷虎 8033 無人機/軍工概念配邑錡"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 718,
+   "from": "環球金",
+   "to": "環球晶",
+   "code": "6488",
+   "reason": "同音；同節前後文皆環球晶"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 718,
+   "from": "中美金",
+   "to": "中美晶",
+   "code": "5483",
+   "reason": "同音；環球晶母公司"
+  }
+ ],
+ "kept_historical": [],
+ "uncertain": [
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 694,
+   "text": "金居配台玻，叫「金坡配」",
+   "candidates": "金玻配（台玻 1802）",
+   "reason": "綽號『金坡配』是小哥口語暱稱，ASR 聽成坡；實際為『金玻配』機率高但無法確認，且 1316、1520 行（他人範圍）同樣寫金坡配，保留不動"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 168,
+   "text": "（例子是 5930）",
+   "candidates": "價位非代號",
+   "reason": "ASR 原文為大立光曾到 5930 的價位，不是股票代號，無須更正"
+  },
+  {
+   "file": "xiaoge-book-vol3-lives.md",
+   "line": 645,
+   "text": "做空 4938 和碩、3042、群光、6147",
+   "candidates": "3042 晶技、6147 頎邦",
+   "reason": "ASR 原文只講代號；DB 對應晶技、頎邦，未見名稱錯誤，可選擇補名稱"
+  }
+ ],
+ "removed": [],
+ "notes": "已逐行讀 1-850 行；其餘名稱（華東、旺宏、南亞科、華邦電、欣興、南電、景碩、全新、華星光、中探針、日電貿、花王、毛寶、恆大、天良、高力、雙鴻、環宇-KY、波若威、志聖2467、研華2395、大聯大3702、美德醫療9103、系統電5309等）皆與 DB 吻合。歷史舊名：本範圍無。"
+}

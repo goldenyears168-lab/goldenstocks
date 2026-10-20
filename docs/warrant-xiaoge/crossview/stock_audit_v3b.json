@@ -1,0 +1,33 @@
+{
+"fixed":[
+{"file":"xiaoge-book-vol3-lives.md","line":999,"from":"利基","to":"立積（4968）","code":"4968","reason":"轉錄 49681 的「利基」=立積(4968)可轉債；3/12 直播『49681的利基…漲翻了』，立積 2023-11 約118→2024-03 約235，吻合；資料庫無利基"},
+{"file":"xiaoge-book-vol3-lives.md","line":1428,"from":"利基","to":"立積（4968）","code":"4968","reason":"同上，案例表『最早提醒的低檔發債，後來漲翻約一倍』"},
+{"file":"xiaoge-book-vol3-lives.md","line":1107,"from":"利基電","to":"力積電","code":"6770","reason":"同音(stockfind)；記憶體族群清單：旺宏、宜鼎、力積電、群聯、南亞科"},
+{"file":"xiaoge-book-vol3-lives.md","line":1528,"from":"台波（1802）、利基電（6770）；台波刷兩千張","to":"台玻（1802）、力積電（6770）；台玻刷兩千張","code":"1802/6770","reason":"代號已指明：1802=台玻、6770=力積電"},
+{"file":"xiaoge-book-vol3-lives.md","line":1122,"from":"金豪科","to":"晶豪科","code":"3006","reason":"記憶體族群、2026-02-03；同書 1519 列『晶豪科（3006）』，2/3 收168.5 吻合處置危機情境"},
+{"file":"xiaoge-book-vol3-lives.md","line":1531,"from":"金豪科","to":"晶豪科（3006）","code":"3006","reason":"同上"},
+{"file":"xiaoge-book-vol3-lives.md","line":1129,"from":"大力光(2處)","to":"大立光","code":"3008","reason":"同音；CPO 本益比14，大立光"},
+{"file":"xiaoge-book-vol3-lives.md","line":1562,"from":"大力光(3處)","to":"大立光","code":"3008","reason":"同上"},
+{"file":"xiaoge-book-vol3-lives.md","line":1568,"from":"建策","to":"健策","code":"3653","reason":"同音；1583 列 3653，3500~3650 價位吻合健策"},
+{"file":"xiaoge-book-vol3-lives.md","line":1578,"from":"建策、月城(多處)","to":"健策、悅城","code":"3653/6405","reason":"同上；月城見下"},
+{"file":"xiaoge-book-vol3-lives.md","line":1572,"from":"月城","to":"悅城（6405）","code":"6405","reason":"同音；2026-05-12 悅城收 58.2，文中均價56~57吻合；浪子回頭股"},
+{"file":"xiaoge-book-vol3-lives.md","line":1545,"from":"波羅威","to":"波若威","code":"3163","reason":"同音；同書他處皆為波若威(3163)，處置股"},
+{"file":"xiaoge-book-vol3-lives.md","line":1546,"from":"清雲","to":"青雲（5386）","code":"5386","reason":"同音；3/17 直播說『清雲像妖股、老闆在賣』，青雲 3/12~3/18 由287漲到417，妖股吻合"},
+{"file":"xiaoge-book-vol3-lives.md","line":1520,"from":"台坡(4處)","to":"台玻","code":"1802","reason":"台玻1802 2025-12-24 約34.9、2026-01-07 約35.4，文中『35→33』吻合；1/29 同書已指1802台玻；PCB玻纖布與金居相關"},
+{"file":"xiaoge-book-vol3-lives.md","line":1520,"from":"金坡配","to":"金玻配","code":"","reason":"配對暱稱隨台玻更正（同 1316）。注意：他檔文件可能仍寫『金坡配』，需另行統一"},
+{"file":"xiaoge-book-vol3-lives.md","line":1316,"from":"金坡配","to":"金玻配","code":"","reason":"同上"},
+{"file":"xiaoge-book-vol3-lives.md","line":1201,"from":"新盛力（4391）","to":"新盛力（4931）","code":"4931","reason":"代號錯：資料庫 4931=新盛力，4391 不存在"}
+],
+"kept_historical":[
+{"name":"金居","code":"8358","note":"資料庫 8358=金居，正確（stockcheck_raw 的 8390 金益鼎配對是他檔問題）"},
+{"name":"國泰敦南","code":"","note":"非個股，是國泰證券敦南分點（散戶分點）；保留，不是錯"},
+{"name":"台指期／台積電權證／期貨/可轉債/選擇權/債券 等","code":"","note":"商品名，非股票名，保留"},
+{"name":"華邦電、南亞科、旺宏、威剛、十銓、環宇-KY、波若威、欣興、景碩、南電、群聯、華東 等","code":"","note":"逐一核對皆與資料庫現名一致"}
+],
+"uncertain":[
+{"file":"xiaoge-book-vol3-lives.md","line":1520,"text":"金居 249 → 304","candidates":"","reason":"資料庫金居(8358)2025-12-24 收 260.5、2026-01-07 收 266，與『249→304』不全吻合，可能為跨期（1月後續漲幅）；數字非名稱錯誤，未改"},
+{"file":"xiaoge-book-vol3-lives.md","line":1121,"text":"威剛/十銓 配對","candidates":"","reason":"名稱皆存在(3260威剛、4967十銓)，無問題；僅備註"},
+{"file":"xiaoge-book-vol3-lives.md","line":1595,"text":"3055","candidates":"蔚華科(3055)","reason":"只有代號，價位176→154未核對，未改"}
+],
+"removed":[]
+}

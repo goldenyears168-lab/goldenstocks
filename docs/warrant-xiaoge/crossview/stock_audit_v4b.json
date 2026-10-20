@@ -1,0 +1,16 @@
+{
+  "fixed": [
+    {"file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md", "line": 2071, "from": "聚合", "to": "聚和（6509）", "code": "6509", "reason": "同音誤字（ju-he）。2021-08-06 收盤 62.0、直播日 08-11 收盤 55.8，與文中「挑的時候 62 塊、直播時剩 55 塊」吻合；4.50 節（含 2073/2075/2077/2079 行的 聚合 → 聚和）一併更正，僅標題行加代號"},
+    {"file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md", "line": 1322, "from": "鄭威", "to": "正崴（2392）", "code": "2392", "reason": "同音（zheng-wei）。2021-10-06（貨櫃三雄直播日）成交量 560 萬股，約為 20 日均量 8 倍，符合「同樣爆量」"},
+    {"file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md", "line": 1322, "from": "冬年", "to": "東聯（1710）", "code": "1710", "reason": "轉錄亂碼，推定為東聯（dong-lian）。2021-10-06 東聯成交量 5,305 萬股，為 20 日均量約 8.5 倍，與文中「均量比 8.4 倍」吻合。把握中等偏高（比對量比為間接證據，主力賣超未驗）"},
+    {"file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md", "line": 1568, "from": "英記", "to": "英濟（3294）", "code": "3294", "reason": "同音誤字（ying-ji）。2022-01 英濟股價由 30.85（01-04）跌至 25.8（01-13），符合「跌破月線才寫、也跌了 5 塊」；把握中等偏高"}
+  ],
+  "kept_historical": [
+    {"name": "三晃", "code": "1721", "note": "第 1800–1802 行（2022-03 化工族群、與中華化 1727 同組）；資料庫現名為國慶科技，三晃為當時名稱，保留"}
+  ],
+  "uncertain": [
+    {"file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md", "line": 2109, "text": "像環球基因看起來很弱，但它是低檔，不是高檔出貨", "candidates": "訊聯基因（4160）？或其他快篩概念股", "reason": "資料庫無「環球基因」，同音查詢亦無結果；2022-05 快篩題材中名稱含「基因」者僅訊聯基因，但音不近，無法確認，未更動"},
+    {"file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md", "line": 2362, "text": "買中航運的一整個波段", "candidates": "可能是「買中（買到）航運的整個波段」，非公司名", "reason": "語意可解讀為動詞，未更動"}
+  ],
+  "removed": []
+}

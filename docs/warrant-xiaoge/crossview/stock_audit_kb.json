@@ -1,0 +1,280 @@
+{
+ "fixed": [
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "金像電(2367)",
+   "to": "金像電(2368)",
+   "code": "2368",
+   "reason": "2367為燿華；金像電為2368，已有正確項，去重（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "長榮航(2610)",
+   "to": "長榮航(2618)",
+   "code": "2618",
+   "reason": "2610為華航；長榮航為2618，去重（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "榮運(2640)",
+   "to": "榮運(2607)",
+   "code": "2607",
+   "reason": "2640為大車隊；榮運為2607（航運股，轉錄-NxV6JvdUOs「這幾個航運」佐證）（JSON/CSV/md/list 全部同步，共約3處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "高零/高零(2906)/高零分點",
+   "to": "高林/高林(2906)/高林分點",
+   "code": "2906",
+   "reason": "高零為同音誤字；2906高林，2024-05-02收盤21.5元；分點條目名稱同步改為「高林分點」（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "愛訊(3088)",
+   "to": "艾訊(3088)",
+   "code": "3088",
+   "reason": "同音誤字；DB 3088=艾訊（JSON/CSV/md/list 全部同步，共約3處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "茂聯-KY(3665)",
+   "to": "貿聯-KY(3665)",
+   "code": "3665",
+   "reason": "同音誤字；DB 3665=貿聯-KY（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "美律(3669)",
+   "to": "美律(2439)",
+   "code": "2439",
+   "reason": "3669為圓展；美律為2439，去重（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "保瑞(6274)",
+   "to": "保瑞(6472)",
+   "code": "6472",
+   "reason": "6274為台燿；保瑞為6472，去重（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "緯創(6669)",
+   "to": "緯創(3231)",
+   "code": "3231",
+   "reason": "6669為緯穎；緯創為3231，去重（JSON/CSV/md/list 全部同步，共約4處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "威剛(3620)",
+   "to": "威剛(3260)",
+   "code": "3260",
+   "reason": "威剛為3260，去重（JSON/CSV/md/list 全部同步，共約3處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "金居(8390)",
+   "to": "金居(8358)",
+   "code": "8358",
+   "reason": "8390為金益鼎；金居為8358（JSON/CSV/md/list 全部同步，共約6處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "千辛(ASR原文，代號未知)/千辛",
+   "to": "千興(2025)",
+   "code": "2025",
+   "reason": "同音誤字；2024-03-07收13.0、2024-04-16收11.55，吻合文中「現約13元」「後到12元多」（JSON/CSV/md/list 全部同步，共約6處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "順耀(ASR，個股不確定)",
+   "to": "順藥(6535)",
+   "code": "6535",
+   "reason": "同音；2024-06-17/18連兩個約+9.8%漲停(208→228.5)吻合「連兩根漲停」。注意：富邦南元嶺條目的「順耀(ASR)」未改，列待確認（JSON/CSV/md/list 全部同步，共約2處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "喬春(機器轉錄，名稱存疑)/喬春",
+   "to": "橋椿(2062)",
+   "code": "2062",
+   "reason": "同音；橋椿高點93元(2013)、低點13.65，吻合文中「高點94元…跌到13元」（JSON/CSV/md/list 全部同步，共約3處）"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "from": "陣容(1904?ASR)/陣容",
+   "to": "正隆(1904)",
+   "code": "1904",
+   "reason": "說話者引述代號1904；DB 1904=正隆（JSON/CSV/md/list 全部同步，共約4處）"
+  }
+ ],
+ "kept_historical": [
+  {
+   "name": "大宇資",
+   "code": "6111",
+   "note": "早年名稱（DB現名光聚晶電），2016-2019康和-永和案例；保留"
+  },
+  {
+   "name": "光磊",
+   "code": "2340",
+   "note": "早年名稱（DB現名台亞）；保留"
+  },
+  {
+   "name": "致振",
+   "code": "3466",
+   "note": "早年名稱（DB現名德晉）；保留"
+  },
+  {
+   "name": "改選景碩",
+   "code": "3189",
+   "note": "『改選』為動詞，標的景碩(景碩科技)，非錯誤；保留"
+  },
+  {
+   "name": "奇力新/昂寶/科納-KY/晶睿/康友-KY",
+   "code": "2456/4947/4984/3454/6452",
+   "note": "代號正確，僅因不在2,084檔對照表而被初掃標為對不上"
+  }
+ ],
+ "uncertain": [
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "光燿科(3043)",
+   "candidates": "科風(3043)? 或另有其股",
+   "reason": "2017-09 CMoney 原文自寫「光燿科」(凱基-城中博愛路高手文)，非轉錄錯；但DB 3043=科風，2017年價位約2.5元與權證大賺不符，名稱/代號對應無法確認，保留原文"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "紅準",
+   "candidates": "鴻準(2354)",
+   "reason": "關鍵分點清單稱「紅準最近關鍵分點有在買」；同音唯一候選，無日期/價位可驗"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "如虹（轉錄）",
+   "candidates": "儒鴻(1476)",
+   "reason": "同音唯一候選；無日期，價位無法驗證"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "見頂(ASR原文，個股不確定)",
+   "candidates": "健鼎(3044)",
+   "reason": "龍潭人分點；健鼎同音但無證據"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "健達（轉錄）/衛術（轉錄）",
+   "candidates": "建大(2106)/建達(6118)；衛術無候選",
+   "reason": "兆豐-中立/凱基-台北案例，無價位日期"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "張元（轉錄）",
+   "candidates": "彰源(2030)",
+   "reason": "彰化/斗六分點賣超；彰源現價14-18元，文中日盛元林賣42元，年份未知"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "巨洋(機器轉錄)",
+   "candidates": "聚陽(1477)",
+   "reason": "關鍵分點低檔大買；聚陽同音，無旁證"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "紅寶(機器轉錄)",
+   "candidates": "虹堡(5258)",
+   "reason": "元富鎖紅寶隔日沖；無日期"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "紅玉(機器轉錄)",
+   "candidates": "弘裕(1474)",
+   "reason": "桃園人大買；無旁證"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "新勝利(機器轉錄)",
+   "candidates": "新盛力(4931)(桃園)",
+   "reason": "群義桃園賣6977張疑庫藏股；無旁證"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "順耀(ASR)（富邦南元嶺條目）",
+   "candidates": "順藥(6535)",
+   "reason": "無日期，未改"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "東升（轉錄）/東森（轉錄，亦作東升）",
+   "candidates": "東森(2614)",
+   "reason": "『東升』非上市櫃名；『成本約10元、10萬張、有減資』需對東森價位確認"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "驊宏資/華經（待核）",
+   "candidates": "華經? 無同音候選",
+   "reason": "轉錄不明"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "資昂（轉錄）",
+   "candidates": "昂寶(4947)?",
+   "reason": "董事長每天賣9張；無同音候選"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "中飛航（轉錄）",
+   "candidates": "中航(2612)/華航(2610)/長榮航(2618)",
+   "reason": "航運權證下船賺2749萬"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "可林衛、所掌停、統政、基元電、常見石油、遠雄(機器轉錄)、音記、新富發、液態、尖點、永信建、銀廣、智勝(ASR)、十全(ASR)、陳德(ASR)、金友(疑為金元)、雅曦、連城、新星、全新(ASR原文，代號未知)、台坡/台郡",
+   "candidates": "智勝→志聖(2467)；十全→十銓(4967)；雅曦→亞矽(6113)；連城→聯成(1313)；其餘無候選",
+   "reason": "ASR原文標示不確定，無日期/價位足以判定，保持原標註"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "627(機器轉錄)、641（轉錄）",
+   "candidates": "—",
+   "reason": "純數字轉錄片段，無法對應"
+  },
+  {
+   "file": "docs/warrant-xiaoge/key-branches.json",
+   "line": 0,
+   "text": "美德醫(ASR美德一)",
+   "candidates": "美德醫療-DR(9103)",
+   "reason": "2020-11 與2026-03皆指美德醫（DR），名稱可保留；無代號"
+  }
+ ],
+ "removed": []
+}

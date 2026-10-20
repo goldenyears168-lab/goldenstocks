@@ -1,0 +1,199 @@
+{
+ "fixed": [
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 3700,
+   "from": "自信",
+   "to": "志信（2611）",
+   "code": "2611",
+   "reason": "同音誤字；2021-10-06 志信 20 日均線斜率 -1.06%（長榮 -0.82、陽明 -0.87 與文中一致），航運股"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 3843,
+   "from": "台華",
+   "to": "台驊（2636）",
+   "code": "2636",
+   "reason": "同音誤字；轉錄 2A36Gqwr5a4 0:50:16 先說 2636，航運族群內股"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4006,
+   "from": "聚合",
+   "to": "聚和",
+   "code": "6509",
+   "reason": "同音誤字；8/11 聚和跌停(62.0→55.8)，與「跌停隔天回補」吻合；正文 4.50 已為聚和"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4293,
+   "from": "聚合",
+   "to": "聚和（6509）",
+   "code": "6509",
+   "reason": "同上"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4301,
+   "from": "聚合（兩處）",
+   "to": "聚和（6509）",
+   "code": "6509",
+   "reason": "同上；9/14 收 59.8 較前日 +4.5%"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4269,
+   "from": "奇邦",
+   "to": "頎邦（6147）",
+   "code": "6147",
+   "reason": "同音（無聲調拼音相同）且為唯一同音現有股名；中等把握，轉錄 rKgKXbghLBw 僅有「奇邦」"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4310,
+   "from": "威風電（6756）",
+   "to": "威鋒電子（6756）",
+   "code": "6756",
+   "reason": "轉錄亂字，代號對應威鋒電子"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4320,
+   "from": "冬年",
+   "to": "東聯（1710）",
+   "code": "1710",
+   "reason": "2021-10-06 東聯成交量/20日均量=8.5 倍，轉錄稱 8.4 倍，吻合"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4320,
+   "from": "鄭威",
+   "to": "正崴（2392）",
+   "code": "2392",
+   "reason": "同音；2021-10-06 均量比 7.5 倍、主力小買"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4320,
+   "from": "上海投貨",
+   "to": "上緯投控（3708）",
+   "code": "3708",
+   "reason": "上緯投控 10/06 +8.5%、均量比 5.7 倍、未鎖漲停；投貨≈投控"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4339,
+   "from": "深泉",
+   "to": "笙泉（3122）",
+   "code": "3122",
+   "reason": "轉錄 Z_-JjELc0UE 說 57.5 跌到 50.5，笙泉 12/30 收 57.5、1/12 收 50.5，完全吻合"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4340,
+   "from": "英記",
+   "to": "英濟（3294）",
+   "code": "3294",
+   "reason": "轉錄 30.35 跌到 25.6；英濟 1/12 收 25.65；正文已作英濟"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4341,
+   "from": "威風電子",
+   "to": "威鋒電子",
+   "code": "6756",
+   "reason": "轉錄亂字"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4356,
+   "from": "英杰（5351）",
+   "to": "鈺創（5351）",
+   "code": "5351",
+   "reason": "代號 5351 為鈺創，2/16 +9.9% 漲停吻合"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4365,
+   "from": "美德一",
+   "to": "美德醫療-DR（9103）",
+   "code": "9103",
+   "reason": "轉錄「美德一/美德伊」為「美德醫」之音；DR 股，2022-05-04 收 10.05 吻合「10 塊還很貴」"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4385,
+   "from": "美德一（DR 股）",
+   "to": "美德醫療-DR（9103）",
+   "code": "9103",
+   "reason": "同上"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4370,
+   "from": "建策（3653）",
+   "to": "健策（3653）",
+   "code": "3653",
+   "reason": "同音誤字，代號為健策"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4377,
+   "from": "台通（8014）",
+   "to": "台通（8011）",
+   "code": "8011",
+   "reason": "代號錯；台通=8011（8014 非台通）；正文已作 8011"
+  }
+ ],
+ "kept_historical": [
+  {
+   "name": "三晃",
+   "code": "1721",
+   "note": "歷史舊名，現為國慶科技；2022-02 高點 33.45 與資料庫吻合，保留"
+  },
+  {
+   "name": "榮運",
+   "code": "2640",
+   "note": "歷史舊名，現為大車隊，保留"
+  },
+  {
+   "name": "康友（康友-KY）",
+   "code": "6452",
+   "note": "2018-11 連續跌停個案，資料庫無此檔（已下市），保留"
+  },
+  {
+   "name": "華映",
+   "code": "2475",
+   "note": "早年面板股，已下市，保留"
+  },
+  {
+   "name": "美格",
+   "code": "",
+   "note": "早年電子股名（已不在資料庫），保留"
+  }
+ ],
+ "uncertain": [
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4302,
+   "text": "永光排第一，其後中華化、永存等",
+   "candidates": "永記(1726)／永崴投控(3712)／永冠-KY(1589)／永信(3705)",
+   "reason": "轉錄 QHpnG7cgIks 稱「永存、永結」為「永字頭」熱門股，9/15 資料庫 永字頭股價皆無對應爆量；無法確定，保留原文"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4330,
+   "text": "樺漢（6414）CB，股價 16.25",
+   "candidates": "CBAS/CB 價格而非股價",
+   "reason": "樺漢股價 218.5，轉錄稱「股票價格 16.25、最高噴到 23」，疑為 CBAS 價格；名稱樺漢（轉錄「化漢3」）同音成立，只有數字口徑存疑；轉錄另有「6143」疑為振曜，未改"
+  },
+  {
+   "file": "docs/warrant-xiaoge/xiaoge-book-vol4-shows.md",
+   "line": 4269,
+   "text": "頎邦（已由奇邦改）",
+   "candidates": "頎邦 6147",
+   "reason": "僅同音推定，中等把握，可回看影片確認"
+  }
+ ],
+ "removed": []
+}
