@@ -31,6 +31,7 @@ CACHE = fk.CACHE
 TZ = fk.TZ
 LAG_SEC = 2            # 等 2 秒讓檔案尾巴落地再前進
 STALE_SEC = 30         # 收集器（台指或任一買賣簿）沉默超過此秒數 → 不顯示
+SIG_TICKS = 0.5        # 合理價比賣一高(可買)／比買一低(可賣) ≥ 此 tick 數，且持續 ≥3 秒才換色
 SANITY_BPS = 100       # 校正價偏離中價超過此值視為模型失常 → 不顯示
 
 _lock = threading.Lock()
@@ -93,6 +94,7 @@ class _State:
         self.done = -1                      # 已前進到的秒索引
         self.tx_cur = None
         self.last_book_wall = 0.0
+        self.runs = {}                      # (sid,'buy'/'sell') -> 條件連續成立的秒數
 
     # ---- 讀新資料 ----
     def read(self):
@@ -139,6 +141,8 @@ class _State:
                 if r["symbol"] != self.sym[s] or b[0]["price"] >= a[0]["price"] or b[0]["size"] <= 0 or a[0]["size"] <= 0:
                     continue
                 i = int(t / 1e6 - self.t0)
+                if i >= fk.N_SEC:       # 13:25 後的收盤報價不吃:濾波已定格在 13:24:59，買賣簿要與之同一時點
+                    continue
                 self.top[s] = (b[0]["price"], a[0]["price"], b[0]["size"], a[0]["size"])
                 self.book_t[s] = time.time()
                 self.last_book_wall = self.book_t[s]
@@ -183,9 +187,16 @@ class _State:
                 why = "台指斷線"
             elif abs(fair / mid - 1) * 1e4 > SANITY_BPS:
                 why = "模型失常"
-            stocks[s] = dict(fair=fair, mid=mid, bid=top[0], ask=top[1], bidsz=top[2], asksz=top[3],
+            tk = tick_size(fair)
+            for side, cond in (("buy", fair - top[1] >= SIG_TICKS * tk - 1e-9), ("sell", top[0] - fair >= SIG_TICKS * tk - 1e-9)):
+                self.runs[(s, side)] = self.runs.get((s, side), 0) + 1 if (cond and not why_bad(self, now, tx_alive, coll_alive)) else 0
+            stocks[s] = dict(fair=fair, mid=mid, sig_buy=self.runs[(s, "buy")], sig_sell=self.runs[(s, "sell")], bid=top[0], ask=top[1], bidsz=top[2], asksz=top[3],
                              age=age, move=move, trig=(age >= fk.MIN_GAP and abs(move) >= fk.TRIGGER_BPS), why=why)
         return stocks
+
+
+def why_bad(st, now, tx_alive, coll_alive):
+    return not (tx_alive and coll_alive)
 
 
 def _load_params():
@@ -205,7 +216,7 @@ def _loop():
             if st is None or st.day != day:
                 params, asof = _load_params()
                 st = _State(day, fk.universe(), params) if params else None
-            if st is not None and 0 <= now - st.t0 < 6 * 3600:
+            if st is not None and 0 <= now - st.t0 < 20 * 3600:
                 st.read()
                 st.advance(int(now - st.t0) - LAG_SEC)
                 stocks = st.publish(now)
