@@ -14,6 +14,7 @@ TOOLS = (
     ("處置監測", "/disposal", ("/disposal",)),
     ("籌碼SOP", "/chips", ("/chips",)),
     ("小哥筆記本", "/xiaoge", ("/xiaoge",)),
+    ("小哥盤點", "/inventory", ("/inventory",)),
     ("期貨內外盤", "/futflow", ("/futflow",)),
     ("紙上模擬", "/paper", ("/paper",)),
     ("撤單神器", "/guard", ("/guard",)),

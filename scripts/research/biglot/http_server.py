@@ -30,6 +30,7 @@ import biglot_dashboard
 from biglot import nav_bar
 from biglot.chips_view import render_chips, render_csv
 from biglot.xiaoge_notebook_view import render_xiaoge
+from biglot.xiaoge_inventory_view import render_inventory
 from biglot.disposal_view import render_disposal
 from biglot.futflow_view import render_futflow, render_futflow_frag
 from biglot.health import health_json
@@ -183,6 +184,9 @@ class H(BaseHTTPRequestHandler):
         elif path == "/xiaoge":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_xiaoge(str(q.get("date", ""))[:10] or None).encode("utf-8")
+        elif path == "/inventory":
+            q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
+            body = render_inventory(str(q.get("date", ""))[:10] or None).encode("utf-8")
         elif path == "/chips":
             q = {k: v[0] for k, v in urllib_parse.parse_qs(qs).items()}
             body = render_chips(str(q.get("date", ""))[:10] or None, show_all=q.get("all") == "1").encode("utf-8")

@@ -226,7 +226,7 @@ def main():
         "market_env": market_env(c, day),
         "methods": {k: {"name": v[0], "book": v[1], "rule": v[2], "hits_today": len(hits[k]),
                         "typical_daily_hits_20d": (float(np.median(freq_series[PRICE_KEY[k]][:-1])) if k in PRICE_KEY and len(freq_series[PRICE_KEY[k]]) > 1 else None),
-                        "hits": hits[k][:40]} for k, v in METHODS.items()},
+                        "hits": hits[k]} for k, v in METHODS.items()},
         "price_signal_20d_counts": {k: [int(x) for x in v] for k, v in freq_series.items()},
         "stories_today": stories[:30],
         "gaps": ["權證買超排名（小哥選股主表）：缺", "大股東賣超/申報轉讓：缺", "集保戶數、營收、殖利率、庫藏股：缺", "分點籌碼條件僅限收集池（流動性前579檔），其餘標 chip=null",
