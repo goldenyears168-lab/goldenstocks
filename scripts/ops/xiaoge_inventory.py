@@ -21,6 +21,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+import branch_habit as _branch_habit  # noqa: E402
 from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
 
 CHIP = DATA_DIR / "chip" / "xiaoge"
@@ -139,24 +140,9 @@ def habit_table(day: str, minsh: float = 0.03, alpha: float = 0.7, max_days: int
 
 
 def habit_of(H: dict, vol_lots_by_day: dict, sid: str, b: str, day: str, minsh=0.03, alpha=0.7) -> tuple[int, int, list]:
-    days, D = H["days"], H["D"]
-    ev = fl = 0; ex = []
-    for i in range(len(days) - 1):
-        d0, d1 = days[i], days[i + 1]
-        if d1 > day:
-            break
-        m = D.get((sid, d0)); v = vol_lots_by_day.get((sid, d0))
-        if not m or not v:
-            continue
-        net = {k: x[0] - x[1] for k, x in m.items()}
-        top = sorted(net, key=lambda k: -net[k])[:5]
-        if b not in top or net[b] <= 0 or net[b] < minsh * v:
-            continue
-        ev += 1
-        nxt = D.get((sid, d1), {}).get(b)
-        if nxt and nxt[1] >= alpha * net[b]:
-            fl += 1; ex.append(f"{d0[5:]}買{int(net[b])}→{d1[5:]}賣{int(nxt[1])}")
-    return ev, fl, ex
+    # 計算本體在 src/branch_habit.py（與 /chips 共用）；這裡只負責把例子格式化成字串
+    ev, fl, ex = _branch_habit.habit_of(H["D"], vol_lots_by_day, H["days"], sid, b, day, minsh, alpha)
+    return ev, fl, [f"{d0[5:]}買{int(n)}→{d1[5:]}賣{int(s)}" for d0, d1, n, s in ex]
 
 
 def turnover_info(f: pd.DataFrame, shares_issued) -> dict:

@@ -706,18 +706,19 @@ _FUBON = {"tape": None, "bars_checked": set()}
 
 
 def _panel_branches() -> dict[str, str]:
-    """專家池全部核心分點 + /chips 席位表(隔日沖/共識席位)的代號 → 名稱;富邦依分點頁只需抓這些。"""
+    """專家池全部核心分點 + /chips 用到的小哥點名分點(關鍵分點/公司派/地緣/高手)的代號 → 名稱;富邦依分點頁只需抓這些。
+    2026-10-21：/chips 不再用全域隔日沖席位表(chip_seats.yaml 已移除),改讀 config/xiaoge_named_branches.json(小哥點名、逐股)。"""
     out: dict[str, str] = {}
     for spec in POOLS.values():
         out.update(spec.core)
     try:
-        import yaml
-
-        seats = yaml.safe_load((ROOT / "config" / "chip_seats.yaml").read_text(encoding="utf-8")).get("seats") or {}
-        for tid, v in seats.items():
-            out.setdefault(str(tid), str((v or {}).get("name") or tid))        # 代號大小寫是不同分點,不轉小寫
-    except Exception as exc:  # noqa: BLE001 — 席位表缺檔/格式錯只影響席位可見度,不擋補檔
-        print(f"  WARN chip_seats.yaml 載入失敗: {exc}")
+        named = json.loads((ROOT / "config" / "xiaoge_named_branches.json").read_text(encoding="utf-8"))["branches"]
+        for e in named:
+            if e.get("role") in ("關鍵分點", "公司派", "地緣", "高手"):
+                for tid in e.get("ids") or []:
+                    out.setdefault(str(tid), str(e["name"]))                    # 代號大小寫是不同分點,不轉小寫
+    except Exception as exc:  # noqa: BLE001 — 名單缺檔/格式錯只影響點名分點可見度,不擋補檔
+        print(f"  WARN xiaoge_named_branches.json 載入失敗: {exc}")
     return out
 
 

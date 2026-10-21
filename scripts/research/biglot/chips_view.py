@@ -1,7 +1,7 @@
-"""籌碼 SOP（/chips）：只讀 chip_sop.py 每日落地的 chip_sop_latest.json，不連外、不寫檔。
+"""籌碼 SOP（/chips，權證小哥版）：只讀 chip_sop.py 每日落地的 chip_sop_latest.json，不連外、不寫檔。
 
-分組＝SOP 第一關：買方集中／強賣／中性／資料不全（門檻見快照 params）。
-隔日沖席位只做標示，不加權；一致度是個數（0–4），不是分數。
+分組＝SOP 第一關：買方集中／強賣／中性／資料不全（主力集中度門檻見快照 params）。
+位置（布林）、連續、規則亮燈、隔日沖（逐股）、小哥點名分點都來自快照；規格見 docs/warrant-xiaoge/chip-sop-spec.md。
 頁面上所有數值門檻（說明文字、分組標籤、表頭）一律讀快照的 params，這裡不寫死數字。
 """
 from __future__ import annotations
@@ -21,17 +21,15 @@ esc = html_mod.escape
 
 
 def _g(v) -> str:
-    return "?" if v is None else f"{v:g}"
+    if v is None:
+        return "?"
+    return v if isinstance(v, str) else f"{v:g}"
 
 
 def _fill(text: str, p: dict) -> str:
     """把 {key} 換成快照 params 的值（比例類換成百分數）；沒有的鍵顯示 ?，不會偷用預設值。"""
-    vals = {k: _g(v) for k, v in p.items() if not isinstance(v, list)}
+    vals = {k: (esc(v) if isinstance(v, str) else _g(v)) for k, v in p.items() if not isinstance(v, list)}
     vals["complete_pct"] = _g(p["complete_ratio"] * 100) if "complete_ratio" in p else "?"
-    vals["reversal_pct"] = _g(p["flip_reversal"] * 100) if "flip_reversal" in p else "?"
-    vals["dominant_pct"] = _g(p["dominant_share"] * 100) if "dominant_share" in p else "?"
-    vals["foreign_pct"] = _g(p["foreign_share"] * 100) if "foreign_share" in p else "?"
-    vals["consensus_big"] = "＋".join(esc(str(x)) for x in p.get("consensus_big", [])) or "?"
     for k, v in vals.items():
         text = text.replace("{" + k + "}", v)
     return re.sub(r"\{(?!(?:d0|prev|next|asof)\})[a-z_]+\}", "?", text)
@@ -49,7 +47,6 @@ table.cz td{padding:4px 7px;border-bottom:1px solid #222;text-align:right;white-
 table.cz td.l,table.cz th.l{text-align:left}
 table.cz td.grp{background:#1d1d24;color:#d2a8ff;font-weight:600;padding:7px;text-align:left}
 .up{color:var(--price-up,#ff7b72)}.dn{color:var(--price-down,#3fb950)}.dim{color:#6e7681;font-size:10px}
-.seat-h{color:#ffa657;font-weight:700}.seat-l{color:#8b949e}.seat-u{color:#d2a8ff}
 .fl{display:inline-block;margin:0 2px 2px 0;padding:0 5px;border-radius:4px;background:#21262d;color:#c9d1d9;font-size:10px}
 .note{color:#8b949e;font-size:11px;line-height:1.7;margin:10px 0;padding:8px 10px;background:#141414;border-left:3px solid #333}
 .note summary{cursor:pointer;color:#c9d1d9}.note p{margin:6px 0}
@@ -57,8 +54,8 @@ table.cz td.grp{background:#1d1d24;color:#d2a8ff;font-weight:600;padding:7px;tex
 .fresh.bad{border-left-color:var(--status-error,#f85149);line-height:1.8}
 .alert{margin:8px 0;padding:8px 12px;background:#2a1215;border-left:4px solid var(--status-error,#f85149);font-size:12px;line-height:1.8}
 .alert b{color:#ff9b9b}
-tr.flip3 td{background:#2a1215}
-.flip3tag{display:inline-block;padding:0 5px;border-radius:4px;background:#b62324;color:#fff;font-size:10px;font-weight:700}
+.fl.buy{background:#3b1d1f;color:#ff9b9b}.fl.sell{background:#12301d;color:#7ee2a0}.fl.neutral{background:#21262d;color:#8b949e}
+.role{color:#d2a8ff;font-size:10px}.hab{color:#ffa657;font-size:10px}
 .nav{margin:6px 0;font-size:12px;line-height:2}.nav a{margin-right:4px}.nav .cur{color:#fff;background:#1f6feb;padding:1px 6px;border-radius:4px;margin-right:4px}
 .pend{color:#6e7681;font-size:10px}
 .gsum{color:#8b949e;font-weight:400;font-size:11px;margin-left:10px}
@@ -92,7 +89,15 @@ def _num(v, fmt="{:+,.0f}", suffix="") -> str:
     return "—" if v is None else f"<span class='{_cls(v)}'>{fmt.format(v)}{suffix}</span>"
 
 
-def _period(w) -> str:
+SCHEMA_MIN = 4
+_ZONE = {"above_ub": "上軌之上", "ma_to_ub": "月線~上軌", "lb_to_ma": "下軌~月線", "below_lb": "下軌之下"}
+
+
+def _w(r: dict, n: int) -> dict | None:
+    return (r.get("win") or {}).get(str(n))
+
+
+def _cell_w(w: dict | None) -> str:
     if not w:
         return "—"
     return f"{_num(w['conc_pct'], '{:+.1f}', '%')}<div class='dim'>{w['main_lots']:+,} 張</div>"
@@ -104,20 +109,56 @@ def _it(w) -> str:
     return f"{_num(w['lots'])}<span class='dim'> {w['pct']:+.1f}%量</span>" if w["pct"] is not None else _num(w["lots"])
 
 
-def _seats(items: list[dict]) -> str:
+def _boll(r: dict) -> str:
+    b = r.get("boll")
+    if not b:
+        return "<span class='dim'>日 K 不足</span>"
+    arrow = "<span class='up'>月線↑</span>" if b["ma_dir"] == "up" else "<span class='dn'>月線↓</span>"
+    pos = "高檔" if b["upper_half"] else "低檔"
+    extra = ""
+    if r.get("bias_year") is not None:
+        extra = f"<div class='dim'>乖離年線 {r['bias_year']:+.0f}%</div>"
+    return (f"<div>帶寬 {b['bw_pct']:.1f}%（{esc(b['bw_level'])}）</div><div>{arrow} {b['ma_slope_pct']:+.2f}%</div>"
+            f"<div class='dim'>{_ZONE.get(b['zone'], '')} · {pos}</div>{extra}")
+
+
+def _streak(r: dict) -> str:
+    s = r.get("streak2")
+    if not s:
+        return ""
+    prev = s.get("prev_conc_pct")
+    lab = "連續買超" if s.get("buy") else "連續賣超" if s.get("sell") else ""
+    out = f"<div class='dim'>前一日 {prev:+.1f}%</div>" if prev is not None else ""
+    return (f"<div><span class='fl {'buy' if s.get('buy') else 'sell'}'>{lab}</span></div>" if lab else "") + out
+
+
+def _seats(items: list[dict], habit: list[dict] | None = None) -> str:
+    hab = {h["name"]: h for h in habit or []}
     out = []
     for s in items:
-        tag, cls = "", ""
-        seat = s.get("seat")
-        if seat:
-            if seat["level"] == "high":
-                tag, cls = f"【沖{seat['flip']:.2f}】", "seat-h"
-            elif seat["level"] == "low":
-                tag, cls = "(沖低)", "seat-l"
-            else:
-                tag, cls = "【沖?】", "seat-u"
-        out.append(f"<div class='{cls}'>{esc(s['name'])} {s['lots']:+,}{tag}</div>")
+        extra = ""
+        if s.get("named"):
+            extra += f" <span class='role'>小哥點名·{esc(s['named'])}</span>"
+        h = hab.get(s["name"])
+        if h and h["events"]:
+            extra += f" <span class='hab' title='這檔股票近期：大買 {h['events']} 次、隔日沖 {h['flips']} 次'>隔日沖 {h['flips']}/{h['events']}</span>"
+        out.append(f"<div>{esc(s['name'])} {s['lots']:+,}{extra}</div>")
     return "".join(out) or "—"
+
+
+def _named_cell(r: dict) -> str:
+    items = r.get("named") or []
+    if not items:
+        return "—"
+    out = []
+    for n in items:
+        lots = "<span class='dim'>未入前段名單</span>" if n["lots"] is None else _num(n["lots"])
+        out.append(f"<div>{esc(n['name'])} <span class='role'>{esc(n.get('role') or '')}</span> {lots}</div>")
+    return "".join(out)
+
+
+def _rules_cell(r: dict) -> str:
+    return "".join(f"<span class='fl {esc(x['side'])}' title='{esc(x['id'])}'>{esc(x['label'])}</span>" for x in r.get("rules") or []) or "—"
 
 
 def _next(r: dict) -> str:
@@ -128,54 +169,6 @@ def _next(r: dict) -> str:
             f" · 盤中 {_num(nx['intraday_pct'], '{:+.2f}', '%')}</div>")
 
 
-def _cons(c: dict | None) -> str:
-    if not c:
-        return "—"
-    head = f"{c['agree']}/{c['known']}" if c["known"] else "—"
-    notes = [f"{n}票{lab}" for k, lab in (("abstain", "棄權"), ("missing", "缺資料")) if (n := c.get(k))]
-    return head + (f"<div class='dim'>{'、'.join(notes)}</div>" if notes else "")
-
-
-def _flip3_cell(r: dict) -> str:
-    f = r.get("flip3")
-    if not f or not f["items"]:
-        return "—"
-    out = []
-    for i in f["items"]:
-        mark = ""
-        if i["sell_rank"] and i["sell_rank"] <= f["k"]:
-            mark = f" <span class='flip3tag'>{_md(r['date'])}賣超第{i['sell_rank']}</span>"
-        elif i["sell_rank"]:
-            mark = f" <span class='dim'>{_md(r['date'])}轉賣</span>"
-        out.append(f"<div>{esc(i['name'])} <span class='up'>{i['prev_lots']:+,}</span>→{_num(i['now_lots'])}{mark}</div>")
-    return "".join(out)
-
-
-def _consensus_cell(r: dict) -> str:
-    c = r.get("consensus")
-    if not c:
-        return "—"
-    out = []
-    for side, cls, lab in (("buy", "up", "買"), ("sell", "dn", "賣")):
-        if c.get(f"{side}_hit"):
-            names = "、".join(f"{esc(x['name'])} {x['lots']:+,}" for x in c[side])
-            out.append(f"<div><span class='{cls}'>共識{lab}超 {len(c[side])}</span> <span class='dim'>{names}</span></div>")
-    return "".join(out) or "—"
-
-
-def _consensus_alert(rows: list[dict], p: dict, d0: str | None = None) -> str:
-    lines = []
-    for side, lab in (("buy", "買超"), ("sell", "賣超")):
-        hits = [(r, r["consensus"][side]) for r in rows if (r.get("consensus") or {}).get(f"{side}_hit")]
-        hits.sort(key=lambda h: -len(h[1]))
-        if hits:
-            segs = "；".join(f"<b>{esc(r['sid'])} {esc(r['name'])}</b>（{'、'.join(esc(x['name']) + f' {x['lots']:+,}' for x in it)}）" for r, it in hits)
-            lines.append(f"<div><b>共識{lab} {len(hits)} 檔</b>：{segs}</div>")
-    if not lines:
-        return _fill("<div class='fresh'>席位共識：" + _md(d0) + " 無（名單席位同方向淨量 ≥{consensus_lots} 張且 ≥{consensus_min_seats} 個）</div>", p)
-    return _fill("<div class='fresh'>席位共識 " + _md(d0) + "（名單席位同方向淨量 ≥{consensus_lots} 張、≥{consensus_min_seats} 個；只有 {consensus_big} 不算）", p) + f"{''.join(lines)}</div>"
-
-
 def _row(r: dict) -> str:
     name = f"<b>{esc(r['sid'])}</b> {esc(r['name'])}"
     price = ""
@@ -184,22 +177,17 @@ def _row(r: dict) -> str:
     it = r.get("it") or {}
     if r.get("status") != "ok":
         why = {"tape_incomplete": "分點最新日未完整", "stale_price": "資料日無日 K"}.get(r.get("status"), "無價")
-        return (f"<tr><td class='l'><a href='/stock?sid={esc(r['sid'])}'>{name}</a>{price}</td><td colspan='3' class='l dim'>{why}</td>"
-                f"<td>{_it(it.get('d1'))}<div class='dim'>5d {_it(it.get('d5'))}</div></td><td colspan='5'></td><td>{_next(r)}</td></tr>")
-    day = r["day"]
-    diff = f"<div class='dim'>家數差 {day['diff_cnt']:+,}</div>" if day.get("diff_cnt") is not None else ""
-    mode = "<div class='dim' title='FinMind 停用後分點只剩買超/賣超前段名單;主力日張數相同,集中度改除以成交量,家數差不提供'>前段分點口徑</div>" if r.get("tape_mode") == "top" else ""
-    main = f"{_num(day['conc_pct'], '{:+.1f}', '%')}<div class='dim'>{day['main_lots']:+,} 張</div>{diff}{mode}"
-    flags = "".join(f"<span class='fl'>{esc(f)}</span>" for f in r["flags"]) or "—"
-    cons = _cons(r.get("consistency"))
+        return (f"<tr><td class='l'><a href='/stock?sid={esc(r['sid'])}'>{name}</a>{price}</td><td class='l'>{_boll(r)}</td><td colspan='3' class='l dim'>{why}</td>"
+                f"<td>{_it(it.get('d1'))}<div class='dim'>5d {_it(it.get('d5'))}</div></td><td colspan='4'></td><td>{_next(r)}</td></tr>")
     itcell = f"{_it(it.get('d1'))}<div class='dim'>5d {_it(it.get('d5'))}</div><div class='dim'>20d {_it(it.get('d20'))}</div>"
     if r.get("it_missing"):
         itcell += "<div class='dim'>缺最新日</div>"
-    strict = bool((r.get("flip3") or {}).get("strict"))
-    return (f"<tr{' class=flip3' if strict else ''}><td class='l'><a href='/stock?sid={esc(r['sid'])}'>{name}</a>{price}</td><td>{main}</td>"
-            f"<td>5d {_period(r['d5'])}<div style='height:3px'></div>20d {_period(r['d20'])}</td><td>{itcell}</td>"
-            f"<td class='l'>{_seats(r['buyers'])}</td><td class='l'>{_seats(r['sellers'])}</td><td class='l'>{_consensus_cell(r)}</td><td class='l'>{_flip3_cell(r)}</td>"
-            f"<td class='l'>{flags}</td><td>{cons}</td><td>{_next(r)}</td></tr>")
+    mode = "<div class='dim' title='FinMind 停用後分點只剩買超/賣超前段名單；主力日張數相同，集中度除以成交量'>前段分點口徑</div>" if r.get("tape_mode") == "top" else ""
+    return (f"<tr><td class='l'><a href='/stock?sid={esc(r['sid'])}'>{name}</a>{price}</td><td class='l'>{_boll(r)}</td>"
+            f"<td>{_cell_w(_w(r, 1))}{_streak(r)}{mode}</td>"
+            f"<td>5d {_cell_w(_w(r, 5))}<div style='height:3px'></div>10d {_cell_w(_w(r, 10))}<div style='height:3px'></div>20d {_cell_w(_w(r, 20))}</td>"
+            f"<td>{itcell}</td><td class='l'>{_seats(r['buyers'], r.get('habit'))}</td><td class='l'>{_seats(r['sellers'])}</td>"
+            f"<td class='l'>{_named_cell(r)}</td><td class='l'>{_rules_cell(r)}</td><td>{_next(r)}</td></tr>")
 
 
 def _group_of(r: dict) -> str:
@@ -225,26 +213,25 @@ def _group_summary(grp: list[dict], base: dict | None = None) -> str:
 
 
 def _cal_dates(rows: list[dict], cal: dict | None, asof: str | None = None) -> tuple:
-    """(資料日, 前一交易日, 下一交易日)：有快照日曆就照讀，舊快照才由各列推斷。下一交易日只在已有隔日資料時才顯示。"""
+    """(資料日, 前一交易日, 下一交易日)：有快照日曆就照讀。下一交易日只在已有隔日資料時才顯示。"""
     if cal:
         has_next = any(r.get("next") for r in rows)
         return cal.get("asof"), cal.get("prev"), cal.get("next") if has_next else None
-    return (asof or _mode(r.get("date") for r in rows), _mode((r.get("flip3") or {}).get("prev_date") for r in rows),
-            _mode((r.get("next") or {}).get("date") for r in rows))
+    return (asof or _mode(r.get("date") for r in rows), None, _mode((r.get("next") or {}).get("date") for r in rows))
 
 
 def render_table(rows: list[dict], asof: str | None = None, cal: dict | None = None, params: dict | None = None) -> str:
     p = params or {}
     d0, prev, nxt = _cal_dates(rows, cal, asof)
-    k = _g(p.get("flip_k"))
     nx_head = f"{_d(nxt)} 收盤漲跌<br>對 {_md(d0)} 收盤 · 跳空 · 盤中" if nxt else f"下一交易日收盤漲跌<br>（尚未收盤）· 對 {_md(d0)} 收盤"
-    head = (f"<tr><th class='l'>代號名稱</th><th>主力 {_md(d0)}<br>集中度 / 張</th><th>主力 5日 / 20日<br>（至 {_md(d0)}）集中度 / 張</th><th>投信 {_md(d0)} / 5d / 20d<br>張 · 佔量</th>"
-            f"<th class='l'>買方前{_g(p.get('seats_shown'))}（張）</th><th class='l'>賣方前{_g(p.get('seats_shown'))}（張）</th><th class='l'>席位共識</th><th class='l'>{_d(prev)} 買超前{k}<br>→ {_md(d0)} 淨張數</th><th class='l'>旗標</th><th>一致度</th>"
-            f"<th>{nx_head}</th></tr>")
+    head = (f"<tr><th class='l'>代號名稱</th><th class='l'>位置（布林）<br>帶寬 / 月線 / 區位</th><th>主力 {_md(d0)}<br>集中度 / 張 · 連續</th>"
+            f"<th>主力 5 / 10 / 20 日<br>集中度 / 張</th><th>投信 {_md(d0)} / 5d / 20d<br>張 · 佔量</th>"
+            f"<th class='l'>買方前{_g(p.get('seats_shown'))}（張）<br>· 隔日沖紀錄（該股）</th><th class='l'>賣方前{_g(p.get('seats_shown'))}（張）</th>"
+            f"<th class='l'>小哥點名分點<br>（該股，今日淨張）</th><th class='l'>小哥規則亮燈</th><th>{nx_head}</th></tr>")
     body = []
     base = _next_stats(rows)
     if base:
-        body.append(f"<tr><td class='grp' colspan='11'>全體基準 · {len(rows)} 檔{_group_summary(rows)}<span class='gsum'>各組請對照此列，扣掉大盤當天漲跌</span></td></tr>")
+        body.append(f"<tr><td class='grp' colspan='10'>全體基準 · {len(rows)} 檔{_group_summary(rows)}<span class='gsum'>各組請對照此列，扣掉大盤當天漲跌</span></td></tr>")
     for key, label in _groups(p):
         grp = [r for r in rows if _group_of(r) == key]
         if not grp:
@@ -253,26 +240,28 @@ def render_table(rows: list[dict], asof: str | None = None, cal: dict | None = N
             grp.sort(key=lambda r: r["day"]["conc_pct"])
         elif key in ("buy", "neutral"):
             grp.sort(key=lambda r: -abs(r["day"]["conc_pct"]))
-        body.append(f"<tr><td class='grp' colspan='11'>{label} · {len(grp)} 檔{_group_summary(grp, base)}</td></tr>")
+        body.append(f"<tr><td class='grp' colspan='10'>{label} · {len(grp)} 檔{_group_summary(grp, base)}</td></tr>")
         body.extend(_row(r) for r in grp)
     return f"<table class='cz'>{head}{''.join(body)}</table>"
 
 
-NOTE = """<details class='note'><summary>怎麼讀（SOP）</summary>
-<p><b>主力日</b>＝分點前{top_n}買超＋前{top_n}賣超（張）；集中度％＝主力 ÷ 當日分點買進合計（≈成交量）。期間版先把窗內各分點淨額加總再取前{top_n}。
-只有分點買進 ≥ {complete_pct}% 成交量且 ≥{min_branches} 分點的日子才算完整；5日／20日只用到最新日為止連續完整的交易日，不足顯示「—」。
-分組：主力日集中度 ≥ +{band_pct}% 為買方集中、&lt; −{band_pct}% 為強賣；成交量 &lt; {thin_lots} 張標「量小」；單一分點佔買超前{top_n}合計 ≥ {dominant_pct}% 標「單點主導」、外資分點 ≥ {foreign_pct}% 標「外資主導」。</p>
-<p><b>前段分點口徑（2026-10-17 起）</b>：FinMind 停用後，分點來源改為富邦行情站，每檔只有買超前{top_n}與賣超前{top_n}名（加上專家／隔日沖席位）。主力日張數與全分點版相同（本來就只用前{top_n}名），集中度改除以當日成交量；
-5日／20日改為「逐日主力加總 ÷ 窗內成交量」（沒有每個分點每天的淨額可跨日加總）；家數差不提供；完整日＝買超與賣超分點各 ≥{top_min_side} 個。標「前段分點口徑」的列屬此口徑，之前的日子仍是全分點算法，兩者不要直接比較期間版。</p>
-<p><b>投信</b>含被動 ETF 申贖，5日佔量 ≥ {it_act_pct}% 才算有動作。<b>一致度</b>＝5日主力、20日主力、投信5日、當日價格四票中與當日主力同向的「同意票／有效票」，只是個數、不是分數。
-三態：未達死區（期間主力 |集中度| &lt; {period_dead_pct}%、投信5日佔量 &lt; {it_act_pct}%、|漲跌幅| &lt; {price_dead_pct}%）＝棄權，資料缺＝缺資料，兩者皆不進分母，卡片會標出幾票；
-家數差只顯示（街口六指標檢定其方向反轉，不計入一致度）。</p>
-<p><b>{prev} 買超前{flip_k} → {d0} 淨張數</b>＝{prev}（{d0} 的前一個交易日）淨買超前{flip_k}名的分點，在 {d0} 的淨張數；落在 {d0} 淨賣超前{flip_k}名者標紅並列於頁首（「轉賣」＝僅轉為淨賣超）；前一個交易日的分點也須完整才比對。
-<b>{next} 收盤漲跌</b>＝{next} 收盤對 {d0} 收盤（跳空＝{next} 開盤對 {d0} 收盤、盤中＝{next} 開盤到收盤），{next} 資料入庫後由排程補上；各組平均僅描述，
-41檔×129天檢定顯示 SOP 欄位對下一交易日收盤無獨立預測力（chips-sop-next-close-verdict-20261013）。</p>
-<p><b>席位共識</b>＝名單席位當日同方向淨買／賣 ≥{consensus_lots} 張且 ≥{consensus_min_seats} 個（只有 {consensus_big} 不算，兩家量大太容易同向）。席位本來就是下一交易日賣的，共識買超的意義是「下一交易日可能有賣壓」，不是看多；30天回看兩方向下一交易日報酬都無差異。</p>
-<p><b>隔日沖席位</b>（【沖x.xx】＝近期該分點當日淨買超前{flip_top_k}且 ≥{flip_min_lots} 張後，下一交易日淨賣回 ≥{reversal_pct}% 的比率，≥ {flip_high_threshold} 標【沖】，名單重建於 {asof}，會隨習慣改變、定期重建）僅供提示，
-分點選擇在歷史檢定中不優於隨機（159檔×22窗），不加權、不當進出場訊號。地緣券商目前沒有資料，未納入。</p></details>"""
+NOTE = """<details class='note'><summary>怎麼讀（小哥版 SOP）</summary>
+<p><b>主力</b>＝分點前{top_n}買超＋前{top_n}賣超（張）；集中度％＝主力 ÷ 成交量（小哥畫面：買超前15合計＋賣超前15合計，÷區間成交量）。窗口 {windows} 日（軟體欄位主1／主5／主10、籌碼K線20日籌碼集中）。
+分組：當日集中度 ≥ +{band_pct}%（V6：至少 10%）為買方集中、&lt; −{band_pct}% 為強賣。<b>連續</b>＝連續 {streak_days} 個交易日都達門檻。</p>
+<p><b>位置（布林通道）</b>：中軌＝20日均線（月線），上下軌 ±2σ；帶寬＝上軌÷下軌−1：&lt;{bw_very_narrow_pct}% 非常窄、≤{bw_narrow_pct}% 窄、{bw_narrow_pct}–{bw_wide_pct}% 正常、≥{bw_wide_pct}% 寬。
+月線方向＝今日月線 vs 昨日月線。高檔＝收盤在月線之上、低檔＝在月線之下。每條規則亮燈都帶位置條件（小哥：先分多空、再從那一格挑招）。</p>
+<p><b>規則亮燈</b>（滑鼠移上去看書的規則編號）：R03 開布林＋主力大買（昨日帶寬窄、今日帶寬擴大且上軌上彎、收盤在月線上，為操作化）；R14 大帶寬觸下軌＋主力買；R24 主力連續買超（低檔更重）；
+R41 主力連續賣超；R22 主投同買／同賣，主賣投買不算；R11／R12 高檔出貨池（月線下彎＋主力賣＋大帶寬，或乖離年線 &gt;{high_out_bias_pct}%）、R13 反彈到月線上＝逃命點；R16a 短線空頭；
+R21c 高檔大分點狂賣（賣超第一名淨賣 ≥ 當日量 {big_sell_share_pct}%，書未給數字，沿用大買事件門檻）；R21b 隔日沖慣犯大買；S17 隔日空候選（高檔出貨池＋收紅＋慣犯大買）；R27 量小（20日均量 &lt; {thin_lots} 張）。</p>
+<p><b>隔日沖（逐股看紀錄）</b>：今日該股買超前{habit_topn}且 ≥{habit_minsh_pct}% 量的分點，查它在<b>這檔股票</b>近 {habit_days} 日的大買事件，隔日賣出 ≥{habit_alpha} 倍淨買算一次隔日沖，顯示「次數／事件」。
+不給分點貼全域標籤（小哥：同分點在不同股不通用）。與 /inventory 的 M07／M09 共用同一支程式。全市場檢定：慣犯隔天確實更常賣，但「慣犯大買→隔天黑 K」的價格面不成立（見 flip-habit-study-results）。</p>
+<p><b>小哥點名分點</b>：書與直播點名過這檔股票的分點（關鍵分點、公司派、地緣、高手…；來源 key-branches.json），顯示今日淨張數；「未入前段名單」＝不在買超／賣超前 {top_n} 名，不是 0。
+S17 的「大股東賣」只認小哥點名的公司派分點。</p>
+<p><b>前段分點口徑（2026-10-17 起）</b>：FinMind 停用後，分點來源改為富邦行情站，每檔只有買超前{top_n}與賣超前{top_n}名。主力日張數與全分點版相同，集中度除以當日成交量；期間版為「逐日主力加總 ÷ 窗內成交量」；
+完整日＝買超與賣超分點各 ≥{top_min_side} 個。</p>
+<p><b>書有、我們沒資料的</b>：{gaps}</p>
+<p><b>{next} 收盤漲跌</b>＝{next} 收盤對 {d0} 收盤（跳空＝{next} 開盤對 {d0} 收盤、盤中＝{next} 開盤到收盤），資料入庫後由排程補上；各組平均僅描述，
+41檔×129天檢定顯示 SOP 欄位對下一交易日收盤無獨立預測力（chips-sop-next-close-verdict-20261013）。</p></details>"""
 
 
 def snapshot_dates() -> list[str]:
@@ -314,18 +303,18 @@ def _missing_msg(date: str, dates: list[str]) -> str:
     return f"{_d(date)} 無快照：休市日，或該日未產生（目前沒有交易日曆可區分兩者）。可由下方日期列選擇有快照的日子"
 
 
-def _flip_alert(rows: list[dict], cal: dict | None = None, params: dict | None = None) -> str:
-    k = _g((params or {}).get("flip_k"))
-    hits = [r for r in rows if (r.get("flip3") or {}).get("strict")]
-    if not hits:
-        d0, prev, _ = _cal_dates(rows, cal)
-        return f"<div class='fresh'>買超前{k} → 賣超前{k}：{_md(d0)} 無（{_md(prev)} 淨買超前{k}名分點，{_md(d0)} 皆未進入淨賣超前{k}）</div>"
-    lines = []
-    for r in hits:
-        f = r["flip3"]
-        segs = "；".join(f"{esc(i['name'])} {_md(f['prev_date'])} {i['prev_lots']:+,}→{_md(r['date'])} {i['now_lots']:+,}（{_md(r['date'])}賣超第{i['sell_rank']}）" for i in f["items"] if i["sell_rank"] and i["sell_rank"] <= f["k"])
-        lines.append(f"<div><b>{esc(r['sid'])} {esc(r['name'])}</b> · {segs}</div>")
-    return f"<div class='alert'><b>買超前{k} → 賣超前{k} · {len(hits)} 檔</b>（比對 {esc(_d(_mode(h['flip3']['prev_date'] for h in hits)))} → {esc(_d(_mode(h['date'] for h in hits)))}，淨張數）{''.join(lines)}</div>"
+def _rules_alert(rows: list[dict], d0: str | None) -> str:
+    """頁首：今天有哪些規則亮燈（依規則編號彙整股票），一眼看今天該看誰。"""
+    by: dict[str, list[str]] = {}
+    label: dict[str, str] = {}
+    for r in rows:
+        for x in r.get("rules") or []:
+            by.setdefault(x["id"], []).append(f"{r['sid']} {r['name']}")
+            label.setdefault(x["id"], x["label"].split("·")[0].split("（")[0])
+    if not by:
+        return f"<div class='fresh'>小哥規則亮燈：{_md(d0)} 無</div>"
+    lines = "".join(f"<div><b>{esc(rid)} {esc(label[rid])} {len(v)} 檔</b>：{esc('、'.join(v))}</div>" for rid, v in sorted(by.items()))
+    return f"<div class='fresh'>小哥規則亮燈 {_md(d0)}{lines}</div>"
 
 
 def _all_dates_page(dates: list[str]) -> str:
@@ -338,18 +327,20 @@ def render_csv() -> str:
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["asof", "sid", "name", "status", "signal", "close", "chg_pct", "conc_day", "main_lots_day", "conc_5d", "conc_20d", "it_5d_pct",
-                "consistency_agree", "flip3_strict", "flip3_loose", "consensus_buy", "consensus_sell", "flags", "next_date", "next_ret_pct", "next_gap_pct", "next_intraday_pct"])
+    w.writerow(["asof", "sid", "name", "status", "signal", "close", "chg_pct", "conc_1d", "main_lots_1d", "conc_5d", "conc_10d", "conc_20d", "streak_buy", "streak_sell",
+                "bw_pct", "bw_level", "ma_dir", "zone", "it_5d_pct", "rules", "next_date", "next_ret_pct", "next_gap_pct", "next_intraday_pct"])
     for d in snapshot_dates():
         data = _load(d) or {"rows": []}
+        if (data.get("schema") or 0) < SCHEMA_MIN:
+            continue
         for r in data["rows"]:
-            day, d5, d20 = r.get("day") or {}, r.get("d5") or {}, r.get("d20") or {}
-            nx, f, c = r.get("next") or {}, r.get("flip3") or {}, r.get("consistency") or {}
-            w.writerow([d, r["sid"], r["name"], r.get("status"), r.get("signal", ""), r.get("close"), r.get("chg_pct"), day.get("conc_pct"), day.get("main_lots"),
-                        d5.get("conc_pct"), d20.get("conc_pct"), ((r.get("it") or {}).get("d5") or {}).get("pct"), c.get("agree"),
-                        int(bool(f.get("strict"))) if f else "", int(any(i["sell_rank"] for i in f["items"])) if f else "", "|".join(x["name"] for x in (r.get("consensus") or {}).get("buy", [])) if (r.get("consensus") or {}).get("buy_hit") else "",
-                        "|".join(x["name"] for x in (r.get("consensus") or {}).get("sell", [])) if (r.get("consensus") or {}).get("sell_hit") else "",
-                        "|".join(r.get("flags", [])),
+            nx, b, s2 = r.get("next") or {}, r.get("boll") or {}, r.get("streak2") or {}
+            win = r.get("win") or {}
+            g = lambda n, k: (win.get(str(n)) or {}).get(k)  # noqa: E731
+            w.writerow([d, r["sid"], r["name"], r.get("status"), r.get("signal", ""), r.get("close"), r.get("chg_pct"), g(1, "conc_pct"), g(1, "main_lots"),
+                        g(5, "conc_pct"), g(10, "conc_pct"), g(20, "conc_pct"), int(bool(s2.get("buy"))), int(bool(s2.get("sell"))),
+                        b.get("bw_pct"), b.get("bw_level"), b.get("ma_dir"), b.get("zone"), ((r.get("it") or {}).get("d5") or {}).get("pct"),
+                        "|".join(x["id"] for x in r.get("rules", [])),
                         nx.get("date"), nx.get("ret_pct"), nx.get("gap_pct"), nx.get("intraday_pct")])
     return buf.getvalue()
 
@@ -365,19 +356,22 @@ def render_chips(date: str | None = None, show_all: bool = False) -> str:
     elif not data:
         anchor = date if date and not bad_fmt and DATE_RE.match(date) else (dates[-1] if dates else "")
         body, fresh = f"<div class='alert'>{_missing_msg(date, dates) if date else '尚無任何 chip_sop 快照'}</div>", _date_nav(dates, anchor) if anchor else ""
+    elif (data.get("schema") or 0) < SCHEMA_MIN:
+        fresh = _date_nav(dates, str(data["asof"]))
+        body = (f"<div class='alert'>{esc(str(data['asof']))} 是舊口徑快照（schema {data.get('schema')}；2026-10-21 起改為小哥版，欄位不同）。"
+                "重建：<code>chip_sop.py --backfill START END --force</code></div>")
     else:
         warns = "".join(f"<div>⚠ {esc(w)}</div>" for w in data.get("warnings", []))
         cls = "fresh bad" if warns else "fresh"
         fresh = (f"{_date_nav(dates, str(data['asof']))}<div class='{cls}'>資料日 {esc(str(data['asof']))}（{esc(_d(data['asof'])[-2:-1])}） · 產生於 {esc(str(data['generated_at']))}"
                  f"{' · 事後補算（只用 ≤ 資料日的資料）' if (data.get('source') == 'backfill' or data.get('backfilled')) else ''}{warns}</div>"
-                 f"{_flip_alert(data['rows'], data.get('calendar'), data.get('params'))}{_consensus_alert(data['rows'], data.get('params') or {}, str(data['asof']))}")
+                 f"{_rules_alert(data['rows'], str(data['asof']))}")
         try:
             rows, cal = data["rows"], data.get("calendar")
             _, prev, nxt = _cal_dates(rows, cal, str(data["asof"]))
             params = data.get("params") or {}
-            note = (_fill(NOTE, params).replace("{asof}", esc(str(data.get("seats_flip_asof", "")))).replace("{d0}", _md(data["asof"]))
-                    .replace("{prev}", _d(prev))
-                    .replace("{next}", _d(nxt) if nxt else "下一交易日"))
+            params = {**params, "windows": "／".join(str(x) for x in params.get("windows", [])), "gaps": "；".join(data.get("gaps", []))}
+            note = _fill(NOTE, params).replace("{d0}", _md(data["asof"])).replace("{next}", _d(nxt) if nxt else "下一交易日")
             body = note + render_table(rows, str(data["asof"]), cal, params)
         except Exception as exc:  # noqa: BLE001
             body = f"<div class='note'>渲染失敗：{esc(repr(exc))}</div>"
