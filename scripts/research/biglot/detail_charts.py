@@ -290,10 +290,10 @@ def _svg_mini(st, pc):
             if not (540 <= _mod(hm_) <= 810):
                 continue
             x, y = X(hm_), Y(max(min(ep, hi), lo))
-            aligned = (d > 0) != bool(e.get("day_up"))        # 順大勢：買盤竭盡(空)配今日黑K、賣盤竭盡(買)配今日紅K；逆大勢畫空心
+            aligned = (d > 0) != bool(e.get("day_up"))        # 順大勢＝新倉方向（黑K日買盤竭盡、紅K日賣盤竭盡）實心；反向＝平倉/回補提示，畫空心
             side = "買盤竭盡(紅連" if d > 0 else "賣盤竭盡(綠連"
             tip = (f"{hm_}:{int(tt) % 60:02d} {side}{e['n']}→轉色) 價{ep:g} 爆窗{e['nb5']} 窗均{e['avg']:.0f}張 打斷窗{e.get('brk_lots') or 0:.0f}張"
-                   f" {'順' if aligned else '逆'}大勢(今日{'紅' if e.get('day_up') else '黑'}K)")
+                   f" {'順大勢·新倉方向' if aligned else '平倉/回補提示'}(今日{'紅' if e.get('day_up') else '黑'}K)")
             col = "#f0883e" if d > 0 else "#56d4dd"
             fill, stroke = (col, "#0d1117") if aligned else ("none", col)
             if d > 0:

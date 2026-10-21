@@ -135,7 +135,7 @@ def render_grid_frag(sort="ind"):
             tx_row = "<div class='txrow'>" + _tp.replace("<div id='txsrc' hidden>", "<div>", 1) + "</div>"
     except Exception as _e:  # noqa: BLE001
         print(f"[grid-tx] {_e!r}", file=sys.stderr)
-    return tx_row + f"<div class='meta' style='margin:0 0 2px'>更新 {biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 紫=累計權證簽號淨 · 底=量 · <span style='color:#f0883e'>▼橙=買盤竭盡</span> <span style='color:#56d4dd'>▲青=賣盤竭盡</span>(小哥三要件:連次≥10後轉色∧多次爆量(爆窗≥3;單窗大量=該股同時段前10日P90,自訂)∧爆量漲不動(末2窗未創段內新高/低,自訂);日均量&lt;3,000張的標的不標;實心=順大勢(買盤竭盡配今日黑K/賣盤竭盡配紅K),空心=逆大勢)·標注非進出場訊號 · 點格子開詳情</div>" + "".join(cells)
+    return tx_row + f"<div class='meta' style='margin:0 0 2px'>更新 {biglot_dashboard.datetime.now(biglot_dashboard.TZ).strftime('%H:%M:%S')} · 黃=價 · 紅=累計大戶淨 · 藍=累計散戶淨 · 紫=累計權證簽號淨 · 底=量 · <span style='color:#f0883e'>▼橙=買盤竭盡</span> <span style='color:#56d4dd'>▲青=賣盤竭盡</span>(小哥三要件:連次≥10後轉色∧多次爆量(爆窗≥3;單窗大量=該股同時段前10日P90,自訂)∧爆量漲不動(末2窗未創段內新高/低,自訂);日均量&lt;3,000張的標的不標;實心=順大勢·新倉方向(黑K日買盤竭盡/紅K日賣盤竭盡),空心=平倉·回補提示;打斷窗本身要有量)·標注非進出場訊號 · 點格子開詳情</div>" + "".join(cells)
 
 
 GRID_SHELL = """<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>

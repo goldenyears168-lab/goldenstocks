@@ -1,4 +1,5 @@
 """biglot.xiaoge_cols：小哥原版欄／統計欄／P1 前向帳本的邊界釘樁。"""
+import json
 import re
 import sys
 import tempfile
@@ -55,15 +56,21 @@ class XiaogeColsTest(unittest.TestCase):
         self.assertIn("🔔", html)
 
     def test_flip_label_requires_all_three_elements(self):
-        full = {"d": 1, "n": 12, "nb5": 3, "age": 5.0, "stall": True, "brk_lots": 120.0, "exh": True, "day_up": False}
+        full = {"d": 1, "n": 12, "nb5": 3, "age": 5.0, "stall": True, "brk_ok": True, "brk_lots": 120.0, "exh": True, "day_up": False}
         with mock.patch.object(xg, "_snap", return_value=snap(flip=full)):
             html = body(xg.cell_author_streak("X"))
         self.assertIn("買盤竭盡", html)
-        self.assertNotIn("逆大勢(今日", html)                                  # 今日黑K配買盤竭盡＝順大勢
+        self.assertIn("順大勢·新倉方向", html)                                 # 黑K日的買盤竭盡＝空方新倉方向
+        self.assertNotIn("平倉/回補提示", html)
         counter = dict(full, day_up=True)
         with mock.patch.object(xg, "_snap", return_value=snap(flip=counter)):
-            self.assertIn("逆大勢(今日紅K)", body(xg.cell_author_streak("X")))
-        weak = {"d": 1, "n": 12, "nb5": 1, "age": 5.0, "stall": False, "brk_lots": 3.0, "exh": False}
+            self.assertIn("平倉/回補提示·今日紅K", body(xg.cell_author_streak("X")))    # 紅K日的買盤竭盡＝多單出場提示，不是新倉
+        thinflip = dict(full, brk_ok=False, brk_lots=1.0, exh=False)
+        with mock.patch.object(xg, "_snap", return_value=snap(flip=thinflip)):
+            h2 = body(xg.cell_author_streak("X"))
+        self.assertNotIn("買盤竭盡", h2)
+        self.assertIn("打斷窗量不足", h2)                                       # 打斷窗只有 1 張＝不是『突然轉色』
+        weak = {"d": 1, "n": 12, "nb5": 1, "age": 5.0, "stall": False, "brk_ok": False, "brk_lots": 3.0, "exh": False}
         with mock.patch.object(xg, "_snap", return_value=snap(flip=weak)):
             html = body(xg.cell_author_streak("X"))
         self.assertNotIn("買盤竭盡", html)                                # 只符合『轉色』不得稱竭盡
@@ -74,7 +81,7 @@ class XiaogeColsTest(unittest.TestCase):
         from biglot import streak_live
         streak_live.LOWVOL.add("X")
         try:
-            full = {"d": 1, "n": 12, "nb5": 5, "age": 5.0, "stall": True, "brk_lots": 120.0, "exh": True, "day_up": False}
+            full = {"d": 1, "n": 12, "nb5": 5, "age": 5.0, "stall": True, "brk_ok": True, "brk_lots": 120.0, "exh": True, "day_up": False}
             with mock.patch.object(xg, "_snap", return_value=snap(flip=full)):
                 html = body(xg.cell_author_streak("X"))
         finally:
@@ -82,6 +89,32 @@ class XiaogeColsTest(unittest.TestCase):
         self.assertNotIn("🔔", html)
         self.assertNotIn("竭盡", html)
         self.assertIn("範圍外", html)
+
+    def test_exhaustion_ledger_only_live_nonlowvol_exhaustion_events(self):
+        from biglot import streak_live as sl
+        ev = {"kind": "flip", "t": 13 * 3600 - 10.0, "d": 1, "n": 12, "nb5": 4, "px": 100.0, "avg": 30.0, "stall": True, "brk_ok": True,
+              "brk_lots": 50.0, "day_up": False}
+
+        class FakeDT(sl.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 21, 13, 0, 0)                           # 牆上 13:00
+
+        with tempfile.TemporaryDirectory() as td:
+            sl.EXH_LEDGER = Path(td) / "exh.jsonl"
+            sl._EXH_SEEN.clear()
+            with mock.patch.object(sl, "datetime", FakeDT):
+                sl._on_flip("X", dict(ev, t=9 * 3600.0))                      # 事件時間遠早於牆上＝重放，不寫
+                sl._on_flip("X", dict(ev, brk_ok=False))                      # 打斷窗沒量＝不是竭盡，不寫
+                sl.LOWVOL.add("X")
+                sl._on_flip("X", ev)                                          # 低量標的，不寫
+                sl.LOWVOL.discard("X")
+                self.assertFalse(sl.EXH_LEDGER.exists())
+                sl._on_flip("X", ev)                                          # 即時竭盡事件 → 寫一行
+                sl._on_flip("X", ev)                                          # 同一事件不重複
+            rows = [json.loads(x) for x in sl.EXH_LEDGER.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["sid"], rows[0]["d"], rows[0]["aligned"], rows[0]["source"]), ("X", 1, True, "live"))
 
     def test_ledger_skips_replay_events(self):
         with tempfile.TemporaryDirectory() as td:

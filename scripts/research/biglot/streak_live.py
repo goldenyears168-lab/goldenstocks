@@ -14,10 +14,11 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
-from biglot.streak import StreakTracker
+from biglot.streak import StreakTracker, is_exhaustion
 from stock_db import DEFAULT_DB_PATH
 
 CONT_VOL_RATIO = 0.89
@@ -30,6 +31,37 @@ LOWVOL_LOTS = 3000.0
 THR_DIR = Path(DEFAULT_DB_PATH).parent / "biglot_streak"
 THR_INFO = {"state": "none", "dates": None, "n": 0}
 _RAW_DIR = Path(DEFAULT_DB_PATH).parent.parent / "cache" / "biglot_live_watch"
+
+
+EXH_LEDGER = Path(DEFAULT_DB_PATH).parent / "biglot_forward" / "exhaustion_events.jsonl"
+_EXH_SEEN: set = set()
+
+
+def _on_flip(sid: str, ev: dict) -> None:
+    """竭盡點前向帳本（只記即時事件；啟動時重放舊 raw 的事件距牆上時間 >90 秒不寫，避免重複）。條件＝is_exhaustion ∧ 非低量標的。例外自吞。"""
+    try:
+        if sid in LOWVOL or not is_exhaustion(ev):
+            return
+        n = datetime.now()
+        if (n.hour * 3600 + n.minute * 60 + n.second) - ev["t"] > 90:
+            return
+        day = n.strftime("%Y-%m-%d")
+        key = (day, sid, round(ev["t"]))
+        if key in _EXH_SEEN:
+            return
+        _EXH_SEEN.add(key)
+        EXH_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+        rec = {"date": day, "sid": sid, "t": round(ev["t"], 1), "d": ev["d"], "n": ev["n"], "nb5": ev["nb5"], "avg": round(ev["avg"], 1),
+               "px": ev["px"], "brk_lots": ev.get("brk_lots"), "day_up": ev.get("day_up"),
+               "aligned": (ev["d"] > 0) != bool(ev.get("day_up")),     # 順大勢＝新倉方向；否則是平倉／回補提示
+               "thr_src": "p90" if TRACKER._s.get(sid) and TRACKER._s[sid].thr else "x5", "source": "live", "logged_at": time.time()}
+        with open(EXH_LEDGER, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:  # noqa: BLE001
+        ERR["n"] += 1; ERR["last"] = repr(e)
+
+
+TRACKER.add_listener(_on_flip)
 
 
 def _load_thresholds(sids) -> None:

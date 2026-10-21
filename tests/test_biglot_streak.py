@@ -132,14 +132,14 @@ if __name__ == "__main__":
 
 
 class StreakEventsTest(unittest.TestCase):
-    def _run(self, px_step=0.0, outer=30, n=10, ref=10.0):
+    def _run(self, px_step=0.0, outer=30, n=10, ref=10.0, flip_lots=40):
         trk = StreakTracker()
         trk.set_ref("X", ref)
         px = 100.0
         for k in range(n):
             feed_window(trk, "X", k, outer=outer, px=px)
             px += px_step
-        feed_window(trk, "X", n, inner=40, px=px)       # 綠窗打斷
+        feed_window(trk, "X", n, inner=flip_lots, px=px)       # 綠窗打斷
         trk.advance("X", T0 + 5 * (n + 2))
         return trk
 
@@ -160,6 +160,25 @@ class StreakEventsTest(unittest.TestCase):
         thin = self._run(px_step=0.0, outer=2).events("X")[1]              # 每窗 2 張（<5×均量）→ 量不足
         self.assertLess(thin["nb5"], 3)
         self.assertFalse(is_exhaustion(thin))
+        tie1 = self._run(px_step=0.0, flip_lots=1).events("X")[1]          # 打斷窗只有 1 張＝不是『突然轉色』
+        self.assertTrue(tie1["stall"] and tie1["nb5"] >= 3)
+        self.assertFalse(tie1["brk_ok"])
+        self.assertFalse(is_exhaustion(tie1))
+        self.assertTrue(self._run(px_step=0.0, flip_lots=5).events("X")[1]["brk_ok"])   # 5 張＝門檻（max(5, 2.5×均量)）
+
+    def test_listener_receives_flip_events(self):
+        got = []
+        trk = StreakTracker()
+        trk.add_listener(lambda sid, ev: got.append((sid, ev["kind"], ev["d"])))
+        trk.set_ref("X", 10.0)
+        for k in range(10):
+            feed_window(trk, "X", k, outer=30)
+        feed_window(trk, "X", 10, inner=40)
+        trk.advance("X", T0 + 5 * 12)
+        self.assertEqual(got, [("X", "flip", 1)])
+        trk.reset()
+        feed_window(trk, "X", 0, outer=30)                                 # reset 不清監聽
+        self.assertEqual(len(trk._listeners), 1)
 
     def test_snapshot_flip_carries_exhaustion_flag(self):
         trk = self._run()
