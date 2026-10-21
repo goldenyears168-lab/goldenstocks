@@ -4,7 +4,7 @@
 # Pipeline 腳本：config/pipeline_scripts.yaml（非本檔）
 
 # Phase A–C 收斂（2026-07-09）· archived runner → scripts/research/archive/
-# Phase D（2026-07-09）曾收斂至 0 active；2026-07-23 現況 38 active topics（grep 'status: active'）· 非 pipeline runner 移 archive · strategy 層維護 production
+# Phase D（2026-07-09）曾收斂至 0 active；2026-10-21 現況 active 見 grep（grep 'status: active'）· 非 pipeline runner 移 archive · strategy 層維護 production
 
 version: research-v5
 layer: research
@@ -432,7 +432,7 @@ topics:
 
   chip-orthogonal-rebuild:
     title: 籌碼因子依「單獨顯著→正交→AND 合併」規則重建（使用者方法論裁決）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: is_sweep
     registered: 2026-08-27
     layer: research
@@ -590,7 +590,7 @@ topics:
 
   chen-chip-sameday:
     title: 陳式籌碼 × 專家池大戶同日（L0）對齊
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: is_sweep
     report_dir: reports/research/chen_chip_sameday
     run_scripts:
@@ -622,7 +622,7 @@ topics:
   # Plan SSOT: reports/research/chip-overlays/RESEARCH_PLANS.md
   chip-overlay-ft-strong2-fade:
     title: 外資+投信雙強 · 專家綠燈風險濾網（反指標）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -650,7 +650,7 @@ topics:
 
   chip-overlay-it-rev-finlab:
     title: 投信累計×營收動能／土洋對作 · 綠燈疊加
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -676,7 +676,7 @@ topics:
 
   chip-overlay-confirm-weight:
     title: 法人同向加權／高潮降權 · 軟確認乘數
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -697,7 +697,7 @@ topics:
 
   chip-overlay-dealer-hygiene:
     title: Dealer_self vs Hedging 衛生與避險高潮降權
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P2
@@ -718,7 +718,7 @@ topics:
 
   chip-overlay-finlab-it-revenue:
     title: FinLab 投信×營收動能 月頻複現（PIT create_time）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -741,7 +741,7 @@ topics:
 
   chip-overlay-essence-confirmation:
     title: 籌碼精華＝確認層（分點主訊號 × 法人／融資／集保）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -768,7 +768,7 @@ topics:
 
   chip-overlay-faithful-finmind-follower:
     title: FinMind InstitutionalInvestorsFollower 原協定複現（Abnormal Peak）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -788,7 +788,7 @@ topics:
 
   chip-overlay-faithful-finlab-monthly:
     title: FinLab 月頻法人跟單／土洋對作／三因子 全市場複現
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -807,7 +807,7 @@ topics:
 
   chip-overlay-public-methods-screen:
     title: 公開籌碼方法掃描（FinLab／森洋／連買連賣／高潮反做）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -836,7 +836,7 @@ topics:
 
   chip-overlay-coil-release:
     title: 籌碼蓄能（價靜累積）→ 釋放／突破機率
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -873,7 +873,7 @@ topics:
   # Report: reports/research/chip-overlays/2492_knowledge/chip_price_divergence/REPORT.md
   2492-chip-price-divergence:
     title: 華新科 · 籌碼變動 vs 價格變動回歸／背離（Track 0–3）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -902,7 +902,7 @@ topics:
   # ── 籌碼×價格背離 v2 · 相對市場 · 167 檔複核（2026-07-25）──
   chip-price-divergence-v2:
     title: 籌碼累積線 vs 價格結構背離 · 相對市場 · 多股
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -943,7 +943,7 @@ topics:
   # ── 2492 華新科 · 訂單流價格發現／未反映資訊（2026-07-25）──
   2492-chip-price-impact-v3:
     title: 華新科籌碼×價格 · Flow innovation／價格衝擊／環境條件
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -978,7 +978,7 @@ topics:
   # ── 跨股外資分點 bakeoff · 167 檔（2026-07-25）──
   foreign-desk-universe-bakeoff:
     title: 外資券商分點跨股 vs 官方外資
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -1007,7 +1007,7 @@ topics:
   # ── 2492 · 外資分點 vs 官方外資 bakeoff（2026-07-25）──
   2492-foreign-desk-bakeoff:
     title: 華新科 · 外資券商分點 vs 官方外資預測力
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -1039,7 +1039,7 @@ topics:
   # ── 相對大盤籌碼 · 同價日配對 · 反指標（2026-07-25）──
   market-relative-chip-matched:
     title: 相對大盤外資投信 × 同價日配對 × 反指標
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -1078,7 +1078,7 @@ topics:
   # ── ft3_rel_20 趨勢 vs 水準 · Live TA 欄位驗證（2026-07-25）──
   ft3-rel-20-trend-vs-level:
     title: ft3_rel_20 趨勢 × 價格 · 斜率是否比水準多資訊
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -1158,7 +1158,7 @@ topics:
   # ── 2327 國巨 · 技術面進場階段閘門（盲點突破 · 2026-07-25）──
   2327-ta-stage-entry-gate:
     title: 國巨籌碼綠燈 × 技術階段（Weinstein Stage 2）進場確認
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -1195,7 +1195,7 @@ topics:
   # ── Stage2 多波段驗證（Leave-one-wave · 2026-07-25）──
   2327-ta-stage2-multiwave:
     title: 專家池綠燈 × Stage2 · 多波段 holdout 驗證
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -1250,7 +1250,7 @@ topics:
   # ── 30W × 10W stage_fast 搭配回測（2026-07-25）──
   2327-ta-stage-fast-combo:
     title: 專家池綠燈 × weinstein_stage(30W) × stage_fast(10W) 搭配
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -1280,7 +1280,7 @@ topics:
   # ── 30W × 15W × RRG(L=20)（2026-07-25）──
   2327-ta-stage-horizon-rrg:
     title: 專家池綠燈 × 30W × 15W mid × RRG WMA20
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -1335,7 +1335,7 @@ topics:
   # Plan SSOT: reports/research/chip-overlays/2492_knowledge/SURGE_BRANCH_RESEARCH_PLANS.md
   2492-surge-branch-precursor:
     title: 華新科大漲前1–2日 · 分點買超常客前兆
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -1358,7 +1358,7 @@ topics:
 
   2492-branch-t1-standalone:
     title: 華新科穩定分點席 · standalone T+1
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -1377,7 +1377,7 @@ topics:
 
   2492-chip-branch-fusion:
     title: 華新科相對籌碼 × 大漲前分點 · T+1 融合
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P0
@@ -1400,7 +1400,7 @@ topics:
 
   2492-branch-chip-hygiene:
     title: 華新科分點×籌碼 · 敏感度／輪替／大盤混淆衛生
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     priority: P1
@@ -1419,7 +1419,7 @@ topics:
 
   fubon-xindian-copytrade:
     title: 富邦-新店分點 Copytrade · 門檻×Top-N × L×H×槽位 + swap 對照
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     run_scripts:
       - scripts/research/backfill_fubon_xindian_tape.py
@@ -1496,7 +1496,7 @@ topics:
 
   kgi-chengzhong-copytrade:
     title: 凱基-城中分點 Copytrade · 門檻×Top-N × L×H×槽位 + swap 對照
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     run_scripts:
       - scripts/research/backfill_kgi_chengzhong_tape.py
@@ -1750,7 +1750,7 @@ topics:
 
   dual-branch-copytrade:
     title: 雙分點 Copytrade · 張數/金額門檻 × sj|xd|and|or|sum
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     run_scripts:
       - scripts/research/run_dual_branch_copytrade_sweep.py
@@ -1796,7 +1796,7 @@ topics:
 
   amount-rrg-copytrade:
     title: 金額門檻 × RRG 閘門 · 固定/自適應門檻 Sweep
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     run_scripts:
       - scripts/research/run_amount_rrg_copytrade_study.py
@@ -2008,7 +2008,7 @@ topics:
 
   whale-buy-concentration:
     title: 分點買超集中度 · 單一大戶主導吃貨 vs 對手盤分散（散戶承接推論）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     split_spec: default_is_oos
     run_scripts:
@@ -2056,7 +2056,7 @@ topics:
 
   whale-branch-l1h7-discovery:
     title: 分點層級 L1H7 廣泛篩選 · 尋找新的「優質分點」（比照凱基松山 9217）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     split_spec: default_is_oos
     run_scripts:
@@ -2914,7 +2914,7 @@ topics:
 
   expert-pool-pools-consensus-reverify:
     title: run_expert_pool_watch.py POOLS（2344/8046/8358三檔股票共識池）方法論體檢
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     split_spec: default_is_oos
     run_scripts:
@@ -3007,7 +3007,7 @@ topics:
 
   known-whale-branch-live-signal-validation:
     title: 已知社群公認大戶分點（9227/9801）live-faithful訊號決定性驗證
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     split_spec: default_is_oos
     run_scripts:
@@ -3468,7 +3468,7 @@ topics:
 
   c18acc-open-timing:
     title: C18acc · 開窗時點 NTB_0930 / NTB_0910 / PRIOR_1300
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3493,7 +3493,7 @@ topics:
 
   c18acc-a-vs-c-1300:
     title: C18acc · A PRIOR_1300 vs C snapshot_1300
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3518,7 +3518,7 @@ topics:
 
   c18acc-a-live-proxy:
     title: C18acc · A 能否復刻到 live（PIT proxies）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3541,7 +3541,7 @@ topics:
 
   c18acc-near-close-timeline:
     title: C18acc · 近收盤時間軸 · A 分鐘敏感度 · 隔夜拆解
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3568,7 +3568,7 @@ topics:
 
   c18acc-1320-vs-1330-picks:
     title: C18acc · fresh+mono 13:20 vs 13:30 日名單
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3772,7 +3772,7 @@ topics:
 
   c18acc-adaptive-confirm-allday:
     title: C18acc · 自適應 confirm + 全天可買（簡化）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3820,7 +3820,7 @@ topics:
 
   c18acc-provisional-fresh-stability:
     title: C18acc · 暫定 RRG mono fresh 早→近收穩定度與多次確認
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3844,7 +3844,7 @@ topics:
 
   c18acc-provisional-fresh-decaying-standard:
     title: C18acc · 暫定 fresh 越早門檻越高（標準隨時間遞減）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3868,7 +3868,7 @@ topics:
 
   c18acc-provisional-decaying-early-pnl:
     title: C18acc · 暫定 fresh 提早放行 PnL（遞減門檻 vs 13:20）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3881,7 +3881,7 @@ topics:
 
   c18acc-bench-dd-early-pnl:
     title: C18acc · 大盤自高點回撤門檻 → 提早進場（vs 固定 13:00）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -3986,7 +3986,7 @@ topics:
 
   c18acc-satellite-slot:
     title: C18acc · 主槽 + 衛星槽（候補小倉 5k）· capital-weighted NAV
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: oos_holdout
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -4057,7 +4057,7 @@ topics:
 
   c18acc-swap-margin-ablation:
     title: C18acc · 換倉買方門檻 · seg_last margin 消融 hold-out
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: validation
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -4105,7 +4105,7 @@ topics:
 
   c18acc-swap-rel-accel-confirm:
     title: C18acc · 相對加速門檻 + 換倉 confirm-days（H-BUY-1 / H-BUY-3）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: validation
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -4157,7 +4157,7 @@ topics:
 
   c18acc-swap-sell-gates:
     title: C18acc · 賣方閘 · jerk / 相對弱度（H-SELL-1 / H-SELL-3）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: validation
     parent_strategy: rrg-mono-swap-accel
     run_scripts:
@@ -4338,7 +4338,7 @@ topics:
 
   abc-v3-f1-entry-structure:
     title: ABC v3+F1 · entry-side MV gap sweet-band (+ W3 Improving validation)
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: validation
     parent_strategy: abc-v3-f1-pullback
     split_spec: intraday_is_oos_70_30
@@ -4574,7 +4574,7 @@ topics:
     archive_action: NO_GO_POOL1_ENHANCE
   c18acc-structural-pyramid:
     title: C18acc · structural pyramid add · RP-2 port (underwater_rebound)
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: validation
     parent_strategy: rrg-mono-swap-accel
     split_spec: intraday_is_oos_70_30
@@ -5956,7 +5956,7 @@ topics:
 
   us-tw-divergence-sell-gate:
     title: 美股期貨（NQ/ES）vs 台股大盤偏離 · sell-all 閘門研究
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     report_dir: reports/research/rrg
@@ -5998,7 +5998,7 @@ topics:
 
   us-tw-early-alert-5m:
     title: 開盤後 10–60m TW−NQ 偏離 · 5m 早警報掃瞄（H2 加速 overlay）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     parent: us-tw-divergence-sell-gate
@@ -6028,7 +6028,7 @@ topics:
   # ── US–TW · rolling 10m poll (NOT fixed open+ Nh) ─────────────────────
   us-tw-rolling-10m-poll:
     title: 盤中每10分排程 · TW↔NQ 1分K滾動窗偏離／修復偵測
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: research
     layer: research
     parent: us-tw-divergence-sell-gate
@@ -6144,7 +6144,7 @@ topics:
   # ── Detach Gate · trough-find（接回候選 · Research only）──────────────
   detach-gate-trough-find:
     title: Detach Gate 谷底／接回指標候選（研擬 · 非自動回補）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     parent: us-tw-rolling-10m-poll
@@ -6310,7 +6310,7 @@ topics:
   leading-dip-1m-beat:
     title: Leading Dip · 1m / 1-min poll beat study（vs frozen 5m cov）
     layer: research
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     report_dir: reports/research/rrg
     artifact: reports/research/rrg/20260716_leading_dip_1m_lookback_backtest.md
@@ -6356,7 +6356,7 @@ topics:
   leading-dip-rrg-geometry-replace:
     title: Leading Dip · RRG 圖形篩選器逐腿替代漏斗
     layer: research
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: evidence
     report_dir: reports/research/rrg
     artifact: reports/research/rrg/20260716_leading_dip_rrg_geometry_replace.md
@@ -6395,7 +6395,7 @@ topics:
   leading-dip-orthogonal-compact:
     title: Leading Dip · 三層正交漏斗適配性（效能×效率）
     layer: research
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: evidence
     report_dir: reports/research/rrg
     artifact: reports/research/rrg/20260716_leading_dip_orthogonal_compact.md
@@ -6433,7 +6433,7 @@ topics:
   2327-wma20-bounce-confirm:
     title: 2327 國巨 · 盤中 WMA20 反彈確認濾器（持續性×緩衝幅度）
     layer: research
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: evidence
     report_dir: reports/research/2327-wma20-bounce
     artifact: reports/research/2327-wma20-bounce/20260721_2327_wma20_bounce_confirm.md
@@ -6590,7 +6590,7 @@ topics:
   # SSOT matrix: reports/research/prob_risk/20260721_worth_continuing_research_matrix.md
   detach-gate-graded-sell:
     title: Detach Gate · false-alarm／分級賣（half vs none）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     parent: us-tw-rolling-10m-poll
@@ -6639,7 +6639,7 @@ topics:
 
   us-tw-overnight-next-open-ban-new:
     title: US–TW 隔夜 → 次開禁新開／風險 brief（非 TCP／MiQ）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     parent: us-tw-divergence-sell-gate
@@ -6687,7 +6687,7 @@ topics:
 
   c18acc-internal-timing-deepen:
     title: C18acc · 冠軍內時點加深（E1300／1320／confirm／defer）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     parent_strategy: rrg-mono-swap-accel
@@ -6735,7 +6735,7 @@ topics:
 
   c18acc-vol-position-sizing:
     title: C18acc · 波動部位縮放／add-throttle（非 σ 進場 ban）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     parent_strategy: rrg-mono-swap-accel
@@ -6781,7 +6781,7 @@ topics:
 
   leading-dip-entry-window-risk:
     title: Leading Dip · 進場窗風險節流（optional · cheap）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     related_strategy:
@@ -6823,7 +6823,7 @@ topics:
 
   trend3d-forecast-hunt:
     title: 三日趨勢預測方法掃描（日K＋大盤＋籌碼並行支線）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     report_dir: reports/research/intraday_direction_thermometer/trend3d_hunt_20260723
@@ -6860,7 +6860,7 @@ topics:
 
   intraday-direction-thermometer:
     title: 盤中方向溫度計（短線5分＋開盤守衛＋1h波段＋三日日K/大盤/籌碼）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     report_dir: reports/research/intraday_direction_thermometer
@@ -7431,7 +7431,7 @@ topics:
 
   tx-channel-amp-uncertainty-gate:
     title: TX 通道 · struct_break 進場用振幅／成交量異常度（Mahalanobis）濾網
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     report_dir: reports/research/channel_lab
@@ -8106,7 +8106,7 @@ topics:
 
   tmf-post-channel-signal-sources:
     title: TMF 跳出通道框架 — 全新訊號來源探索
-    status: active  # 2026-08-07 開線；tmf-slow-pattern-cell(ZigZag+通道)與tx-donchian-multiwindow-channel(Donchian/LRC)兩個通道框架皆已窮盡rejected後，改找完全不同的訊號來源
+    status: archived  # 2026-08-07 開線；tmf-slow-pattern-cell(ZigZag+通道)與tx-donchian-multiwindow-channel(Donchian/LRC)兩個通道框架皆已窮盡rejected後，改找完全不同的訊號來源  # 2026-10-21 降級：TMF 整套已移除
     phase: hypothesis
     layer: research
     report_dir: reports/research/tmf_newsignal
@@ -8634,7 +8634,7 @@ topics:
 
   tmf-slow-pattern-cell:
     title: TMF 慢尺度型態 cell（取代 PV16 逐 bar 切換）
-    status: active  # 2026-08-08三度開線（窄範圍）：使用者提出16-slope字典之上的7個「換維度分段」候選，經比對後5個（粗斜率/run-dwell/chop密度/通道位置/加減速）皆已對應到H-SC-COARSE-CATALOG-CAUSAL／H-SC-STRAT-DWELL／H-SC-EDGE-REVERT系／H-SC-ADAPTIVE系等rejected假說，使用者選擇只測真正未測過的2個新維度（n-gram序列、擬合品質gate）——見下方H-SC-NGRAM-SEQUENCE／H-SC-FIT-QUALITY-GATE；不重測已rejected的5個維度，其餘結論（do-not-adopt）維持不變。同日稍晚追加5-agent盲點掃描＋foundation-fix輪：修好484天旗艦cache夜盤23:59截斷bug＋顯著性標籤雙重標準code bug，重跑旗艦顯著性檢定＋讀回孤兒粗分類walk-forward產物——見下方H-SC-NIGHT-COVERAGE-484D／H-SC-COARSE-CATALOG-WALKFORWARD；do-not-adopt結論未變（見H-SC-NIGHT-COVERAGE-484D）
+    status: archived  # 2026-08-08三度開線（窄範圍）：使用者提出16-slope字典之上的7個「換維度分段」候選，經比對後5個（粗斜率/run-dwell/chop密度/通道位置/加減速）皆已對應到H-SC-COARSE-CATALOG-CAUSAL／H-SC-STRAT-DWELL／H-SC-EDGE-REVERT系／H-SC-ADAPTIVE系等rejected假說，使用者選擇只測真正未測過的2個新維度（n-gram序列、擬合品質gate）——見下方H-SC-NGRAM-SEQUENCE／H-SC-FIT-QUALITY-GATE；不重測已rejected的5個維度，其餘結論（do-not-adopt）維持不變。同日稍晚追加5-agent盲點掃描＋foundation-fix輪：修好484天旗艦cache夜盤23:59截斷bug＋顯著性標籤雙重標準code bug，重跑旗艦顯著性檢定＋讀回孤兒粗分類walk-forward產物——見下方H-SC-NIGHT-COVERAGE-484D／H-SC-COARSE-CATALOG-WALKFORWARD；do-not-adopt結論未變（見H-SC-NIGHT-COVERAGE-484D）  # 2026-10-21 降級：TMF 整套已移除
     phase: rejected  # 舊9個交易機制假說的定性不變；本欄要等新2個假說有結論才可能調整
     layer: research
     report_dir: reports/research/channel_lab
@@ -9693,7 +9693,7 @@ topics:
 
   tx-donchian-multiwindow-channel:
     title: TX/TMF 日內 Donchian 通道 — 忠實移植、通道形狀對照、多 window 併行
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     report_dir: reports/research/tx-donchian-regime
@@ -10156,7 +10156,7 @@ topics:
 
   tx-donchian-flat-default-bracket:
     title: TX/TMF Donchian flat-default + 停損停利 bracket 重構（G1正確預先登錄）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     layer: research
     report_dir: reports/research/tx-donchian-regime
@@ -12167,7 +12167,7 @@ topics:
 
   tmf-exit-mechanism-search:
     title: TMF 微型台指 · 新平倉/風控機制搜索（加速度停損 · NQ信心出場 · 跨市場脫鉤防禦性出場）
-    status: active  # 2026-08-12 開線：使用者提出「跌價時能否有其他偵測平倉辦法」
+    status: archived  # 2026-08-12 開線：使用者提出「跌價時能否有其他偵測平倉辦法」  # 2026-10-21 降級：TMF 整套已移除
       # （秒級加速度止損／台指NQ脫鉤止損／NQ領先台指提前平倉），三軌並行研究
     phase: hypothesis
     layer: research
@@ -12872,7 +12872,7 @@ topics:
 
   pair-mean-reversion-tw:
     title: 台股高相關配對的價差均值回歸（起於 9914/9921，需驗證可推廣性）
-    status: active
+    status: archived  # 2026-10-21 降級：對應策略／腳本已移除，無應用
     phase: hypothesis
     registered: 2026-08-21
     run_scripts:

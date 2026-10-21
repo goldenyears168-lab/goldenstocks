@@ -9,15 +9,7 @@ from research_config import load_research_config, load_research_splits
 # Phase D 收斂後 · abc-v3-f1-entry-structure 為首個新開 active topic（2026-07-09）
 # 注意：research topics 會持續新增，這裡只驗證這批 Phase D topics 仍是 active
 # 子集合（不要求 active set 恰好等於這批，避免每次開新 topic 就得改這個測試）。
-PHASE_D_ACTIVE_TOPICS: frozenset[str] = frozenset(
-    {
-        "abc-v3-f1-entry-structure",
-        "c18acc-structural-pyramid",
-        "c18acc-swap-margin-ablation",
-        "c18acc-swap-rel-accel-confirm",
-        "c18acc-swap-sell-gates",
-    }
-)
+PHASE_D_ACTIVE_TOPICS: frozenset[str] = frozenset()
 
 PHASE_A_RETIRED_TOPIC_IDS = frozenset(
     {
