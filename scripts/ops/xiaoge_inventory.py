@@ -40,7 +40,7 @@ METHODS = {
     "M05": ("地板股候選（前一晚名單）", "part_04 §2；手冊 §2 第6點", "今日黑K、量≥20日均量2倍、月線下彎、乖離月線≤該股近500日乖離的5%分位"),
     "M06": ("關鍵分點低檔建倉", "part_03 §3.5", "小哥點名的關鍵分點/地緣/高手/公司派 今日買超前5且≥1%量，且收盤位於3年區間最低25%"),
     "M07": ("隔日沖短空池", "part_04 §4；part_02 2.13", "近5日曾列入M04、今日收紅K、且買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（逐股看紀錄，不看分點整體名聲；大股東賣：缺資料，未判）"),
-    "M09": ("隔日沖慣犯大買（大漲）", "part_12 §三；part_02 2.13", "今日漲幅≥5%、買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（≥1次；≥2次標強）。權證買超/自營比：缺資料"),
+    "M09": ("隔日沖慣犯大買（大漲）", "part_12 §三；part_04 §4.3 步驟九", "今日漲幅≥5%、買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（≥1次；≥2次標強）；周轉率(今日或前一日)≥30% 標高周轉（小哥：隔日沖＋周轉率最高、30%以上最好）。權證買超/自營比：缺資料"),
     "M08": ("純空頭（月線下彎＋主力賣超）", "part_04 §1.1", "月線下彎且主力集中度<0（僅收集池有分點）"),
 }
 
@@ -157,6 +157,15 @@ def habit_of(H: dict, vol_lots_by_day: dict, sid: str, b: str, day: str, minsh=0
     return ev, fl, ex
 
 
+def turnover_info(f: pd.DataFrame, shares_issued) -> dict:
+    """周轉率＝成交股數÷發行股數（小哥：隔日沖＋周轉率最高、30% 以上最好；2026-10-20 直播）。今日與前一日各一，任一≥30% 標 high_turnover。"""
+    if not shares_issued or len(f) < 2:
+        return {"turnover_pct": None, "turnover_prev_pct": None, "high_turnover": None}
+    t0 = float(f.volume.iloc[-1]) / float(shares_issued) * 100
+    t1 = float(f.volume.iloc[-2]) / float(shares_issued) * 100
+    return {"turnover_pct": round(t0, 1), "turnover_prev_pct": round(t1, 1), "high_turnover": bool(max(t0, t1) >= 30)}
+
+
 def market_env(c, day) -> dict:
     d = pd.read_sql_query("select date d, close from daily_bars where code='IX0001' and date<=? order by date desc limit 60", c, params=(day,))
     d = d.sort_values("d").reset_index(drop=True)
@@ -220,6 +229,7 @@ def main():
         return o
 
     hits = {k: [] for k in METHODS}
+    shares = dict(c.execute("select stock_id,shares_issued from stock_shareholding_daily where trade_date=(select max(trade_date) from stock_shareholding_daily)").fetchall())
     HT = habit_table(day); vol_by_day = {}
     ds_ = set(HT["days"])
     for sid_, f_ in hist.items():
@@ -265,7 +275,7 @@ def main():
     for sid, bl in m7.items():
         hits["M07"].append(row(sid, hist[sid], {"branch": "、".join(bl), "major_holder_sell": "缺資料"}))
     for sid, bl in m9.items():
-        hits["M09"].append(row(sid, hist[sid], {"branch": "、".join(t for _, t in bl), "strong": max(f for f, _ in bl) >= 2, "chg_pct": round(float(hist[sid].ret1.iloc[-1]) * 100, 2), "weight": "權證買超/自營比：缺資料"}))
+        hits["M09"].append(row(sid, hist[sid], {"branch": "、".join(t for _, t in bl), "strong": max(f for f, _ in bl) >= 2, "chg_pct": round(float(hist[sid].ret1.iloc[-1]) * 100, 2), "weight": "權證買超/自營比：缺資料", **turnover_info(hist[sid], shares.get(sid))}))
     # 具名分點今日動作（沿用每日筆記本的故事重放）
     stories = []
     nb = NOTE / f"notebook_{day}.json"
@@ -282,7 +292,7 @@ def main():
                         "hits": hits[k]} for k, v in METHODS.items()},
         "price_signal_20d_counts": {k: [int(x) for x in v] for k, v in freq_series.items()},
         "stories_today": stories[:30],
-        "gaps": ["權證買超排名（小哥選股主表）：缺", "大股東賣超/申報轉讓：缺", "集保戶數、營收、殖利率、庫藏股：缺", "分點籌碼條件僅限收集池（流動性前579檔），其餘標 chip=null",
+        "gaps": ["權證買超排名（小哥選股主表）：缺", "大股東賣超/申報轉讓：缺", "集保戶數、營收、殖利率、庫藏股：缺", "委買（掛單）是否過多會殺尾盤、隔天漲停最好殺：盤中資料，未納入（小哥 2026-10-20 直播，待字幕確認含意）", "分點籌碼條件僅限收集池（流動性前579檔），其餘標 chip=null",
                  "地板價用該股近500日乖離5%分位近似（書中為軟體逐檔統計）", "「開布林那一根」以收盤>上軌量化（書中無數字）"],
     }
     OUT.mkdir(parents=True, exist_ok=True)

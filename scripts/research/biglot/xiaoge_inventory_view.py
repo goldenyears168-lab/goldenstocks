@@ -164,6 +164,10 @@ def render_inventory(date: str | None = None) -> str:
         tags = "".join(f"<span class='tag'>{k}</span>" for k in r["m"])
         chip_cell = "<span class='tag'>有</span>" if ch else "<span class='tag chip0'>無</span>"
         gap = []
+        if h.get("high_turnover"):
+            gap.append(f"高周轉 {h.get('turnover_pct')}%／前日 {h.get('turnover_prev_pct')}%")
+        elif h.get("turnover_pct") is not None:
+            gap.append(f"周轉 {h.get('turnover_pct')}%／前日 {h.get('turnover_prev_pct')}%")
         if "M07" in r["m"]:
             gap.append("大股東賣：缺資料")
         if "M01" in r["m"] and h.get("chip_confirm") is None:
