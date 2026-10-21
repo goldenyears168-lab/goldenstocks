@@ -133,6 +133,21 @@ def _followup_html() -> str:
     return t + "</table>"
 
 
+def _tally_html() -> str:
+    p = DIR / "validation_tally.json"
+    if not p.exists():
+        return ""
+    t = json.loads(p.read_text(encoding="utf-8"))
+    h = (f"<h2>預註冊假說計分（前瞻驗證）</h2><div class='note'>假說在 2026-10-21 由 10/20 的觀察形成（形成樣本不計證據）；OOS 從 {esc(t['oos_from'])} 起，目前 <b>{t['oos_days']}</b> 天。"
+         "門檻：≥10 個訊號日且 n≥60 才下「支持／未支持」，同時追蹤 6 個假說，|t|≥2.5 才算強。</div>"
+         "<table><tr><th class='l'>假說</th><th class='l'>內容</th><th>n</th><th>預期</th><th>統計</th><th class='l'>狀態</th></tr>")
+    for k, r in t["hypotheses"].items():
+        stat = (f"{r['share']:.0%}" if r.get("share") == r.get("share") and r.get("share") is not None else
+                (f"{r.get('stat_pp', float('nan')):+.2f}pp t={r.get('t', float('nan')):+.1f}" if r.get("stat_pp") is not None else "—"))
+        h += f"<tr><td class='l'>{k}</td><td class='l'>{esc(r['text'])}</td><td>{r.get('n', 0)}</td><td>{esc(str(r.get('expect', '')))}</td><td>{stat}</td><td class='l'>{esc(r['verdict'])}</td></tr>"
+    return h + "</table>"
+
+
 def render_inventory(date: str | None = None) -> str:
     import biglot_dashboard
 
@@ -200,6 +215,7 @@ def render_inventory(date: str | None = None) -> str:
               f"<td data-v='{'' if conc is None else conc}' class='{cc}'>{'—' if conc is None else f'{conc:+.1f}'}</td><td class='l' data-v='{1 if ch else 0}'>{chip_cell}</td><td class='l'>{note}</td></tr>")
     b.append(t + "</tbody></table>")
     b.append(_followup_html())
+    b.append(_tally_html())
     b.append(_ledger_html())
     b.append("<h2>資料缺口</h2><div class='note'>" + "<br>".join(esc(g) for g in d.get("gaps", [])) +
              "<br>「分點資料：無」的股票，M01／M04／M07／M08 的籌碼條件是<b>無法判定</b>，不是沒出現。</div>")

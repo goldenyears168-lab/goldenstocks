@@ -42,6 +42,7 @@ DATA_DIR="${GOLDENSTOCKS_DATA_DIR:-${HOME}/goldenstocks-data}"
   rc=$?
   echo "[$(date -Iseconds)] inventory rc=${rc}"
   nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_m09_followup.py" || echo "WARN: m09_followup rc=$?"
+  nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_validation_journal.py" || echo "WARN: validation_journal rc=$?"
   nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_ledger.py" --live || echo "WARN: xiaoge_ledger rc=$?"
   if [[ "${rc}" -eq 0 && "${RUN_XIAOGE_INVENTORY_AI:-1}" != "0" ]]; then
     if [[ -r "${DATA_DIR}/.env.schedule" ]]; then source "${DATA_DIR}/.env.schedule"; fi

@@ -91,11 +91,14 @@ def process(c, inv_path: Path) -> list[dict]:
             gid = g.branch_id.astype(str)
             sells = float(g[gid.isin(fl)].sell_lots.sum())
             net_t = float(sum(x["net_lots"] for x in fl.values()))
+            gt = pd.read_parquet(CH / T / "stock_top15.parquet") if (CH / T / "stock_top15.parquet").exists() else pd.DataFrame()
+            gt = gt[gt.stock_id == sid]
+            top_net_T = float((gt.buy_lots - gt.sell_lots).clip(lower=0).sum()) if len(gt) else 0.0
             others = g[~gid.isin(fl)]
             absorb = float((others.buy_lots - others.sell_lots).clip(lower=0).sum()) / vol_n
             r = {"T": T, "N": N, "method": k, "stock": sid, "name": h["name"], "chg_T": h.get("chg_pct"), "turnover_T": h.get("turnover_pct"),
                  "flagged": "、".join(x["name"] for x in fl.values()), "flagged_net_T": net_t, "flagged_sell_N": sells,
-                 "flip_ratio": round(sells / net_t, 2) if net_t else None, "sell_share_pct": round(sells / vol_n * 100, 1), "absorb_pct": round(absorb * 100, 1),
+                 "flip_ratio": round(sells / net_t, 2) if net_t else None, "flag_of_buys_T_pct": round(net_t / top_net_T * 100, 1) if top_net_T else None, "sell_share_pct": round(sells / vol_n * 100, 1), "absorb_pct": round(absorb * 100, 1),
                  "gap_pct": round((nb.open / tc.close - 1) * 100, 2), "oc_pct": round((nb.close / nb.open - 1) * 100, 2), "cc_pct": round((nb.close / tc.close - 1) * 100, 2),
                  "high_pct": round((nb.high / tc.close - 1) * 100, 2), "low_pct": round((nb.low / tc.close - 1) * 100, 2)}
             r.update(intraday_feats(N, sid, float(tc.close)))
