@@ -1,8 +1,10 @@
 """撤單神器（cancel guard）· 只撤單、不下單。
 
-規則（docs/ofi-cancel-prereg-20261021.md 與 2026-10-21 模擬）：被動掛單（新倉）掛出後，
-個股期貨買賣簿中價往『對自己不利』的方向走 ≥ against_ticks（預設 1 tick）→ 通知／撤單。
-  買單：中價下跌 ≥1 tick 為不利；賣單：中價上漲 ≥1 tick 為不利。
+規則（docs/ofi-cancel-prereg-20261021.md 與 2026-10-21 模擬）：被動掛單掛出後，同時滿足兩條才通知／撤單：
+  ① 個股期貨買賣簿中價往『對自己不利』的方向走 ≥ against_ticks（預設 1 tick）
+     （買單：中價下跌；賣單：中價上漲）；
+  ② 你的掛價已經不優於現在的中價（買單：掛價 ≥ 中價；賣單：掛價 ≤ 中價）＝『價格對委託單不利』。
+     掛得離市場很遠的單（例如買價比中價低很多）行情走 1 tick 對它沒影響，不撤。
 模擬：延遲 2 秒時，每筆成交 60 秒後走勢 −0.58 → −0.28 tick；延遲越短越好。
 
 資料（都是現成的，不佔新的富邦連線額度）：
@@ -39,6 +41,7 @@ ORDER_DIR = DATA_DIR / "order"
 CACHE_DIR = DATA_DIR.parent / "cache"
 SWITCH_PATH = ORDER_DIR / "cancel_guard_switch.json"
 STALE_FEED_SEC = 30.0
+UNFAVORABLE_EDGE_TICKS = 0.0       # 掛價相對中價的有利程度 ≤ 此值才算『對委託單不利』
 _MAP_PATH = Path(__file__).resolve().parents[2] / "config" / "taifex_stock_futures_map.json"
 _ROOT_OVERRIDE = {"SFF": "sf"}          # 2383 台光電：sff 目錄是舊命名殘留，現行是 sf
 
@@ -355,7 +358,12 @@ class Guard:
                         if ls == o.sym or not o.sym:
                             if against_ticks(o.sgn, o.ref_mid, (lb + la) / 2, o.tick) < sw["against_ticks"] - 1e-9:
                                 continue
-                        self._trigger(o, mode, sw, ag, wall, now)
+                        # 「對委託單不利」＝你的掛價已不優於現在的中價（買單：掛價 ≥ 中價；賣單：掛價 ≤ 中價）。
+                        # 掛得離市場很遠的單，行情走 1 tick 對它沒影響，不撤（2026-10-21 使用者指出）。
+                        edge_now = o.sgn * (((lb + la) / 2) - o.price) / o.tick
+                        if edge_now > UNFAVORABLE_EDGE_TICKS + 1e-9:
+                            continue
+                        self._trigger(o, mode, sw, ag, wall, now, edge_now)
                         break
         return self.log
 
@@ -370,11 +378,11 @@ class Guard:
         if hist and ((o.sgn > 0 and o.price >= hist[-1][2]) or (o.sgn < 0 and o.price <= hist[-1][1])):
             o.state, o.note = "done", "marketable"
 
-    def _trigger(self, o: OpenOrder, mode: str, sw: dict[str, Any], ag: float, book_wall: float, now: float) -> None:
+    def _trigger(self, o: OpenOrder, mode: str, sw: dict[str, Any], ag: float, book_wall: float, now: float, edge_now: float = 0.0) -> None:
         o.state = "triggered"
         rec = {"event": "trigger", "order_no": o.order_no, "code": o.code, "side": "買" if o.sgn > 0 else "賣", "price": o.price,
                "type": o.otype, "exit_unprotected": o.otype == "Close" and rec_will_cancel(mode, sw), "ref_mid": o.ref_mid,
-               "against_ticks": round(ag, 2), "mode": mode, "detect_lag_s": round(now - book_wall, 3),
+               "against_ticks": round(ag, 2), "edge_now_ticks": round(edge_now, 2), "mode": mode, "detect_lag_s": round(now - book_wall, 3),
                "ts": datetime.fromtimestamp(now, TZ).isoformat(timespec="milliseconds")}
         feed_ok = self._collector_alive(now)
         if mode == "alert" or not feed_ok:

@@ -150,6 +150,17 @@ class CancelGuardTest(unittest.TestCase):
         self.assertEqual(self.g.step(self._sw(enabled=True, auto_cancel=True), False), [])
         self.assertEqual(self.broker.calls, [])
 
+    def test_far_order_not_cancelled_when_market_moves_one_tick(self):
+        self._w(self.bk, [_book(-1, 99.5, 100.0)])
+        self._ev([_order("F1", 0, price=95.0)])                       # 買價 95、中價 99.75：離市場很遠
+        self._w(self.bk, [_book(2, 98.5, 99.0)])                      # 中價跌 1 元（遠超 1 tick），但掛價仍遠低於中價
+        self.assertEqual(self.g.step(self._sw(enabled=True, auto_cancel=True), False), [])
+        self.assertEqual(self.broker.calls, [])
+        self._w(self.bk, [_book(4, 94.0, 94.5)])                      # 中價跌到 94.25，掛價 95 已高於中價 → 對委託單不利
+        recs = self.g.step(self._sw(enabled=True, auto_cancel=True), False)
+        self.assertEqual(recs[0]["action"], "cancelled"); self.assertEqual(self.broker.calls, ["F1"])
+        self.assertLessEqual(recs[0]["edge_now_ticks"], 0.0)
+
     def test_collector_dead_never_cancels(self):
         self._setup_buy(); self._w(self.bk, [_book(2, 98.5, 99.0)])
         g = cg.Guard(broker=self.broker, cache_dir=self.tmp, order_dir=self.tmp, clock=lambda: self.now, feed_alive=lambda n: False)
