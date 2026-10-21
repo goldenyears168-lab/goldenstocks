@@ -224,7 +224,11 @@ def resolve_live_futures_symbol(session: FubonSession, root: str) -> tuple[str, 
     fut = session.sdk.marketdata.rest_client.futopt
     data = fut.intraday.tickers(type="FUTURE", exchange="TAIFEX", product=root)
     rows = data if isinstance(data, list) else (data.get("data") or data.get("tickers") or [])
-    today = datetime.now(tz=_TZ).strftime("%Y-%m-%d")
+    now = datetime.now(tz=_TZ)
+    today = now.strftime("%Y-%m-%d")
+    # 結算日（第三個週三）13:30 後該月契約已死：endDate==今天 且已過 13:45 也要排除，
+    # 否則當晚夜盤與隔天凌晨（API 回空時退回快取）會繼續訂已到期的合約（2026-10-21 J6→K6 檢查發現）。
+    expired_today = now.strftime("%H:%M") >= "13:45"
     cands = []
     for r in rows or []:
         sym = str(r.get("symbol") or "")
@@ -232,7 +236,7 @@ def resolve_live_futures_symbol(session: FubonSession, root: str) -> tuple[str, 
         name = str(r.get("name") or sym)
         if not sym.startswith(root):
             continue
-        if end and end < today:
+        if end and (end < today or (end == today and expired_today)):
             continue
         cands.append((end or "9999-99-99", sym, name))
     if not cands:
