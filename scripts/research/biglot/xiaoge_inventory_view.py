@@ -113,6 +113,26 @@ def _ledger_html() -> str:
             + table("即時帳本（每日盤點／筆記本真實命中）", s.get("live"), "剛開始累積：需 T+1 日線入庫後才有成績，約 1 個交易日後出現第一列。"))
 
 
+def _followup_html() -> str:
+    fs = sorted(DIR.glob("m09_followup_20??-??-??.json"))
+    if not fs:
+        return "<h2>隔日追蹤（M09／M07）</h2><div class='note'>尚無：需要 T+1 的分點頁與日線入庫（每晚 22:30 後產生）。</div>"
+    rows = json.loads(fs[-1].read_text(encoding="utf-8")); N = fs[-1].stem.replace("m09_followup_", "")
+    def f(v, spec="{:+.2f}"):
+        return "—" if v is None or v != v else spec.format(v)
+    t = (f"<h2>隔日追蹤：{esc(N)} 的實際走勢（對應前一日命中）</h2><div class='note'>flip＝flagged 隔日沖分點 T+1 賣出 ÷ T 日淨買（≥0.7 即照慣性賣）；賣壓占量＝它們的賣出÷當日成交量；接手＝前15名非 flagged 淨買÷成交量。"
+         "線索（2026-10-21 觀察，n 小）：開盤跳空大者續強、跳空小者容易被倒貨。盤中欄位來自 xiaoge_m09_intraday（試撮價／10:00 相對開盤／曾漲停跌停／開板次數）。</div>"
+         "<table><tr><th class='l'>股票</th><th class='l'>戰法</th><th class='l'>flagged 分點</th><th>flip</th><th>賣壓占量%</th><th>接手%</th><th>跳空%</th><th>開→收%</th><th>收→收%</th>"
+         "<th>試撮%</th><th>10點vs開%</th><th>漲停／跌停／開板</th></tr>")
+    for r in sorted(rows, key=lambda r: (r["method"], r.get("cc_pct") or 0)):
+        flags = "—" if "lu_touched" not in r else f"{'漲停' if r.get('lu_touched') else ''}{'跌停' if r.get('ld_touched') else ''} 開板{r.get('lu_opens', 0)}{' 收漲停' if r.get('close_lu') else ''}"
+        cc = r.get("cc_pct"); cls = "up" if (cc or 0) > 0 else "dn"
+        t += (f"<tr><td class='l'><b>{esc(r['stock'])}</b> {esc(r['name'])}</td><td class='l'>{r['method']}</td><td class='l'>{esc(r['flagged'])}</td>"
+              f"<td>{f(r.get('flip_ratio'), '{:.2f}')}</td><td>{f(r.get('sell_share_pct'), '{:.1f}')}</td><td>{f(r.get('absorb_pct'), '{:.1f}')}</td><td>{f(r.get('gap_pct'))}</td>"
+              f"<td>{f(r.get('oc_pct'))}</td><td class='{cls}'>{f(cc)}</td><td>{f(r.get('trial_gap_pct'))}</td><td>{f(r.get('ret_1000_vs_open_pct'))}</td><td class='l'>{flags}</td></tr>")
+    return t + "</table>"
+
+
 def render_inventory(date: str | None = None) -> str:
     import biglot_dashboard
 
@@ -179,6 +199,7 @@ def render_inventory(date: str | None = None) -> str:
               f"<td data-v='{h['bias20_pct']}'>{h['bias20_pct']:+g}</td><td data-v='{h['vr'] if h['vr'] is not None else ''}'>{'—' if h['vr'] is None else h['vr']}</td>"
               f"<td data-v='{'' if conc is None else conc}' class='{cc}'>{'—' if conc is None else f'{conc:+.1f}'}</td><td class='l' data-v='{1 if ch else 0}'>{chip_cell}</td><td class='l'>{note}</td></tr>")
     b.append(t + "</tbody></table>")
+    b.append(_followup_html())
     b.append(_ledger_html())
     b.append("<h2>資料缺口</h2><div class='note'>" + "<br>".join(esc(g) for g in d.get("gaps", [])) +
              "<br>「分點資料：無」的股票，M01／M04／M07／M08 的籌碼條件是<b>無法判定</b>，不是沒出現。</div>")

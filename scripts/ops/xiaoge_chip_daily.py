@@ -106,6 +106,16 @@ def burst_stocks(c, day: str) -> list[tuple[str, str]]:
 
 def run_burst(a, c, day: str) -> int:
     bl = burst_stocks(c, day)
+    # 追蹤名單：前一交易日盤點命中的 M09／M07 隔日沖慣犯股，不論今日是否爆量，都要有「隔天」的分點頁（驗證隔日沖實際賣了多少，xiaoge_m09_followup.py）
+    inv_dir = DATA_DIR / "chip" / "xiaoge_inventory"
+    prev = sorted(p for p in inv_dir.glob("inventory_20??-??-??.json") if p.stem.replace("inventory_", "") < day)
+    if prev:
+        inv = json.loads(prev[-1].read_text(encoding="utf-8"))
+        have_ids = {s for s, _ in bl}
+        for k in ("M09", "M07"):
+            for h in inv["methods"].get(k, {}).get("hits", []):
+                if h["stock"] not in have_ids:
+                    bl.append((h["stock"], f"追蹤({k},{inv['date']})")); have_ids.add(h["stock"])
     days = [r[0] for r in c.execute(
         "select distinct trade_date from stock_daily_bars where source in ('twse_mi_index','tpex_daily') and trade_date<=? "
         "order by trade_date desc limit ?", (day, a.burst_days)).fetchall()]
