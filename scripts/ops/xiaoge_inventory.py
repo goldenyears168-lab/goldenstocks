@@ -40,7 +40,7 @@ METHODS = {
     "M05": ("地板股候選（前一晚名單）", "part_04 §2；手冊 §2 第6點", "今日黑K、量≥20日均量2倍、月線下彎、乖離月線≤該股近500日乖離的5%分位"),
     "M06": ("關鍵分點低檔建倉", "part_03 §3.5", "小哥點名的關鍵分點/地緣/高手/公司派 今日買超前5且≥1%量，且收盤位於3年區間最低25%"),
     "M07": ("隔日沖短空池", "part_04 §4；part_02 2.13", "近5日曾列入M04、今日收紅K、且買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（逐股看紀錄，不看分點整體名聲；大股東賣：缺資料，未判）"),
-    "M09": ("隔日沖慣犯大買（大漲）", "part_12 §三；part_04 §4.3 步驟九", "今日漲幅≥5%、買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（≥1次；≥2次標強）；周轉率(今日或前一日)≥30% 標高周轉（小哥：隔日沖＋周轉率最高、30%以上最好）。權證買超/自營比：缺資料"),
+    "M09": ("隔日沖慣犯大買（大漲）", "part_12 §三；part_04 §4.3 步驟九", "今日漲幅≥5%、買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（≥1次；≥2次標強）；訊號日(大漲/漲停那天)周轉率≥30% 標高周轉（小哥：隔日沖＋周轉率最高、30%以上最好）。權證買超/自營比：缺資料"),
     "M08": ("純空頭（月線下彎＋主力賣超）", "part_04 §1.1", "月線下彎且主力集中度<0（僅收集池有分點）"),
 }
 
@@ -158,12 +158,13 @@ def habit_of(H: dict, vol_lots_by_day: dict, sid: str, b: str, day: str, minsh=0
 
 
 def turnover_info(f: pd.DataFrame, shares_issued) -> dict:
-    """周轉率＝成交股數÷發行股數（小哥：隔日沖＋周轉率最高、30% 以上最好；2026-10-20 直播）。今日與前一日各一，任一≥30% 標 high_turnover。"""
+    """周轉率＝成交股數÷發行股數（小哥：隔日沖＋周轉率最高、30% 以上最好；2026-10-20 直播）。
+    使用者 2026-10-21 指正：看「大漲／漲停那一天」（訊號日）的周轉率，不是隔天的；前一日只顯示不判斷。"""
     if not shares_issued or len(f) < 2:
         return {"turnover_pct": None, "turnover_prev_pct": None, "high_turnover": None}
     t0 = float(f.volume.iloc[-1]) / float(shares_issued) * 100
     t1 = float(f.volume.iloc[-2]) / float(shares_issued) * 100
-    return {"turnover_pct": round(t0, 1), "turnover_prev_pct": round(t1, 1), "high_turnover": bool(max(t0, t1) >= 30)}
+    return {"turnover_pct": round(t0, 1), "turnover_prev_pct": round(t1, 1), "high_turnover": bool(t0 >= 30)}
 
 
 def market_env(c, day) -> dict:
