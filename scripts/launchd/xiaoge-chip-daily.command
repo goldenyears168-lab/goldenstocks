@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 小哥籌碼每日抓取＋筆記本 · 每平日 19:40 · observe only（不下單、不寫正本 DB）。
-# 順序：xiaoge_chip_daily.py（富邦：流動性前 579 檔個股頁＋全部活躍分點頁，約 35 分鐘）→ xiaoge_notebook.py（8771 /xiaoge 讀的 JSON）。
+# 順序：xiaoge_chip_daily.py（富邦：流動性前 579 檔個股頁＋全部活躍分點頁，約 35 分鐘）→ --burst（漲停/爆量股補抓，≤25 分鐘）→ xiaoge_notebook.py（8771 /xiaoge 讀的 JSON）。
 # 富邦當日資料未就緒（退出碼 3）時每 10 分鐘重試，最多 6 次。與 branch-tape-prewarm（16:30／18:30）錯開，避免同時打富邦。
 #
 # 安裝（Mac mini，standalone，比照 chip-margin-catchup 不進 install-launchd.sh LABELS）：
@@ -58,6 +58,10 @@ LOG="${STATE}/logs/xiaoge_chip_daily_$(date +%Y%m%d).log"
     echo "富邦尚未就緒，10 分鐘後重試（${attempt}/6）"; sleep 600
   done
   echo "[$(date -Iseconds)] chip_daily rc=${rc}"
+  # 漲停／爆量股補抓：不在流動性前 579 檔的剛爆量股（例：台郡 6269）補當日個股頁，並回補其近 30 日缺的頁，讓「逐股看隔日沖紀錄」有歷史。
+  if [[ "${rc}" -eq 0 ]]; then
+    nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_chip_daily.py" --burst --max-minutes 25 || echo "WARN: burst rc=$?"
+  fi
   if [[ "${rc}" -eq 0 ]]; then
     nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_notebook.py" || echo "WARN: xiaoge_notebook failed rc=$?"
   else
@@ -65,7 +69,7 @@ LOG="${STATE}/logs/xiaoge_chip_daily_$(date +%Y%m%d).log"
   fi
   # 歷史回補：慣犯判讀需要近 90 日的個股頁；每晚在主流程之後再回補一天（流動性前 250 檔，最多 45 分鐘），補齊後自動不再執行
   if [[ "${rc}" -eq 0 ]]; then
-    nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_chip_daily.py" --backfill --top 250 --max-minutes 45 || echo "WARN: backfill rc=$?"
+    nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_chip_daily.py" --backfill --top 250 --max-minutes 30 || echo "WARN: backfill rc=$?"
     nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_notebook.py" || echo "WARN: xiaoge_notebook(after backfill) failed rc=$?"
   fi
   echo "[$(date -Iseconds)] done"

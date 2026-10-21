@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 小哥盤點 · 每平日 21:30 · observe only（不下單、不寫正本 DB）。
+# 小哥盤點 · 每平日 22:30 · observe only（不下單、不寫正本 DB）。
 # 順序：xiaoge_inventory.py（把書中戰法逐一檢查是否重現，寫 chip/xiaoge_inventory/inventory_<日>.json／.md）
 #       → headless claude -p 解讀成 inventory_<日>_ai.md（prompt SSOT：scripts/launchd/xiaoge-inventory-prompt.txt，cwd=資料目錄以套用其 CLAUDE.md 護欄）。
-# 21:30 排在 xiaoge-chip-daily（19:40 起，含回補約 21:15 結束）之後。AI 步驟失敗只警告，不影響 JSON 產出。
+# 22:30 排在 xiaoge-chip-daily（19:40 起，含 burst 與回補約 21:45 結束）之後。AI 步驟失敗只警告，不影響 JSON 產出。
 #
 # 安裝（standalone，比照 xiaoge-chip-daily）：
 #   PLIST=~/Library/LaunchAgents/com.jackm4.goldenstocks.xiaoge-inventory.plist

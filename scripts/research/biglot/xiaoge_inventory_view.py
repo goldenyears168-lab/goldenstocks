@@ -1,6 +1,6 @@
 """小哥盤點（/inventory）：只讀 `${DATA}/chip/xiaoge_inventory/inventory_<日>.json` 與 `_ai.md`，不連外、不寫檔。
 
-資料由 scripts/ops/xiaoge_inventory.py（平日 21:30）產生。版面順序（使用者問卷決定）：AI 解讀 → 大盤環境 → 八張戰法卡（含近 20 日迷你折線）
+資料由 scripts/ops/xiaoge_inventory.py（平日 22:30）產生。版面順序（使用者問卷決定）：AI 解讀 → 大盤環境 → 八張戰法卡（含近 20 日迷你折線）
 → 全部戰法合成一張可排序大表（可依戰法篩選）→ 資料缺口。這是條件是否成立的標示，不是進場訊號（頁首固定標註）。
 """
 from __future__ import annotations
@@ -75,7 +75,7 @@ def _spark(vals: list[int], w=180, h=30) -> str:
 def _ai_html(day: str) -> str:
     p = DIR / f"inventory_{day}_ai.md"
     if not p.exists():
-        return "<div class='note'>尚無 AI 解讀（_ai.md）。排程 21:30 會在資料產生後解讀；若沒有請看 logs/xiaoge_inventory_*.log。</div>"
+        return "<div class='note'>尚無 AI 解讀（_ai.md）。排程 22:30 會在資料產生後解讀；若沒有請看 logs/xiaoge_inventory_*.log。</div>"
     out = []
     for line in p.read_text(encoding="utf-8").splitlines():
         if line.startswith("#"):
@@ -120,7 +120,7 @@ def render_inventory(date: str | None = None) -> str:
     head = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>小哥盤點</title>{biglot_dashboard.ARC_CSS}{CSS}</head><body>"
     top = "<div class='meta'><a href='/'>← 大戶儀表板</a> ｜ <b>小哥盤點</b></div>"
     if not ds:
-        return head + top + "<div class='iv'><div class='warn'>尚無盤點資料（排程 xiaoge-inventory 平日 21:30；或手動 scripts/ops/xiaoge_inventory.py --md）。</div></div></body></html>"
+        return head + top + "<div class='iv'><div class='warn'>尚無盤點資料（排程 xiaoge-inventory 平日 22:30；或手動 scripts/ops/xiaoge_inventory.py --md）。</div></div></body></html>"
     day = date if date in ds else ds[-1]
     try:
         d = json.loads((DIR / f"inventory_{day}.json").read_text(encoding="utf-8"))

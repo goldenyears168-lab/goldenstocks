@@ -4,7 +4,7 @@
 <dict>
 	<key>Label</key>
 	<string>com.jackm4.goldenstocks.xiaoge-inventory</string>
-	<!-- 週一至五 21:30 · 小哥盤點：把書中戰法逐一檢查是否重現（xiaoge_inventory.py）＋ headless claude 解讀。
+	<!-- 週一至五 22:30 · 小哥盤點：把書中戰法逐一檢查是否重現（xiaoge_inventory.py）＋ headless claude 解讀。
 	     唯讀 stocks.db，寫 ${DATA}/chip/xiaoge_inventory/；不碰下單層。標準安裝見 scripts/launchd/xiaoge-inventory.command 檔頭。 -->
 	<key>ProgramArguments</key>
 	<array>
@@ -15,11 +15,11 @@
 	<string>/tmp</string>
 	<key>StartCalendarInterval</key>
 	<array>
-		<dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-		<dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-		<dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-		<dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-		<dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+		<dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
 	</array>
 	<key>StandardOutPath</key>
 	<string>{{HOME}}/Library/Logs/com.jackm4.goldenstocks/xiaoge-inventory.launchd.log</string>

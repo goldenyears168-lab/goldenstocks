@@ -8,7 +8,10 @@
                           每頁為該分點當日買超／賣超各前約 50 名股票。
   3. meta.json            範圍、筆數、耗時、錯誤；失敗不寫半成品（先寫 .tmp 再 rename）。
 來源＝富邦行情站（src/fubon_branch_tape.py；非正式 API，請求間隔 1.2 秒）。可續跑：已抓過的股票／分點不重抓。
+  4. --burst 模式：當日「漲停／爆量」股票（不論是否在流動性前 N）補抓個股頁，並回補其近 30 個交易日缺的個股頁，
+     讓「剛爆量的股票」也有分點歷史（台郡 6269 事件：10/16 成交量小未入前 579 檔 → 10/20 才大漲時沒有 10/16 的富邦證券買進紀錄）。
 用法：PYTHONPATH=src .venv/bin/python scripts/ops/xiaoge_chip_daily.py [--date 2026-10-20] [--top 579] [--no-branches] [--limit 20]
+      PYTHONPATH=src .venv/bin/python scripts/ops/xiaoge_chip_daily.py --burst [--burst-days 30] [--max-minutes 25] [--dry-run]
 退出碼：0 成功；2 錯誤比例過高；3 富邦當日資料尚未就緒。
 """
 from __future__ import annotations
@@ -76,6 +79,80 @@ def pick_backfill_day(c, latest: str, top: int):
     return None, []
 
 
+BURST_RET, BURST_VR, BURST_MIN_TV = 0.09, 3.0, 2.0e7
+
+
+def burst_stocks(c, day: str) -> list[tuple[str, str]]:
+    """當日漲停（≥9%）或爆量（量≥前20日均量3倍）且成交值≥2千萬的 4 碼股。回傳 [(代號, 原因)]。"""
+    rows = c.execute(
+        "select stock_id, trade_date, close, volume from stock_daily_bars where source in ('twse_mi_index','tpex_daily') "
+        "and trade_date<=? and trade_date>date(?, '-45 day') and stock_id glob '[1-9][0-9][0-9][0-9]'", (day, day)).fetchall()
+    df = pd.DataFrame(rows, columns=["sid", "d", "close", "vol"]).drop_duplicates(["sid", "d"]).sort_values(["sid", "d"])
+    out = []
+    for sid, g in df.groupby("sid"):
+        if len(g) < 21 or g["d"].iloc[-1] != day:
+            continue
+        cl, v = g["close"].to_numpy(), g["vol"].to_numpy().astype(float)
+        ret = cl[-1] / cl[-2] - 1
+        vr = v[-1] / max(v[-21:-1].mean(), 1.0)
+        tv = cl[-1] * v[-1]
+        if tv < BURST_MIN_TV:
+            continue
+        why = [w for w, ok in (("漲停", ret >= BURST_RET), ("爆量", vr >= BURST_VR)) if ok]
+        if why:
+            out.append((sid, "+".join(why) + f"(漲{ret*100:.1f}%,量比{vr:.1f})"))
+    return out
+
+
+def run_burst(a, c, day: str) -> int:
+    bl = burst_stocks(c, day)
+    days = [r[0] for r in c.execute(
+        "select distinct trade_date from stock_daily_bars where source in ('twse_mi_index','tpex_daily') and trade_date<=? "
+        "order by trade_date desc limit ?", (day, a.burst_days)).fetchall()]
+    need = []
+    for d in sorted(days, reverse=True):                  # 最近的日子優先
+        have = have_stocks(c, d)
+        need += [(sid, d) for sid, _ in bl if sid not in have]
+    print(f"{day} 漲停/爆量 {len(bl)} 檔；近 {len(days)} 日缺 {len(need)} 個(股,日)頁", flush=True)
+    if a.dry_run:
+        for sid, why in bl[:60]:
+            print(" ", sid, why)
+        return 0
+    c.close()
+    tape = FubonTape({}, delay=a.delay)
+    if not tape.stock_page("2330", day):
+        print(f"{day} 富邦尚無資料", flush=True)
+        return 3
+    t0 = time.time(); errs = 0; fetched = 0; buf: dict[str, list] = {}
+
+    def flush():
+        for d, rows in list(buf.items()):
+            if not rows:
+                continue
+            out = DATA_DIR / "chip" / "xiaoge" / d
+            out.mkdir(parents=True, exist_ok=True)
+            ck = out / "stock_top15.parquet"
+            have = pd.read_parquet(ck) if ck.exists() else pd.DataFrame()
+            _save(ck, have, rows)
+            buf[d] = []
+    for i, (sid, d) in enumerate(need, 1):
+        if a.max_minutes and (time.time() - t0) > a.max_minutes * 60:
+            print(f"時間預算用完（{a.max_minutes} 分鐘），已抓 {fetched}/{len(need)}", flush=True)
+            break
+        try:
+            pg = tape.stock_page(sid, d)
+        except Exception as e:  # noqa: BLE001
+            errs += 1; print("  err", sid, d, str(e)[:60], flush=True); continue
+        buf.setdefault(d, []).extend({"stock_id": sid, "trade_date": d, "branch_id": r["id"], "branch": r["name"],
+                                      "buy_lots": r["buy"], "sell_lots": r["sell"], "turnover20": float("nan")} for r in pg or [])
+        fetched += 1
+        if i % 40 == 0:
+            flush(); print(f"  burst {i}/{len(need)} {time.time()-t0:.0f}s 錯誤{errs}", flush=True)
+    flush()
+    print(json.dumps({"mode": "burst", "day": day, "burst_stocks": len(bl), "fetched": fetched, "errors": errs, "seconds": round(time.time() - t0)}, ensure_ascii=False), flush=True)
+    return 2 if errs > 0.2 * max(1, fetched + errs) else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date")
@@ -85,10 +162,15 @@ def main() -> int:
     ap.add_argument("--delay", type=float, default=1.2)
     ap.add_argument("--backfill", action="store_true", help="回補近 63 個交易日中資料最缺的一天（只抓個股頁，跳過 DB 已有完整 tape 的股票）")
     ap.add_argument("--max-minutes", type=float, default=0, help="個股頁抓取的時間預算（分鐘），0＝不限")
+    ap.add_argument("--burst", action="store_true", help="漲停/爆量股補抓個股頁並回補近 N 日缺的頁")
+    ap.add_argument("--burst-days", type=int, default=30)
+    ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     c = sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True)
     c.execute("pragma query_only=1")
     day = a.date or latest_bar_date(c)
+    if a.burst:
+        return run_burst(a, c, day)
     if a.backfill:
         day, uni = pick_backfill_day(c, day, a.top)
         if day is None:

@@ -1,6 +1,6 @@
 # 小哥盤點：書中戰法盤點與每日檢查規格
 
-程式：`scripts/ops/xiaoge_inventory.py`｜排程：`xiaoge-inventory`（平日 21:30，接在 `xiaoge-chip-daily` 之後）｜AI 解讀 prompt：`scripts/launchd/xiaoge-inventory-prompt.txt`
+程式：`scripts/ops/xiaoge_inventory.py`｜排程：`xiaoge-inventory`（平日 22:30，接在 `xiaoge-chip-daily` 之後）｜AI 解讀 prompt：`scripts/launchd/xiaoge-inventory-prompt.txt`
 輸出：`${DATA}/chip/xiaoge_inventory/inventory_<日>.json／.md／_ai.md`
 定位：**條件是否成立的標示**，不是進場訊號。實測結論見 `flip-habit-study-results.md` §9（關鍵分點日線進場無額外預測力）。
 
