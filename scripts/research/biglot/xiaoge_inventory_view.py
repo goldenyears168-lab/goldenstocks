@@ -85,6 +85,34 @@ def _ai_html(day: str) -> str:
     return "<div class='ai'>" + "\n".join(out) + "</div>"
 
 
+def _ledger_html() -> str:
+    p = DATA_DIR / "chip" / "xiaoge_ledger" / "summary.json"
+    if not p.exists():
+        return "<h2>訊號帳本</h2><div class='note'>尚無帳本（scripts/ops/xiaoge_ledger.py）。</div>"
+    s = json.loads(p.read_text(encoding="utf-8"))
+
+    def fmt(r, h):
+        o = (r or {}).get(h)
+        if not o or "t" not in o:
+            return "<td>—</td>"
+        cls = "up" if o["excess_pct"] > 0 else "dn"
+        return f"<td class='{cls}'>{o['excess_pct']:+.2f}% <span class='dim'>t={o['t']:+.1f}</span></td>"
+
+    def table(title, d, note):
+        if not d:
+            return f"<h3 style='font-size:13px'>{title}</h3><div class='note'>{note}</div>"
+        t = (f"<h3 style='font-size:13px'>{title}</h3><div class='note'>{note}</div><table><tr><th class='l'>清單</th><th>觀測</th><th>訊號日數</th><th>T收→T+1開</th>"
+             "<th>T+1 開→收（超額）</th><th>5日（超額）</th><th>20日（超額）</th></tr>")
+        for k, r in d.items():
+            t += (f"<tr><td class='l'>{esc(k)}</td><td>{r['n_obs']:,}</td><td>{r['n_days']}</td><td>{(r.get('gap_mean_pct') or 0):+.2f}%</td>"
+                  f"{fmt(r, 'oc')}{fmt(r, 'o5')}{fmt(r, 'o20')}</tr>")
+        return t + "</table>"
+    return ("<h2>訊號帳本：條件成立後的成績</h2><div class='note'>超額＝扣掉同日流動性母體等權平均；T+1 開盤進場（分點收盤後才有）；t 為「訊號日平均」的 HAC t（|t|≥2 才值得看，"
+            "且共比較多組）。價格未還原除權息。</div>"
+            + table("歷史回補（價格型 P01–P05＝M01–M05 去掉分點條件，2024-10 起）", s.get("backfill"), "尚無")
+            + table("即時帳本（每日盤點／筆記本真實命中）", s.get("live"), "剛開始累積：需 T+1 日線入庫後才有成績，約 1 個交易日後出現第一列。"))
+
+
 def render_inventory(date: str | None = None) -> str:
     import biglot_dashboard
 
@@ -147,6 +175,7 @@ def render_inventory(date: str | None = None) -> str:
               f"<td data-v='{h['bias20_pct']}'>{h['bias20_pct']:+g}</td><td data-v='{h['vr'] if h['vr'] is not None else ''}'>{'—' if h['vr'] is None else h['vr']}</td>"
               f"<td data-v='{'' if conc is None else conc}' class='{cc}'>{'—' if conc is None else f'{conc:+.1f}'}</td><td class='l' data-v='{1 if ch else 0}'>{chip_cell}</td><td class='l'>{note}</td></tr>")
     b.append(t + "</tbody></table>")
+    b.append(_ledger_html())
     b.append("<h2>資料缺口</h2><div class='note'>" + "<br>".join(esc(g) for g in d.get("gaps", [])) +
              "<br>「分點資料：無」的股票，M01／M04／M07／M08 的籌碼條件是<b>無法判定</b>，不是沒出現。</div>")
     st = d.get("stories_today", [])
