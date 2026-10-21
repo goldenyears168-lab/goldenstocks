@@ -55,7 +55,12 @@ if [[ ! -x "${PYTHON}" ]]; then
   exit 1
 fi
 
+# 重算試撮名單（儀表板 42 檔 + 近 20 日高成交值／高波動科技股，唯讀 DB，約 5 秒）。
+# 失敗不擋收集：collector 會用上一份名單檔，沒有則退回持股 + 核心 4 檔。
 set +e
+PYTHONPATH="${ROOT}/src" "${ROOT}/.venv/bin/python" "${ROOT}/scripts/research/premarket_universe_build.py" \
+  || echo "WARN: premarket_universe_build failed, using previous universe file"
+
 "${PYTHON}" "${ROOT}/scripts/research/collect_fubon_premarket_quote.py"
 EXIT=$?
 set -e

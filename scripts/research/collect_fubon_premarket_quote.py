@@ -45,6 +45,7 @@ launchd/com.jackm4.goldenstocks.fubon-premarket-quote-collect.plist.template）�
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import sqlite3
 import sys
@@ -60,6 +61,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from order.fubon_account import inventories  # noqa: E402
 from order.fubon_session import FubonSession, check_python_version, connect_fubon  # noqa: E402
 from stock_db import (  # noqa: E402
+    DATA_DIR,
     DEFAULT_DB_PATH,
     FubonPremarketQuoteRow,
     connect,
@@ -72,6 +74,9 @@ _TZ = ZoneInfo("Asia/Taipei")
 # 0050=大盤代表 ETF、2330=權值龍頭、2317=電子代工、2454=IC 設計，涵蓋不同流動性/類股。
 _DEFAULT_EXTRA_SYMBOLS = ["0050", "2317", "2330", "2454"]
 _SOURCE = "fubon_fugle_quote"
+# 名單檔由 premarket_universe_build.py 產生：tier_a（儀表板 42 檔＋核心＋持股）每輪 2 次、
+# tier_b（高成交值／高波動科技股）每輪 1 次。富邦 REST 實測約 15 req/s 無節流，預設限 12。
+_UNIVERSE_FILE = DATA_DIR / "cache" / "premarket_universe.json"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -87,6 +92,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--start-time", default="08:29:00", metavar="HH:MM:SS")
     p.add_argument("--end-time", default="09:01:00", metavar="HH:MM:SS")
     p.add_argument("--interval-sec", type=float, default=5.0, help="每輪輪詢間隔秒數")
+    p.add_argument("--universe-file", type=Path, default=_UNIVERSE_FILE,
+                   help="分層名單 JSON（tier_a/tier_b）；--symbols 未指定且檔案存在時使用。")
+    p.add_argument("--max-rps", type=float, default=12.0, help="REST 每秒請求上限（429 時自動減半）")
     p.add_argument(
         "--once",
         action="store_true",
@@ -112,6 +120,18 @@ def _resolve_symbols(session: FubonSession, raw: str | None) -> list[str]:
     symbols = sorted(set(held) | set(_DEFAULT_EXTRA_SYMBOLS))
     print(f"[INFO] --symbols 未指定，改用持股 + 預設清單：{symbols}")
     return symbols
+
+
+def _load_tiers(path: Path, base: list[str]) -> tuple[list[str], list[str]]:
+    """回傳 (tier_a, tier_b)。名單檔不存在或壞掉時 tier_b 為空＝退回舊行為。"""
+    try:
+        d = json.loads(path.read_text())
+        a = sorted(set(base) | set(d.get("tier_a", [])) | set(d.get("core", [])))
+        b = [x for x in d.get("tier_b", []) if x not in set(a)]
+        return a, b
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] 名單檔不可用（{path}）：{exc}；僅收 tier_a。")
+        return base, []
 
 
 def _connect_db_with_retry(db_path: Path, *, attempts: int = 4, backoff_sec: float = 2.0):
@@ -175,20 +195,53 @@ def _parse_quote(
     )
 
 
+class _Throttle:
+    """固定 min-gap 節流；收到 429 時把速率減半（下限 2 req/s）。"""
+
+    def __init__(self, rps: float) -> None:
+        self.gap = 1.0 / max(rps, 1.0)
+        self._next = 0.0
+
+    def wait(self) -> None:
+        now = time.monotonic()
+        if now < self._next:
+            time.sleep(self._next - now)
+        self._next = max(now, self._next) + self.gap
+
+    def slow_down(self) -> None:
+        self.gap = min(self.gap * 2, 0.5)
+
+
 def _poll_once(
-    session: FubonSession, symbols: list[str], trade_date: str
+    session: FubonSession,
+    symbols: list[str],
+    trade_date: str,
+    *,
+    throttle: _Throttle | None = None,
+    keep_raw: set[str] | None = None,
 ) -> list[FubonPremarketQuoteRow]:
+    """逐檔 quote；每筆各自 poll_ts（名單大時一輪要數十秒，不能共用同一時間）。
+
+    keep_raw：只有這些代碼保留 raw_json（其餘省空間，tier_b 一天數萬列）。None＝全留。
+    """
     rest_stock = session.sdk.marketdata.rest_client.stock
-    poll_ts = datetime.now(tz=_TZ).strftime("%Y-%m-%d %H:%M:%S.%f")
     synced_at = utc_now_iso()
     rows: list[FubonPremarketQuoteRow] = []
     for symbol in symbols:
+        if throttle:
+            throttle.wait()
+        poll_ts = datetime.now(tz=_TZ).strftime("%Y-%m-%d %H:%M:%S.%f")
         try:
             quote = rest_stock.intraday.quote(symbol=symbol)
         except Exception as exc:  # noqa: BLE001 — 單一股票失敗不應擋其他股票
             print(f"[ERROR] quote({symbol}) 失敗：{exc}")
+            if throttle and "429" in str(exc):
+                throttle.slow_down()
             continue
-        rows.append(_parse_quote(symbol, quote, trade_date, poll_ts, synced_at))
+        row = _parse_quote(symbol, quote, trade_date, poll_ts, synced_at)
+        if keep_raw is not None and symbol not in keep_raw:
+            row = replace(row, raw_json=None)
+        rows.append(row)
     return rows
 
 
@@ -204,7 +257,7 @@ def _flush(conn: sqlite3.Connection, rows: list[FubonPremarketQuoteRow], *, atte
         try:
             n = upsert_fubon_premarket_quote(conn, rows)
             print(f"[OK] 寫入/更新 {n} 筆 fubon_premarket_quote_snapshot。")
-            for r in rows:
+            for r in rows[:5]:
                 trial = (
                     f"trial={r.last_trial_price}x{r.last_trial_size}@{r.last_trial_ts}"
                     if r.last_trial_price is not None
@@ -272,10 +325,16 @@ def main() -> int:
         return 1
 
     symbols = _resolve_symbols(session, args.symbols)
+    tier_b: list[str] = []
+    if not args.symbols and args.universe_file.exists():
+        symbols, tier_b = _load_tiers(args.universe_file, symbols)
+    keep_raw = set(symbols)
+    throttle = _Throttle(args.max_rps)
     if not symbols:
         print("[ERROR] 沒有可收集的股票代碼。", file=sys.stderr)
         return 1
-    print(f"[INFO] trade_date={trade_date} symbols={symbols} interval={args.interval_sec}s")
+    print(f"[INFO] trade_date={trade_date} tier_a={len(symbols)} tier_b={len(tier_b)} "
+          f"max_rps={args.max_rps} A={symbols[:8]}…")
 
     try:
         conn = _connect_db_with_retry(args.db)
@@ -285,7 +344,7 @@ def main() -> int:
 
     try:
         if args.once:
-            rows = _poll_once(session, symbols, trade_date)
+            rows = _poll_once(session, symbols + tier_b, trade_date, throttle=throttle, keep_raw=keep_raw)
             _flush(conn, rows)
             return 0
 
@@ -293,12 +352,17 @@ def main() -> int:
         pending: list[FubonPremarketQuoteRow] = []
         while datetime.now(tz=_TZ) <= end_dt:
             round_start = time.monotonic()
-            rows = _poll_once(session, symbols, trade_date)
-            to_write = pending + rows
-            if _flush(conn, to_write):
-                pending = []
-            else:
-                pending = to_write  # 併入下一輪重試，避免鎖表期間永久漏資料
+            # 一輪＝A、B 前半、A、B 後半：A 約每半輪一次，B 每輪一次；每段寫一次 DB。
+            half = len(tier_b) // 2
+            for seg in (symbols, tier_b[:half], symbols, tier_b[half:]):
+                if not seg or datetime.now(tz=_TZ) > end_dt:
+                    continue
+                rows = _poll_once(session, seg, trade_date, throttle=throttle, keep_raw=keep_raw)
+                to_write = pending + rows
+                if _flush(conn, to_write):
+                    pending = []
+                else:
+                    pending = to_write  # 併入下一輪重試，避免鎖表期間永久漏資料
             n_rounds += 1
             elapsed = time.monotonic() - round_start
             sleep_left = max(0.0, args.interval_sec - elapsed)
