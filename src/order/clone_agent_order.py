@@ -27,6 +27,7 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from clone_agent.approval import load_candidates, load_decisions
+from order.clone_agent_exit import evaluate_exit, last_bid, load_policy as load_exit_policy, read_exhaustion_events
 from clone_agent.order_switch import (
     LedgerUnreadable, atomic_write, ledger_path, read_cancel_requests, read_ledger, read_switch,
 )
@@ -81,7 +82,8 @@ class Config:
     release_grace_sec: float = 120        # 成交後多久才允許「券商端查無部位」→ 釋放
     cancel_max_age_sec: float = 120       # AI 撤單請求超過這個年齡就作廢(狀況已變)
     daily_max_cancels: int = 5            # 當日 AI 撤單上限
-    min_stars: int = 4                    # 只送嚴格條件 ★ 數 >= 此值的卡(SSOT=rules entry.live_min_stars;卡片沒帶 stars 視為 0)
+    exit_enabled: bool = False            # 小哥出場(反向竭盡/5%/13:15)是否真的送賣單;False=只在帳本記 exit.signal。env ORDER_CLONE_AGENT_EXIT_ENABLED
+    min_stars: int = 4                   # 只送嚴格條件 ★ 數 >= 此值的卡(SSOT=rules entry.live_min_stars;卡片沒帶 stars 視為 0)
 
 
 def _rules_min_stars() -> int:
@@ -100,6 +102,7 @@ def load_config() -> Config:
         max_lot=int(_env_float("ORDER_CLONE_AGENT_MAX_LOT", 1)),
         daily_max_orders=int(_env_float("ORDER_CLONE_AGENT_DAILY_MAX", 15)),
         window=(_env_hm("ORDER_CLONE_AGENT_START", "10:00"), _env_hm("ORDER_CLONE_AGENT_END", "12:00")),
+        exit_enabled=str(os.environ.get("ORDER_CLONE_AGENT_EXIT_ENABLED", "0")).strip().lower() in ("1", "true", "yes", "on"),
         min_stars=int(_env_float("ORDER_CLONE_AGENT_MIN_STARS", _rules_min_stars())),
     )
 
@@ -113,6 +116,7 @@ class Broker(Protocol):
     def place_buy(self, contract: str, lot: int, price_text: str) -> dict[str, Any]: ...
     def fetch_results(self) -> list[dict[str, Any]]: ...
     def cancel_order(self, order_no: str) -> dict[str, Any]: ...
+    def place_sell(self, contract: str, lot: int, price_text: str) -> dict[str, Any]: ...
 
 
 def tick_size(px: float) -> float:
@@ -469,6 +473,12 @@ def _check_card(card: dict[str, Any], led: dict[str, Any], cfg: Config, now_ts: 
         return "same_sid_active"
     if reserved_margin(led, now_ts, cfg) + card_margin(card) > cfg.margin_cap:
         return "margin_cap"
+    try:
+        cap = int(load_exit_policy()["max_concurrent_positions"])
+    except Exception:  # noqa: BLE001  政策檔壞掉 → 不送新單(fail-closed)
+        return "exit_policy_unreadable"
+    if sum(1 for e in ents if e.get("status") in OPEN or holding(e, now_ts, cfg)) >= cap:
+        return "max_concurrent_positions"
     return None
 
 
@@ -504,6 +514,53 @@ def _submit(card: dict[str, Any], led: dict[str, Any], broker: Broker, cfg: Conf
         _halt(led, f"consecutive_failures:{led['consec_fail']}", now_ts)
     e["updated_at"] = datetime.fromtimestamp(now_ts, TZ).isoformat(timespec="seconds")
     save_ledger(led)
+
+
+def process_exits(led: dict[str, Any], broker: Broker, cfg: Config, now_ts: float, day: str) -> int:
+    """小哥出場(config/clone_agent_exit.json):對仍持有的多單依 time_flat > stop_loss > reverse_exhaustion 判斷。
+    cfg.exit_enabled=False(預設)只把 exit.signal 記進帳本、不送賣單。送賣單另需券商端確認仍持有、報價夠新、
+    assert_live_submit_allowed;任何查不到一律不賣(fail-closed)。IOC 限價掛買一下 N 檔,最多重試 max_attempts 次。
+    回傳這輪新記下的 signal 數。"""
+    try:
+        pol = load_exit_policy()
+    except Exception:  # noqa: BLE001
+        return 0
+    snap = led.get("broker") or {}
+    events = read_exhaustion_events(day)
+    n = 0
+    for e in led["entries"].values():
+        if e.get("status") != "filled" and not (e.get("status") == "dry_run" and holding(e, now_ts, cfg)):
+            continue
+        root = root_of({"symbol": e.get("symbol")})
+        ex = e.setdefault("exit", {})
+        if not root or ex.get("done"):
+            continue
+        bid = last_bid(root, day, now_ts, float(pol["bid_max_age_sec"]))
+        dec = evaluate_exit(e, bid, now_ts, events, pol)
+        if not dec:
+            continue
+        if not ex.get("signal"):
+            ex["signal"] = {**dec, "at": datetime.fromtimestamp(now_ts, TZ).isoformat(timespec="seconds"), "bid": bid}
+            save_ledger(led)
+            n += 1
+        has_pos = bool(snap.get("positions_ok")) and any(sym_hit(p.get("symbol"), root) for p in snap.get("positions") or [])
+        if not cfg.exit_enabled or not e.get("contract") or bid is None or not has_pos:
+            continue
+        if int(ex.get("attempts") or 0) >= int(pol["max_attempts"]) or now_ts - float(ex.get("last_try") or 0) < float(pol["retry_gap_sec"]):
+            continue
+        px = bid - tick_size(bid) * int(pol["ioc_ticks_below_bid"])
+        ex["attempts"] = int(ex.get("attempts") or 0) + 1
+        ex["last_try"] = now_ts
+        save_ledger(led)  # 先落帳再送
+        try:
+            res = broker.place_sell(e["contract"], int(e.get("lot") or 1), price_text(px))
+            ex["last_result"] = {"order_no": res.get("order_no"), "dry": bool(res.get("dry")), "px": px}
+            if res.get("dry"):
+                ex["done"] = True
+        except Exception as exc:  # noqa: BLE001  結果不明:不立刻重送,等 retry_gap
+            ex["last_error"] = f"{type(exc).__name__}:{str(exc)[:160]}"
+        save_ledger(led)
+    return n
 
 
 CANCEL_TRIGGERS = ("C1", "C2", "C3")
@@ -573,6 +630,11 @@ def tick(broker: Broker, cfg: Config, now: datetime | None = None) -> dict[str, 
             refresh_snapshot(led, broker, cfg, now_ts, force=True)
     except Exception as exc:  # noqa: BLE001
         out["cancel_error"] = f"{type(exc).__name__}:{str(exc)[:120]}"
+    try:
+        if process_exits(led, broker, cfg, now_ts, day):
+            out["exit_signals"] = sum(1 for e in led["entries"].values() if (e.get("exit") or {}).get("signal"))
+    except Exception as exc:  # noqa: BLE001
+        out["exit_error"] = f"{type(exc).__name__}:{str(exc)[:120]}"
     decisions = load_decisions(day)
     dirty = False
     for card in load_candidates(day):
@@ -633,6 +695,10 @@ class DryBroker:
     def cancel_order(self, order_no: str) -> dict[str, Any]:
         return {"dry": True, "status": "dry_run_cancel", "order_no": order_no}
 
+    def place_sell(self, contract: str, lot: int, price_text: str) -> dict[str, Any]:
+        self.n += 1
+        return {"order_no": f"DRY-SELL-{self.n}", "seq_no": None, "dry": True}
+
 
 class FubonBroker:
     """實彈券商介面。session 於第一次真的要送單/對帳時才登入;所有送單都先過 assert_live_submit_allowed。"""
@@ -643,13 +709,13 @@ class FubonBroker:
 
     def _session(self) -> Any:
         if self._get is None:
-            from order.dayflip_short_session_pool import get_fubon_session
+            from tmf_channel.session_pool import get_fubon_session
             self._get = get_fubon_session
         return self._get()
 
     def resolve_contract(self, root: str) -> str | None:
         if root not in self._contracts:
-            from order.dayflip_short_order import resolve_live_futures_symbol
+            from order.tmf_channel_marketdata import resolve_live_futures_symbol
             hit = resolve_live_futures_symbol(self._session(), root)
             self._contracts[root] = hit[0] if hit else None
         return self._contracts[root]
@@ -674,6 +740,31 @@ class FubonBroker:
         res = sess.sdk.futopt.place_order(acc, order)
         if not _result_ok(res):
             raise BrokerRejected(getattr(res, "message", "") or "futopt place_order failed")
+        data = _serialize(getattr(res, "data", None))
+        d = data if isinstance(data, dict) else {}
+        return {"order_no": d.get("order_no") or d.get("orderNo"), "seq_no": d.get("seq_no") or d.get("seqNo"), "raw": d}
+
+    def place_sell(self, contract: str, lot: int, price_text: str) -> dict[str, Any]:
+        """平倉賣出(只平多單):IOC 限價、order_type=Close,user_def=cloneagt。先過 assert_live_submit_allowed。"""
+        from order.live_submit_guard import assert_live_submit_allowed
+        try:
+            assert_live_submit_allowed()
+        except RuntimeError as exc:
+            raise BrokerRejected(str(exc)) from exc
+        from fubon_neo.constant import BSAction, FutOptMarketType, FutOptOrderType, FutOptPriceType, TimeInForce
+        from fubon_neo.sdk import FutOptOrder
+        from order.fubon_futopt_orders import _result_ok, _serialize, pick_futopt_account
+
+        sess = self._session()
+        acc = pick_futopt_account(sess)
+        order = FutOptOrder(
+            market_type=FutOptMarketType.Future, price_type=FutOptPriceType.Limit, time_in_force=TimeInForce.IOC,
+            order_type=FutOptOrderType.Close, buy_sell=BSAction.Sell, symbol=contract, lot=int(lot), price=price_text,
+            user_def="cloneagt",
+        )
+        res = sess.sdk.futopt.place_order(acc, order)
+        if not _result_ok(res):
+            raise BrokerRejected(getattr(res, "message", "") or "futopt place_order(sell) failed")
         data = _serialize(getattr(res, "data", None))
         d = data if isinstance(data, dict) else {}
         return {"order_no": d.get("order_no") or d.get("orderNo"), "seq_no": d.get("seq_no") or d.get("seqNo"), "raw": d}

@@ -1,0 +1,28 @@
+{
+ "id": "CA-EXIT",
+ "version": "1.0.0",
+ "set_on": "2026-10-21",
+ "source": "權證小哥 knowledge-book S16/V10 [14:11–15:50]、R61b、T-75/76/77。使用者 2026-10-21 指示：以小哥為主、不自己亂講，並明確授權動實單層。取代 2026-10-06「明確決定不設止損」。",
+ "exit_signal": {
+  "kind": "reverse_exhaustion",
+  "long_exit_on": "買盤竭盡 (exhaustion_events.jsonl d=+1)",
+  "ledger": "data/biglot_forward/exhaustion_events.jsonl",
+  "only_after_entry_fill": true,
+  "when": "underwater_only",
+  "event_max_age_sec": 120,
+  "note": "小哥：停損點抓買賣盤的竭盡點，即便沒到成本也停損（V10）。『when』只在虧損時用反向竭盡出場是依小哥範例（空單被軋後在賣盤竭盡回補）的字面解讀；賺錢時是否也在買盤竭盡出，小哥說『停利不一定設』，未明講 → 預設不出，可改 any。"
+ },
+ "stop_loss_pct": 5.0,
+ "stop_loss_note": "小哥：當沖最大停損大概 5% 就很想停損（口語『大概』）。查不到竭盡事件時的上限。",
+ "time_flat_hm": "13:15",
+ "max_concurrent_positions": 3,
+ "ioc_ticks_below_bid": 2,
+ "max_attempts": 3,
+ "retry_gap_sec": 30,
+ "bid_max_age_sec": 15,
+ "unspecified_by_book": [
+  "反向竭盡的『大量』門檻（官方在軟體設定、書未載；本 repo 沿用儀表板 is_exhaustion 的自訂：P90 分位、爆窗≥3、末 2 窗停滯）",
+  "賺錢單遇反向竭盡是否出場",
+  "5% 是以期貨價或現貨價計"
+ ]
+}

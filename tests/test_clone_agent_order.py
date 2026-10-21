@@ -42,6 +42,11 @@ class FakeBroker:
     def fetch_results(self):
         return self.results
 
+    def place_sell(self, contract, lot, price_text):
+        self.sold = getattr(self, "sold", [])
+        self.sold.append((contract, lot, price_text))
+        return {"order_no": f"X{len(self.sold)}", "seq_no": None, "dry": False}
+
     def cancel_order(self, order_no):
         self.cancelled = getattr(self, "cancelled", [])
         if getattr(self, "cancel_exc", None):

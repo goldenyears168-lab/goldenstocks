@@ -91,7 +91,7 @@ jobs:
     status: enabled
     enabled_since: "2026-10-06"
     schedule: "KeepAlive worker · interval≈2s in-window · weekdays 08:55-13:35"
-    description: "複製人代理人(CA-R1)獨立下單層 · 讀 data/candidates 卡片 → 買一−1檔限價新倉買進(只送新倉、出場手動) · src/order/clone_agent_order.py。預設演練(ORDER_CLONE_AGENT_DRY_RUN=1,不登入券商);實彈只由 .env 設 ORDER_CLONE_AGENT_DRY_RUN=0 且 ORDER_MASTER_ENABLED=1。儀表板 /agent 的「自動送單」按鈕=data/order/clone_agent_switch.json(預設開、檔案損毀=關);保證金上限 147 萬、單日 15 筆、連 3 次失敗或額度類錯誤即停單。與 src/clone_agent/ 只透過 JSON 檔互動、互不 import"
+    description: "複製人代理人(CA-R1)獨立下單層 · 讀 data/candidates 卡片 → 期貨買一限價新倉買進(同時持倉上限3) · 出場(2026-10-21 起依小哥,config/clone_agent_exit.json):13:15平倉>−5%停損>反向竭盡(買盤竭盡,讀 biglot_forward/exhaustion_events.jsonl,虧損中才出);預設只在帳本記 exit.signal,實際送平倉IOC賣單另需 ORDER_CLONE_AGENT_EXIT_ENABLED=1(預設0) · src/order/clone_agent_order.py。預設演練(ORDER_CLONE_AGENT_DRY_RUN=1,不登入券商);實彈只由 .env 設 ORDER_CLONE_AGENT_DRY_RUN=0 且 ORDER_MASTER_ENABLED=1。儀表板 /agent 的「自動送單」按鈕=data/order/clone_agent_switch.json(預設開、檔案損毀=關);保證金上限 147 萬、單日 15 筆、連 3 次失敗或額度類錯誤即停單。與 src/clone_agent/ 只透過 JSON 檔互動、互不 import"
 
   - label: cancel-guard
     category: order
