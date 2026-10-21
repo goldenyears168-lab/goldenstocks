@@ -123,7 +123,7 @@ def _followup_html() -> str:
     t = (f"<h2>隔日追蹤：{esc(N)} 的實際走勢（對應前一日命中）</h2><div class='note'>flip＝flagged 隔日沖分點 T+1 賣出 ÷ T 日淨買（≥0.7 即照慣性賣）；賣壓占量＝它們的賣出÷當日成交量；接手＝前15名非 flagged 淨買÷成交量。"
          "線索（2026-10-21 觀察，n 小）：開盤跳空大者續強、跳空小者容易被倒貨。盤中欄位來自 xiaoge_m09_intraday（試撮價／10:00 相對開盤／曾漲停跌停／開板次數）。</div>"
          "<table><tr><th class='l'>股票</th><th class='l'>戰法</th><th class='l'>flagged 分點</th><th>flip</th><th>賣壓占量%</th><th>接手%</th><th>跳空%</th><th>開→收%</th><th>收→收%</th>"
-         "<th>試撮%</th><th>10點vs開%</th><th>漲停／跌停／開板</th></tr>")
+         "<th>權證隔日倒</th><th>試撮%</th><th>10點vs開%</th><th>漲停／跌停／開板</th></tr>")
     for r in sorted(rows, key=lambda r: (r["method"], r.get("cc_pct") or 0)):
         flags = "—" if "lu_touched" not in r else f"{'漲停' if r.get('lu_touched') else ''}{'跌停' if r.get('ld_touched') else ''} 開板{r.get('lu_opens', 0)}{' 收漲停' if r.get('close_lu') else ''}"
         cc = r.get("cc_pct"); cls = "up" if (cc or 0) > 0 else "dn"
@@ -203,6 +203,10 @@ def render_inventory(date: str | None = None) -> str:
             gap.append(f"高周轉(訊號日) {h.get('turnover_pct')}%／前日 {h.get('turnover_prev_pct')}%")
         elif h.get("turnover_pct") is not None:
             gap.append(f"周轉 {h.get('turnover_pct')}%／前日 {h.get('turnover_prev_pct')}%")
+        if h.get("warrant_buyers"):
+            gap.append(f"權證買超: {h['warrant_buyers']}")
+        if h.get("dealer_r_pct") is not None:
+            gap.append(f"自營比 {h['dealer_r_pct']}%")
         if "M07" in r["m"]:
             gap.append("大股東賣：缺資料")
         if "M01" in r["m"] and h.get("chip_confirm") is None:

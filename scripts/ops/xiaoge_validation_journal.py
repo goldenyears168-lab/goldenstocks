@@ -34,6 +34,7 @@ HYP = {
     "H6": "flagged 分點照慣性在 T+1 賣出（賣出量 ≥0.7×T 日淨買）的比例 ≥60%",
     "H7": "M09 在 T+1 開盤跳空 ≥4% 者，開→收高於跳空 <4% 者（預期差為正；2026-10-21 回放後補入，回放樣本屬事後，前瞻從 10/21 起計）",
     "H8": "M09 的 T+1 開→收，低於『同日同流動性、T 日漲≥5% 但不看分點』基準的開→收（日均差 <0；回放發現基準本身就是 −0.54%，故這才是隔日沖標籤的增量檢定）",
+    "H9": "M10（權證賣壓候選：漲≥5%、認購權證買超前5估計≥1,000萬）的 T+1 開→收，低於同日同流動性大漲基準（日均差 <0；M10 命中稀少，需長期累積）",
 }
 
 
@@ -88,6 +89,11 @@ def evaluate(d: pd.DataFrame, base: dict | None = None) -> dict:
         if len(diffs) >= 3:
             out["H8"] = {"n": len(m9), "days": len(diffs), "stat_pp": float(diffs.mean()), "t": float(diffs.mean() / (diffs.std(ddof=1) / np.sqrt(len(diffs)))), "expect": "<0"}
     out.setdefault("H8", {"n": len(m9), "expect": "<0"})
+    m10 = d[d.method == "M10"].drop_duplicates(["T", "stock"])
+    if base and len(m10):
+        dd = np.array([gm.oc_pct.mean() - base[T] for T, gm in m10.groupby("T") if T in base])
+        out["H9"] = {"n": len(m10), "days": len(dd), "stat_pp": float(dd.mean()) if len(dd) else float("nan"), "t": float(dd.mean() / (dd.std(ddof=1) / np.sqrt(len(dd)))) if len(dd) >= 3 else float("nan"), "expect": "<0"}
+    out.setdefault("H9", {"n": len(m10), "expect": "<0"})
     return out
 
 

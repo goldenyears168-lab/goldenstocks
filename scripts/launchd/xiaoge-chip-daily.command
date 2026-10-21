@@ -62,6 +62,10 @@ LOG="${STATE}/logs/xiaoge_chip_daily_$(date +%Y%m%d).log"
   if [[ "${rc}" -eq 0 ]]; then
     nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_chip_daily.py" --burst --max-minutes 25 || echo "WARN: burst rc=$?"
   fi
+  # 權證分點收集：大漲≥5%／M09、M07 追蹤股的認購權證前 8 檔分點（買超認購權證＝小哥選股主表的資料端），≤20 分鐘
+  if [[ "${rc}" -eq 0 ]]; then
+    nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_warrant_tape.py" --max-minutes 20 || echo "WARN: warrant_tape rc=$?"
+  fi
   if [[ "${rc}" -eq 0 ]]; then
     nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_notebook.py" || echo "WARN: xiaoge_notebook failed rc=$?"
   else

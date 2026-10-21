@@ -30,6 +30,7 @@ from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
 INV = DATA_DIR / "chip" / "xiaoge_inventory"
 CH = DATA_DIR / "chip" / "xiaoge"
 INTRA = DATA_DIR / "chip" / "xiaoge_intraday"
+WARR = DATA_DIR / "chip" / "xiaoge_warrant"
 
 
 def next_day(c, t: str):
@@ -68,6 +69,26 @@ def intraday_feats(N: str, sid: str, prev_close: float) -> dict:
     return out
 
 
+def warrant_flip(T: str, N: str, sid: str) -> dict:
+    """T 日認購權證買超前5分點（xiaoge_warrant_tape summary）在 T+1 於同標的權證的淨買賣：w_flip＝max(0,−N淨)/T淨（≥0.7＝隔天倒）。"""
+    sp, npq = WARR / T / "summary.json", WARR / N / "warrant_branch.parquet"
+    if not sp.exists():
+        return {}
+    u = json.loads(sp.read_text(encoding="utf-8")).get("underlyings", {}).get(sid)
+    if not u or not u["top_buyers"]:
+        return {}
+    out = {"w_buy_top5_wan": round(u["buy_amt_top5"] / 1e4), "w_buyers": "、".join(b["name"] for b in u["top_buyers"][:3])}
+    if npq.exists():
+        n = pd.read_parquet(npq); n = n[n.und == sid]
+        if len(n):
+            ids = {b["id"] for b in u["top_buyers"]}
+            net_n = float((n[n.branch_id.isin(ids)].buy_lots - n[n.branch_id.isin(ids)].sell_lots).sum())
+            net_t = float(sum(b["net_lots"] for b in u["top_buyers"]))
+            out["w_net_T_lots"] = net_t; out["w_net_N_lots"] = net_n
+            out["w_flip_ratio"] = round(max(0.0, -net_n) / net_t, 2) if net_t else None
+    return out
+
+
 def process(c, inv_path: Path) -> list[dict]:
     inv = json.loads(inv_path.read_text(encoding="utf-8")); T = inv["date"]
     N = next_day(c, T)
@@ -102,7 +123,20 @@ def process(c, inv_path: Path) -> list[dict]:
                  "gap_pct": round((nb.open / tc.close - 1) * 100, 2), "oc_pct": round((nb.close / nb.open - 1) * 100, 2), "cc_pct": round((nb.close / tc.close - 1) * 100, 2),
                  "high_pct": round((nb.high / tc.close - 1) * 100, 2), "low_pct": round((nb.low / tc.close - 1) * 100, 2)}
             r.update(intraday_feats(N, sid, float(tc.close)))
+            r.update(warrant_flip(T, N, sid))
             rows.append(r)
+    for h in inv["methods"].get("M10", {}).get("hits", []):
+        sid = h["stock"]
+        b = pd.read_sql_query("select trade_date d,open,high,low,close from stock_daily_bars where stock_id=? and source in ('twse_mi_index','tpex_daily') and trade_date in (?,?)",
+                              c, params=(sid, T, N)).drop_duplicates("d").set_index("d")
+        if len(b) < 2:
+            continue
+        tc, nb = b.loc[T], b.loc[N]
+        r = {"T": T, "N": N, "method": "M10", "stock": sid, "name": h["name"], "chg_T": h.get("chg_pct"), "turnover_T": h.get("turnover_pct"), "flagged": h.get("branch") or "",
+             "gap_pct": round((nb.open / tc.close - 1) * 100, 2), "oc_pct": round((nb.close / nb.open - 1) * 100, 2), "cc_pct": round((nb.close / tc.close - 1) * 100, 2),
+             "high_pct": round((nb.high / tc.close - 1) * 100, 2), "low_pct": round((nb.low / tc.close - 1) * 100, 2), "dealer_r_pct": h.get("dealer_r_pct")}
+        r.update(intraday_feats(N, sid, float(tc.close))); r.update(warrant_flip(T, N, sid))
+        rows.append(r)
     return rows
 
 

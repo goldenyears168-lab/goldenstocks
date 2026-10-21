@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from stock_db import DATA_DIR, DEFAULT_DB_PATH  # noqa: E402
 
 CHIP = DATA_DIR / "chip" / "xiaoge"
+WARR = DATA_DIR / "chip" / "xiaoge_warrant"
 OUT = DATA_DIR / "chip" / "xiaoge_inventory"
 NOTE = DATA_DIR / "chip" / "xiaoge_notebook"
 MIN_TURNOVER = 3.0e7          # 前 20 日平均成交值（流動性母體；同 flip-habit 研究）
@@ -41,6 +42,7 @@ METHODS = {
     "M06": ("關鍵分點低檔建倉", "part_03 §3.5", "小哥點名的關鍵分點/地緣/高手/公司派 今日買超前5且≥1%量，且收盤位於3年區間最低25%"),
     "M07": ("隔日沖短空池", "part_04 §4；part_02 2.13", "近5日曾列入M04、今日收紅K、且買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（逐股看紀錄，不看分點整體名聲；大股東賣：缺資料，未判）"),
     "M09": ("隔日沖慣犯大買（大漲）", "part_12 §三；part_04 §4.3 步驟九", "今日漲幅≥5%、買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（≥1次；≥2次標強）；訊號日(大漲/漲停那天)周轉率≥30% 標高周轉（小哥：隔日沖＋周轉率最高、30%以上最好）。權證買超/自營比：缺資料"),
+    "M10": ("權證賣壓候選", "part_12 §三", "漲幅≥5% 且 認購權證(當日成交額前8檔)買超前5分點估計合計≥1,000萬元（小哥門檻；金額為下限，僅前8檔）；附自營商買超比(官方T86)與權證買超分點"),
     "M08": ("純空頭（月線下彎＋主力賣超）", "part_04 §1.1", "月線下彎且主力集中度<0（僅收集池有分點）"),
 }
 
@@ -273,10 +275,27 @@ def main():
                     m7.setdefault(sid, []).append(tag)
                 if float(r.ret1) >= 0.05:
                     m9.setdefault(sid, []).append((fl, tag))
+    wsum = {}
+    wp = WARR / day / "summary.json"
+    if wp.exists():
+        wsum = json.loads(wp.read_text(encoding="utf-8")).get("underlyings", {})
+    dealer = {}
+    for sid_, dn in c.execute("select stock_id, dealer_self_net from stock_institutional_daily where trade_date=? and source in ('twse_t86','tpex_insti') and length(stock_id)=4", (day,)).fetchall():
+        dealer[sid_] = dn
+    def wtxt(sid_):
+        u = wsum.get(sid_)
+        return None if not u else "、".join(f'{b["name"]}{b["net_lots"]}張≈{b["amt_est"] / 1e4:.0f}萬' for b in u["top_buyers"][:3])
+    for sid, f in hist.items():
+        r = f.iloc[-1]
+        u = wsum.get(sid)
+        if u and float(r.ret1) >= 0.05 and u["buy_amt_top5"] >= 1.0e7:
+            dr = (dealer.get(sid) / float(r.volume) * 100) if dealer.get(sid) is not None and r.volume else None
+            hits["M10"].append(row(sid, f, {"chg_pct": round(float(r.ret1) * 100, 2), "warrant_buy_top5_wan": round(u["buy_amt_top5"] / 1e4), "branch": wtxt(sid),
+                                           "dealer_r_pct": None if dr is None else round(dr, 2), **turnover_info(f, shares.get(sid))}))
     for sid, bl in m7.items():
-        hits["M07"].append(row(sid, hist[sid], {"branch": "、".join(bl), "major_holder_sell": "缺資料"}))
+        hits["M07"].append(row(sid, hist[sid], {"branch": "、".join(bl), "major_holder_sell": "缺資料", "warrant_buyers": wtxt(sid)}))
     for sid, bl in m9.items():
-        hits["M09"].append(row(sid, hist[sid], {"branch": "、".join(t for _, t in bl), "strong": max(f for f, _ in bl) >= 2, "chg_pct": round(float(hist[sid].ret1.iloc[-1]) * 100, 2), "weight": "權證買超/自營比：缺資料", **turnover_info(hist[sid], shares.get(sid))}))
+        hits["M09"].append(row(sid, hist[sid], {"branch": "、".join(t for _, t in bl), "strong": max(f for f, _ in bl) >= 2, "chg_pct": round(float(hist[sid].ret1.iloc[-1]) * 100, 2), "weight": "權證買超分點見 warrant_buyers", "warrant_buyers": wtxt(sid), "warrant_buy_top5_wan": (round(wsum[sid]["buy_amt_top5"] / 1e4) if sid in wsum else None), **turnover_info(hist[sid], shares.get(sid))}))
     # 具名分點今日動作（沿用每日筆記本的故事重放）
     stories = []
     nb = NOTE / f"notebook_{day}.json"
