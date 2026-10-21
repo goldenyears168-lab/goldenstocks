@@ -48,7 +48,8 @@ def gcolor(root, g):
 LOAD_FILES = 14                                # 啟動時載入最近幾個日曆檔
 MIN_REFRESH = 1.0                              # 秒
 
-CKPT_SCHEMA = 2                                  # 2：加入『補 tick rule』影子連次與無法判定口數統計（舊檢查點作廢、完整重建一次）
+STREAK_BOOKS = ("TXF", "CDF", "QFF")      # 有連次標注的品牌：大台（預先登記）＋台積電期貨標準／小型（2026-10-21 起前向記錄＋顯示，未預先登記）；小台微台探索期無效不顯示
+CKPT_SCHEMA = 3                                  # 2：加入『補 tick rule』影子連次與無法判定口數統計（3：台積電期貨 CDF／QFF 也跑連次；舊檢查點作廢、完整重建一次）
 CKPT_DIR = CACHE / "futflow_view"            # 檢查點目錄(派生資料,可隨時刪除;刪了只是重啟時完整重建)
 CKPT_EVERY = 30.0                            # 秒
 
@@ -65,6 +66,23 @@ def _new_bar(px):
     return {"o": px, "h": px, "l": px, "c": px, "vol": 0, "bl": z(), "sl": z(), "bn": z(), "sn": z(), "t": 0, "amt": 0.0}
 
 
+LEDGER_PATH = DATA_DIR / "biglot_forward" / "futures_streak_events.jsonl"   # 連次事件前向帳本（大台＋台積電期貨）
+_LEDGER_SEEN: set = set()
+_LEDGER_LOCK = threading.Lock()
+
+
+def _ledger_load_seen():
+    try:
+        for ln in open(LEDGER_PATH, encoding="utf-8"):
+            r = json.loads(ln)
+            _LEDGER_SEEN.add((r["root"], r["version"], r["kind"], r["stype"], r["T"], r["end"]))
+    except (OSError, ValueError, KeyError):
+        pass
+
+
+_ledger_load_seen()
+
+
 class Book:
     """單一品牌的增量讀取狀態。解析與分組規則一律來自 `futures_flow`(共用模組),這裡只負責彙整成分鐘列。"""
 
@@ -78,11 +96,11 @@ class Book:
         # 指數期貨需要『連發』標記(延遲確認 3~8 秒);台積電期貨純名目分組,不需要
         self.tagger = FF.StreakTagger(self._on_tagged) if root in FF.STREAK_ROOTS else None
         # 連次/連量(5 秒窗,小哥口徑):目前只對大台(小台/微台每天亮 12~17 次且無訊號,見 futures_flow.WindowStreak)
-        self.wstreak = FF.WindowStreak() if root == FF.STREAK_ROOT else None
+        self.wstreak = FF.WindowStreak() if root in STREAK_BOOKS else None
         # 影子版（2026-10-21）：凍結版（預先登記，定義不得改）把『買賣價之間、無法判定方向』的成交丟掉（大台約 15~17% 口數）；
         # 影子版用與股票相同的 tick rule（比前一筆價高低，同價承襲）補判後，餵給**同一個** WindowStreak 類別。
         # 兩版亮燈事件一起顯示、互相比對；影子版不屬於預先登記檢定。
-        self.wstreak_fill = FF.WindowStreak() if root == FF.STREAK_ROOT else None
+        self.wstreak_fill = FF.WindowStreak() if root in STREAK_BOOKS else None
         self.merger_fill = FF.BurstMerger(self.pv, self._on_burst_fill, streaming=True) if self.wstreak_fill is not None else None
         self._fill_state: dict = {}             # quote_type → [上一筆價, 上一筆方向]（tick rule 用）
         self.unk: dict = {}                     # (stype, T) → [無法判定口數, 總口數]
@@ -116,6 +134,36 @@ class Book:
         if self.merger_fill is not None:
             self.merger_fill.flush_old()
             self.wstreak_fill.flush(self.merger_fill.last_tt)
+            self._record_streak_events()
+
+    def _record_streak_events(self):
+        """連次亮燈／轉色事件前向帳本（大台＋台積電期貨；凍結版 A 與補 tick rule 影子版 B 都記）。同事件不重複；
+        距現在 ≤180 秒的記 live、其餘（重建／重放）記 replay。例外自吞。價＝該分鐘收盤。"""
+        try:
+            new = []
+            for ver, w in (("A", self.wstreak), ("B", self.wstreak_fill)):
+                for (stype, T), st in w.snapshot().items():
+                    bars = self.sessions.get((stype, T)) or {}
+                    for kind, rows in (("lit", st["lits"]), ("turn", st["turns"])):
+                        for end, d, n in rows:
+                            key = (self.root, ver, kind, stype, T, round(end, 1))
+                            if key in _LEDGER_SEEN:
+                                continue
+                            tm = dt.datetime.fromtimestamp(end, dt.timezone(dt.timedelta(hours=8)))
+                            mk = tm.hour * 60 + tm.minute + (1440 if (stype == "night" and tm.hour * 60 + tm.minute < 480) else 0)
+                            bar = bars.get(mk)
+                            new.append((key, {"root": self.root, "version": ver, "kind": kind, "stype": stype, "T": T, "end": round(end, 1),
+                                              "time": tm.strftime("%Y-%m-%d %H:%M:%S"), "dir": d, "n": n, "px": (bar["c"] if bar else None),
+                                              "source": "live" if abs(time.time() - end) <= 180 else "replay", "logged_at": round(time.time(), 1)}))
+            if new:
+                with _LEDGER_LOCK:
+                    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    with open(LEDGER_PATH, "a", encoding="utf-8") as fh:
+                        for key, rec in new:
+                            _LEDGER_SEEN.add(key)
+                            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 -- 帳本失敗不得影響頁面
+            pass
 
     def feed_line(self, line, file_date, file_key=None):
         t = self.stream.feed(line, file_date, file_key)
@@ -616,14 +664,46 @@ _WD = "一二三四五六日"
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
+def _lit_overlap(la, lb, tol=15.0):
+    """兩版亮燈事件重疊：同方向且相差 ≤tol 秒視為同一個。回傳 (A 有對應 B 的數, B 有對應 A 的數)。"""
+    ma = sum(1 for x in la if any(y[1] == x[1] and abs(y[0] - x[0]) <= tol for y in lb))
+    mb = sum(1 for y in lb if any(x[1] == y[1] and abs(y[0] - x[0]) <= tol for x in la))
+    return ma, mb
+
+
+_STREAK_NOTE = {
+    "TXF": "大台：預先登記確認期（docs/futures-streak-prereg-20261019.md），確認期天數不足、尚無結論",
+    "CDF": "台積電期貨：前向記錄中，未預先登記；逐筆自 2026-10-16 起，樣本不足、不能下結論",
+    "QFF": "台積電小型期貨：前向記錄中，未預先登記；逐筆自 2026-10-16 起，樣本不足、不能下結論",
+}
+
+
+def _streak_legend(root, cur, wsr):
+    """連次標注說明列：符號、版本（凍結／補 tick rule）、兩版亮燈比對、被排除的無法判定口數比例、品牌狀態。"""
+    a, b, unk = wsr
+    sa, sb = (a or {}).get(cur), (b or {}).get(cur)
+    o = ("<div class='meta'>◯紅/◯綠＝連次達 10 亮燈 · ▽△＝連次被反向窗打斷 · 實線＝凍結版、虛線＝補 tick rule 版(描述用,不是進出場訊號)")
+    if sa and sb:
+        na, nb = len(sa["lits"]), len(sb["lits"])
+        ma, mb = _lit_overlap(sa["lits"], sb["lits"])
+        o += f"<br>本盤亮燈：凍結版 {na} 次、補版 {nb} 次；同方向且相差 ≤15 秒視為同一個——凍結版 {ma}/{na}、補版 {mb}/{nb} 重疊"
+    u = (unk or {}).get(cur)
+    if u and u[1]:
+        o += f"<br>⚠ 凍結版排除買賣價之間、無法判定方向的成交——本盤約 {u[0] / u[1] * 100:.1f}% 口數；補版納入"
+    o += f"<br>{_STREAK_NOTE.get(root, '')}；事件寫入 biglot_forward/futures_streak_events.jsonl</div>"
+    return o
+
+
 def _snapshot():
     """在鎖內複製各品牌的盤別資料(淺複製分鐘列表),之後的繪圖不佔鎖。"""
     with _LOCK:
         per = {r: {k: dict(v) for k, v in _BOOKS[r].sessions.items() if v} for r in ROOTS if r in _BOOKS}
         last_ts = {r: _BOOKS[r].last_ts for r in ROOTS if r in _BOOKS}
-        txf = _BOOKS.get("TXF")
-        ws = (txf.wstreak.snapshot() if txf is not None and txf.wstreak is not None else None,
-              txf.wstreak_fill.snapshot() if txf is not None and txf.wstreak_fill is not None else None)
+        ws = {}
+        for r in STREAK_BOOKS:
+            b = _BOOKS.get(r)
+            if b is not None and b.wstreak is not None:
+                ws[r] = (b.wstreak.snapshot(), b.wstreak_fill.snapshot() if b.wstreak_fill is not None else None, dict(b.unk))
     return per, last_ts, ws
 
 
@@ -681,10 +761,11 @@ def _section(cur, per, last_ts, ws, now):
         S = summarize(b, r)
         sess_r = per[r]
         order_r = [k for k in sorted(sess_r, key=lambda k: (k[1], 0 if k[0] == "day" else 1)) if len(sess_r[k]) >= 20 or k == cur]
-        marks = (_streak_marks(ws[0], cur, "A") + _streak_marks(ws[1], cur, "B")) if r == "TXF" else []
+        wsr = ws.get(r) if r in STREAK_BOOKS else None
+        marks = (_streak_marks(wsr[0], cur, "A") + _streak_marks(wsr[1], cur, "B")) if wsr else []
         raw = _overlay_svg(S, f"{FUT_NAME[r]} · 累計內外盤差(外盤−內盤,億元)疊在價格上", marks=marks)
-        if marks:
-            raw += ("<div class='meta'>◯紅/◯綠＝連次達 10 亮燈 · ▽△＝連次被反向窗打斷 · 實線＝凍結版、虛線＝補 tick rule 版(只放大台;描述用,不是進出場訊號)</div>")
+        if wsr:
+            raw += _streak_legend(r, cur, wsr)
         adj = _overlay_svg(S, f"{FUT_NAME[r]} · 扣掉價格影響後的累計(只看形狀,看兩條線在價格之外有沒有分開)",
                            adj=_adj_series(sess_r, order_r, cur, r), marks=marks)
         o.append(f"<div>{raw}</div><div>{adj}</div>")

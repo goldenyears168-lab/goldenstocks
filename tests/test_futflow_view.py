@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts" / "research")]
 
 from biglot import futflow_view as F  # noqa: E402
+
+F.LEDGER_PATH = Path(tempfile.mkdtemp()) / "futures_streak_events.jsonl"     # 測試不得寫進正式前向帳本
 
 
 def row(ts, px, cum, serial, qt="FUTURE", bid=None, ask=None, tt=1, stale=False):
@@ -361,6 +364,41 @@ class FutFlowGoldenTests(unittest.TestCase):
         self.assertIn("[補tick rule版]", svg)
         self.assertEqual(svg.count("轉綠(前段12窗)"), 1)
         self.assertNotIn("轉平", svg)                                       # 平手轉色不畫標記
+
+    def test_tsmc_futures_also_run_streak_with_shadow_and_others_do_not(self):
+        for r in ("TXF", "CDF", "QFF"):
+            b = F.Book(r)
+            self.assertIsNotNone(b.wstreak, r)
+            self.assertIsNotNone(b.wstreak_fill, r)
+        for r in ("MXF", "TMF"):
+            self.assertIsNone(F.Book(r).wstreak, r)                     # 小台微台探索期無效，不顯示
+        self.assertEqual(F.STREAK_BOOKS, ("TXF", "CDF", "QFF"))
+
+    def test_streak_events_ledger_records_both_versions_once(self):
+        import futures_flow as FFm
+        F._LEDGER_SEEN.clear()
+        F.LEDGER_PATH = Path(tempfile.mkdtemp()) / "futures_streak_events.jsonl"
+        b = F.Book("CDF")
+        b.sessions[("day", "2026-10-07")] = {m: dict(bar) for m, bar in _synthetic_session(7).items()}
+        t0 = dt.datetime(2026, 10, 7, 9, 5, 0, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp()
+        for i in range(12):
+            bu = FFm.Burst("FUTURE", 1, int((t0 + i * 5 + 1) * 1e6), "day", "2026-10-07", 545, 3, 1.0, 2200.0)
+            b.wstreak.add(bu); b.wstreak_fill.add(bu)
+        b.wstreak.flush_all(); b.wstreak_fill.flush_all()
+        b._record_streak_events(); b._record_streak_events()          # 第二次不得重複
+        rows = [json.loads(x) for x in F.LEDGER_PATH.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(sorted((r["version"], r["kind"]) for r in rows), [("A", "lit"), ("B", "lit")])
+        self.assertTrue(all(r["root"] == "CDF" and r["dir"] == 1 and r["n"] == 10 and r["source"] == "replay" for r in rows))   # 2026-10-07 距現在遠 → replay
+
+    def test_streak_legend_mentions_brand_status_and_excluded_share(self):
+        wsr = ({("day", "T"): {"lits": [[1000.0, 1, 10]], "turns": []}}, {("day", "T"): {"lits": [[1005.0, 1, 10], [2000.0, -1, 10]], "turns": []}},
+               {("day", "T"): [150, 1000]})
+        txt = F._streak_legend("CDF", ("day", "T"), wsr)
+        self.assertIn("台積電期貨：前向記錄中", txt)
+        self.assertIn("15.0%", txt)                                       # 無法判定口數被凍結版排除的比例
+        self.assertIn("凍結版 1 次、補版 2 次", txt)
+        self.assertIn("凍結版 1/1、補版 1/2 重疊", txt)
+        self.assertIn("大台：預先登記確認期", F._streak_legend("TXF", ("day", "T"), wsr))
 
     def test_health_shape(self):
         from biglot import health as H
