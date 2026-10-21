@@ -39,7 +39,8 @@ METHODS = {
     "M04": ("高檔出貨股", "part_02 2.4；part_04 §3", "月線下彎且乖離年線>40%；籌碼面：主力集中度<0（僅收集池有分點）"),
     "M05": ("地板股候選（前一晚名單）", "part_04 §2；手冊 §2 第6點", "今日黑K、量≥20日均量2倍、月線下彎、乖離月線≤該股近500日乖離的5%分位"),
     "M06": ("關鍵分點低檔建倉", "part_03 §3.5", "小哥點名的關鍵分點/地緣/高手/公司派 今日買超前5且≥1%量，且收盤位於3年區間最低25%"),
-    "M07": ("隔日沖短空池", "part_04 §4；part_02 2.13", "近5日曾列入M04、今日收紅K、且買超前5名含小哥點名的隔日沖分點（大股東賣：缺資料，未判）"),
+    "M07": ("隔日沖短空池", "part_04 §4；part_02 2.13", "近5日曾列入M04、今日收紅K、且買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（逐股看紀錄，不看分點整體名聲；大股東賣：缺資料，未判）"),
+    "M09": ("隔日沖慣犯大買（大漲）", "part_12 §三；part_02 2.13", "今日漲幅≥5%、買超前5(≥3%量)中有分點在『該股』曾買進隔日賣出（≥1次；≥2次標強）。權證買超/自營比：缺資料"),
     "M08": ("純空頭（月線下彎＋主力賣超）", "part_04 §1.1", "月線下彎且主力集中度<0（僅收集池有分點）"),
 }
 
@@ -99,6 +100,7 @@ def features(g: pd.DataFrame) -> pd.DataFrame:
     g["high_out"] = g.ma_dn & (g.bias240 > 0.40)
     g["floor"] = (cl < g.open) & (g.vr >= 2) & g.ma_dn & (g.bias20 <= g.floor_ref)
     g["red"] = cl > g.open
+    g["ret1"] = cl.pct_change()
     return g
 
 
@@ -119,6 +121,40 @@ def chip_today(day: str, vol_lots: dict) -> dict:
                     "top5": [{"id": str(g["branch_id"].iloc[j]), "name": str(g["branch"].iloc[j]), "net_lots": int(net[j]), "share": float(net[j] / v)}
                              for j in order if net[j] > 0]}
     return res
+
+
+def habit_table(day: str, minsh: float = 0.03, alpha: float = 0.7, max_days: int = 60) -> dict:
+    """(股票, 分點) → {events, flips, ex}：只用 chip/xiaoge 已抓的前15名資料；事件＝該分點在該股前5大買超且≥minsh量，
+    flip＝隔日賣出≥alpha×淨買。小哥原則：隔日沖是「每個個股各自看紀錄」，不是整個分點一概而論（只用 d1≤day，PIT）。"""
+    days = sorted(p.name for p in CHIP.iterdir() if (p / "stock_top15.parquet").exists() and p.name <= day)[-max_days:]
+    frames = {d: pd.read_parquet(CHIP / d / "stock_top15.parquet") for d in days}
+    vol = {}
+    D = {}
+    for d, f in frames.items():
+        for r in f.itertuples():
+            D.setdefault((r.stock_id, d), {})[str(r.branch_id)] = (r.buy_lots, r.sell_lots)
+    return {"days": days, "D": D}
+
+
+def habit_of(H: dict, vol_lots_by_day: dict, sid: str, b: str, day: str, minsh=0.03, alpha=0.7) -> tuple[int, int, list]:
+    days, D = H["days"], H["D"]
+    ev = fl = 0; ex = []
+    for i in range(len(days) - 1):
+        d0, d1 = days[i], days[i + 1]
+        if d1 > day:
+            break
+        m = D.get((sid, d0)); v = vol_lots_by_day.get((sid, d0))
+        if not m or not v:
+            continue
+        net = {k: x[0] - x[1] for k, x in m.items()}
+        top = sorted(net, key=lambda k: -net[k])[:5]
+        if b not in top or net[b] <= 0 or net[b] < minsh * v:
+            continue
+        ev += 1
+        nxt = D.get((sid, d1), {}).get(b)
+        if nxt and nxt[1] >= alpha * net[b]:
+            fl += 1; ex.append(f"{d0[5:]}買{int(net[b])}→{d1[5:]}賣{int(nxt[1])}")
+    return ev, fl, ex
 
 
 def market_env(c, day) -> dict:
@@ -184,7 +220,13 @@ def main():
         return o
 
     hits = {k: [] for k in METHODS}
-    high_out_recent = set(); m7 = {}
+    HT = habit_table(day); vol_by_day = {}
+    ds_ = set(HT["days"])
+    for sid_, f_ in hist.items():
+        for d_, v_ in zip(f_.d, f_.volume):
+            if d_ in ds_:
+                vol_by_day[(sid_, d_)] = float(v_) / 1000.0
+    high_out_recent = set(); m7 = {}; m9 = {}
     for sid, f in hist.items():
         r = f.iloc[-1]; ch = chip.get(sid)
         if f.high_out.tail(5).any():
@@ -209,10 +251,21 @@ def main():
                     p3 = pos3y(c, sid, day)
                     if p3 is not None and p3 <= 0.25:
                         hits["M06"].append(row(sid, f, {"branch": e["name"], "role": e["role"], "net_lots": x["net_lots"], "pos3y": round(p3, 2), "says": e.get("says", "")}))
-                if e and e["role"] == "隔日沖" and sid in high_out_recent and r.red:
-                    m7.setdefault(sid, []).append(f'{e["name"]}({x["net_lots"]}張)')
+            for x in ch["top5"]:
+                if x["share"] < 0.03:
+                    continue
+                ev, fl, ex = habit_of(HT, vol_by_day, sid, x["id"], day)
+                if fl < 1:
+                    continue
+                tag = f'{x["name"]}({x["net_lots"]}張,{fl}/{ev}次隔日賣' + ("," + ex[-1] if ex else "") + ")"
+                if sid in high_out_recent and r.red:
+                    m7.setdefault(sid, []).append(tag)
+                if float(r.ret1) >= 0.05:
+                    m9.setdefault(sid, []).append((fl, tag))
     for sid, bl in m7.items():
         hits["M07"].append(row(sid, hist[sid], {"branch": "、".join(bl), "major_holder_sell": "缺資料"}))
+    for sid, bl in m9.items():
+        hits["M09"].append(row(sid, hist[sid], {"branch": "、".join(t for _, t in bl), "strong": max(f for f, _ in bl) >= 2, "chg_pct": round(float(hist[sid].ret1.iloc[-1]) * 100, 2), "weight": "權證買超/自營比：缺資料"}))
     # 具名分點今日動作（沿用每日筆記本的故事重放）
     stories = []
     nb = NOTE / f"notebook_{day}.json"
