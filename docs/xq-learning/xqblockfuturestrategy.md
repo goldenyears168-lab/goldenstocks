@@ -1,0 +1,103 @@
+---
+source: https://www.xq.com.tw/learning/xqblockfuturestrategy/
+title: 【常見情境實戰篇】新手也能懂的期貨策略應用 - XQ 全球贏家
+fetched: 2026-10-23
+---
+
+[學習地圖](https://www.xq.com.tw/learning/)【常見情境實戰篇】新手也能懂的期貨策略應用
+
+# 【常見情境實戰篇】新手也能懂的期貨策略應用
+
+###### 2026-02-09 15:26:17
+
+學習分類：[量化積木模組](https://www.xq.com.tw/learning/?category=blocks_feature)內容標籤：[期貨](https://www.xq.com.tw/learning/?tags=%e6%9c%9f%e8%b2%a8)[策略開發](https://www.xq.com.tw/learning/?tags=trading_strategy)[量化積木](https://www.xq.com.tw/learning/?tags=learn_xqblocks)
+
+複製連結
+
+[![](images/d4a5e2a69e.png)](https://www.xq.com.tw/wp-content/uploads/2026/02/未命名設計-3.png)量化積木期貨功能的核心優勢，在於「 A （ 執行商品 ） → B （ 條件判斷 ） → C （ 交易商品 ） 」的三角色設計。本篇將整理三種常見情境並提供實務策略案例，協助使用者快速掌握跨商品策略的應用方式。
+
+## **情境一：只做股票**
+
+此為最典型的「單純股票策略」，適合剛入門的使用者。策略邏輯為監控股票，並直接交易該股票本身。
+
+### **策略設定範例**
+
+- **執行商品 （ A ）** ：上市櫃普通股
+- **條件判斷 （ B ）** ：個股條件（例如：收盤價 > 60 日均線）
+- **交易商品 （ C ）** ：股票
+
+### **操作步驟說明**
+
+- **選擇執行商品**：在策略設定頁面，將執行商品設為「上市櫃普通股」。交易商品預設為「股票」，無需更動。 [![](images/65c1408608.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681555296.jpg)
+- **設定進 / 出場條件**：設定方式與一般股票策略相同。例如設定「收盤價 > 60 日均線」作為進場條件。 [![](images/ee1db1f233.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681611564.jpg)[![](images/b80974322e.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681652589.jpg)
+- **回測與執行**：完成設定後進行回測，確認策略績效。 [![](images/00119cac49.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681693614.jpg)
+
+## **情境二：看股票做個股期**
+
+此情境常見於「槓桿化操作」。透過監控現貨（股票）的價格或籌碼訊號，下單至對應的期貨商品，以放大獲利空間。
+
+### **策略設定範例**
+
+- **執行商品 （ A ）** ：台指前 100 檔權值股
+- **條件判斷 （ B ）** ：個股條件（例如：外資連續 3 天買超 > 1000 張）
+- **交易商品 （ C ）** ：小型期貨 > 期貨 > 股票
+
+### **操作步驟說明**
+
+**1. 選擇執行商品與交易商品**：
+
+- - 執行商品選擇股票清單（如台指前 100 檔權值股）。
+- 在交易商品欄位點選「自訂」，並依序勾選排序： **1. 小型期貨 → 2. 期貨 → 3. 股票**。系統將依此順序尋找可交易標的。
+[![](images/580212a74a.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681733499.jpg)**2. 設定進 / 出場條件**：
+
+- - 由於交易商品包含期貨，請務必開啟 **「支援期貨與關聯商品」** 開關。
+- 開啟後，即可根據現貨（股票）的數據來設定進出場條件。
+[![](images/6b135b20af.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681818716.jpg)**3. 檢視與回測**：
+
+- - 點選「預覽」可確認依據設定順序，最終會交易到的具體商品（例如：台積電 → 小型台積電期貨）。
+[![](images/b8c4839985.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769681897015.jpg)
+
+## **情境三：看大台指做小台指**
+
+此策略以大台指（全日盤）判斷市場趨勢，但實際下單使用小台指以控制風險與成本，適合中小資金交易者。
+
+### **策略設定範例**
+
+- **執行商品 （ A ）** ：連續月份指數期貨（大台指）
+- **條件判斷 （ B ）** ：期貨條件（例如：十大交易人淨多單）
+- **交易商品 （ C ）** ：小型期貨
+
+### **操作步驟說明**
+
+**1. 選擇執行商品與交易商品**：
+
+- - 執行商品設定為「連續月份指數期貨」（代表大台）。
+- 交易商品設定為「小型期貨」。
+[![](images/ac9892ba82.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769682564507.jpg)**2. 設定進 / 出場條件**：
+
+- - 開啟 **「支援期貨與關聯商品」** 開關。
+- 設定期貨專屬條件，例如「期貨 - 十大交易人淨多單」。
+[![](images/40ca268042.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769682616532.jpg)**3. 執行回測**：完成設定後進行回測。此策略能實現「以大趨勢判斷，用小部位進場」的操作邏輯。 [![](images/8ab5d25b39.jpg)](https://www.xq.com.tw/wp-content/uploads/2026/01/messageImage_1769682646084.jpg)
+
+## **操作提示與總結**
+
+### **策略設定三步驟回顧**
+
+- **設定執行商品 （ A ）** ：選擇要監控的標的（股票 / 期貨）。
+- **設定交易商品 （ C ）** ：選擇實際下單的標的（股票 / 小台 / 大台），可利用「自訂排序」功能設定優先順序。
+- **設定關聯商品 （ B ）** ：設定條件判斷的依據。
+
+### **應用建議**
+
+- **股票新手**：建議從「情境一」開始，單純操作股票。
+- **進階操作**：可嘗試「情境二」，利用現貨訊號操作個股期貨，靈活運用槓桿。
+- **小資族群**：適合「情境三」，透過大台指看方向，下單小台指降低門檻。
+- **專業玩家**：熟練後可混合使用多種商品，打造股票與期貨並行的多元策略。
+
+## 最新文章
+
+[【功能更新】量化積木新增「等額（100 萬元）」交易模式！三大更新重點全解析](https://www.xq.com.tw/learning/xq-blocks-equal-value-trading-mode/)[【新手也能上手】量化積木支援「期貨商品」啦！](https://www.xq.com.tw/learning/xqblockfuture/)[【常見情境實戰篇】新手也能懂的期貨策略應用](https://www.xq.com.tw/learning/xqblockfuturestrategy/)[【新春活動】2026 金馬年開運紅包：新用戶專屬三大量化投資策略公開！](https://www.xq.com.tw/learning/xq2026threestragy/)[為什麼要做「量化交易」？避開散戶 3 大心態，打造你的投資 SOP](https://www.xq.com.tw/learning/quanttrading3retailinvestorminds/)
+
+## 學習分類
+
+[不分模組](https://www.xq.com.tw/learning/)[基本功能](https://www.xq.com.tw/learning/?category=basic)[尊榮會員](https://www.xq.com.tw/learning/?category=prime)[台股進階模組](https://www.xq.com.tw/learning/?category=tw_source)[量化積木模組](https://www.xq.com.tw/learning/?category=blocks_feature)[盤中量化交易模組](https://www.xq.com.tw/learning/?category=trading_feature)[盤後量化選股模組](https://www.xq.com.tw/learning/?category=selection_feature)[產業數據模組](https://www.xq.com.tw/learning/?category=industry_feature)[權證操作模組](https://www.xq.com.tw/learning/?category=warrant_feature)[美股分析模組](https://www.xq.com.tw/learning/?category=us_source)
