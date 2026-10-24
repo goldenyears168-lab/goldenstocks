@@ -66,6 +66,10 @@ LOG="${STATE}/logs/xiaoge_chip_daily_$(date +%Y%m%d).log"
   if [[ "${rc}" -eq 0 ]]; then
     nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_warrant_tape.py" --max-minutes 20 || echo "WARN: warrant_tape rc=$?"
   fi
+  # 自營商避險／自行買賣拆分（官方 T86＋櫃買，只補缺的日子，約 2 個請求）
+  if [[ "${rc}" -eq 0 ]]; then
+    nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_dealer_split.py" || echo "WARN: dealer_split rc=$?"
+  fi
   if [[ "${rc}" -eq 0 ]]; then
     nice -n 10 "${PYTHON}" "${ROOT}/scripts/ops/xiaoge_notebook.py" || echo "WARN: xiaoge_notebook failed rc=$?"
   else
