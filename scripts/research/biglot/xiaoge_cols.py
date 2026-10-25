@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from biglot.streak import EXH_MIN_NB5
+from biglot.streak import EXH_MIN_NB5, EXH_RVOL  # noqa: F401
 from stock_db import DEFAULT_DB_PATH
 
 CTX: dict[str, dict] = {}
@@ -119,16 +119,18 @@ def _snap(sid):
     return streak_live.snapshot(sid)
 
 
-_TIP1 = ("日均量<3,000張的標的灰化、不亮燈不標竭盡（作者標的限定）。大量門檻＝該股同30分鐘時段前10日單窗主導量P90（無則退回5×均量）。小哥原版·連次/連量（出處：官方說明欄 2024-11-21／2025-07-09、V10 14:01、V14 11:24）：每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；"
-         "連次達±10亮燈(🔔)；連量=最近一個5秒窗的主導方向成交張數（副字『累計』為官方畫面「每一連次累積的成交量總和」解讀，兩者並列）；"
-         "『轉色』=亮燈的連攻段被打斷：紅轉綠=買盤竭盡、綠轉紅=賣盤竭盡；『緩搓』=約2分鐘內漲幅超過3.5%。"
-         "小哥未說明：連量亮燈的張數門檻。「竭盡」需三要件同時成立（作者原文：連次達±10後『突然轉色』，且伴隨大量連次連量、一直出量漲不上去=『空在爆量漲不動』）：①連次≥10後轉色 ②多次爆量 ③價格漲不動；②③的數字作者未公開，本欄用爆窗≥3（單窗大量＝該股同30分鐘時段前10日單窗主導量P90，無資料退回5×均量）與『末2窗未創段內新高/低』（皆本repo自訂，欄位會註明）。只符合①顯示為『轉色』、並列出未達的要件。順大勢逆小勢：黑K日買盤竭盡＝空方新倉方向、紅K日賣盤竭盡＝多方新倉方向；反向的竭盡讀成『平倉／回補提示』（小哥：順大勢、在小波段轉彎處動作）。「突然轉色」要求打斷窗本身有量（≥max(5張, 該時段大量門檻一半)，自訂）。純描述，不進分數。")
+_TIP1 = ("日均量<3,000張的標的灰化、不亮燈不標竭盡（作者標的限定）。小哥原版·連次/連量（出處：官方說明欄 2024-11-21／2025-07-09、V10 14:01、V14 11:24）：每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；"
+         "連次達±10亮燈(🔔，官方)；連量=最近一個5秒窗的主導方向成交張數（副字『累計』為官方畫面「每一連次累積的成交量總和」解讀，兩者並列）；"
+         "『轉色』=連攻段被打斷（平手只算中斷）：紅轉綠=買盤竭盡側、綠轉紅=賣盤竭盡側；『緩搓』=約2分鐘內漲幅超過3.5%。"
+         "小哥未公開：連量亮燈門檻、『大量』的數字。本欄『竭盡』採本專案研究定案的參數（2026-10-25 起，規則 exh-v2；不是小哥的數字）："
+         "轉色 ∧ 連次≥4 ∧ 近30秒相對成交量(RVOL)≥2倍（RVOL＝近30秒成交量÷該股過去10日整日平均每30秒成交量）。依據：33日·1,170股票日·91.9萬事件的網格（前半選／後半驗）：5秒窗最佳，每檔每天約20個（多空合計），含零毛 +5.1／+6.2／+6.6 bps（1／3／5分），仍小於價差（~20bps+），只是時機提示、不是下單訊號。"
+         "順大勢逆小勢：黑K日買盤竭盡＝空方新倉方向、紅K日賣盤竭盡＝多方新倉方向；反向的竭盡讀成『平倉／回補提示』（小哥：順大勢、在小波段轉彎處動作）。規格 docs/exhaustion-streak-spec.md、研究 docs/exhaust-reversal-scale-20261025.md。")
 _TIP2 = ("小哥原版·放空三步驟（出處：說明欄 2025-09-27／2025-08-07；書 §5）：①周轉率>30%（高周轉率股，確保流動性）；"
          "②高壓區：連續兩根以上大紅K、或連兩三天漲停（或空頭中的反彈衰竭，需人工判斷）；③等當日轉弱的明確訊號，行情仍強時不逆勢；"
          "不放空布林通道第一根上漲K；盤勢強時避免短空；順大勢逆小勢（預期黑K才空）。"
          "本欄只列客觀可算的①②與今日紅K/黑K；『大紅K幾%』『當日轉弱怎麼算』小哥未說明，故不自設。"
          "①②齊備≠進場訊號，小哥要求最後再等連次連量轉色。②另列昨量÷前5日均量（R27：前日爆量漲停/長紅→今日波動大、隔日沖出貨）。尚未接：③轉弱的客觀定義、布林第一根、盤勢強避免短空（R64b）、夏天不空、隔日沖買超第一名／大股東賣超（分點盤後才有）。純描述，不進分數。")
-_TIP3 = ("我們的統計·竭盡（本repo自訂門檻與檢定；與小哥原版分開）：窗×N=該窗÷每5秒均量；爆窗×k=本段內單窗≥5×均量的窗數（5×為自訂）；"
+_TIP3 = ("我們的統計·竭盡（本repo自訂門檻與檢定；與小哥原版分開）：RVOL=最近6個5秒窗(30秒)成交量÷該股平均每30秒成交量（竭盡v2判準＝轉色∧連次≥4∧RVOL≥2×）；窗×N=該窗÷每5秒均量；爆窗×k=本段內單窗≥5×均量的窗數（5×為自訂）；"
          "累計=本段累計張；價差=現在 (ask−bid)/價 bps。P1=預登記規則（我們的統計規則，不是小哥的邏輯，且與小哥步驟③『等當日轉弱』方向相反——要求今日仍為紅K；觸發在連次剛到10時，不是等轉色）：昨漲>3%∧今日仍紅K∧外攻連次≥10∧本段已有爆窗；"
          "歷史（26日×41檔）訓練/測試5分鐘放空毛報酬 +12.8/+10.1bps（t 3.5/2.7），但價差約26bps→淨約−15bps，且是試了十餘個條件之一，"
          "故【不是放空訊號】，只作前向驗證記錄（事件寫入 forward_p1_events.jsonl，累積≥30日且≥100筆再評估）。"
@@ -157,21 +159,17 @@ def cell_author_streak(sid: str) -> str:
     if f:
         side = "紅→綠" if f["d"] > 0 else "綠→紅"
         brk = f"打斷窗{f['brk_lots']:,.0f}張" if f.get("brk_lots") else "打斷窗"
+        rv = f.get("rvol30")
+        rvs = f"RVOL {rv:.1f}×" if rv is not None else "RVOL 無分均量"
         if f.get("exh"):
             # 順大勢＝新倉方向（黑K日的買盤竭盡＝空方新倉點、紅K日的賣盤竭盡＝多方新倉點）；反向＝平倉／回補提示（小哥：順大勢、逆小勢，在轉彎處動作）
             aligned = (f["d"] > 0) != bool(f.get("day_up"))
             role = "順大勢·新倉方向" if aligned else f"平倉/回補提示·今日{'紅' if f.get('day_up') else '黑'}K"
             flip = (f"<div style='font-size:9px;font-weight:600'>{'買盤竭盡' if f['d'] > 0 else '賣盤竭盡'}"
-                    f"<span class='dim'>({f['n']}連·{brk}·多次爆量·漲不動·{role}·{f['age']:.0f}s前)</span></div>")
+                    f"<span class='dim'>({f['n']}連·{rvs}·{role}·{f['age']:.0f}s前)</span></div>")
         else:
-            miss = []
-            if f.get("nb5", 0) < EXH_MIN_NB5:
-                miss.append("量不足")
-            if not f.get("stall"):
-                miss.append("價仍在創極值")
-            if not f.get("brk_ok"):
-                miss.append("打斷窗量不足")
-            flip = (f"<div style='font-size:9px'>轉色 {side}<span class='dim'>({f['n']}連·{brk}·未達竭盡:{'、'.join(miss) or '—'}·{f['age']:.0f}s前)</span></div>")
+            miss = ["RVOL不足(<%g×)" % EXH_RVOL] if rv is not None else ["無分均量"]
+            flip = (f"<div style='font-size:9px'>轉色 {side}<span class='dim'>({f['n']}連·{rvs}·未達竭盡:{'、'.join(miss)}·{f['age']:.0f}s前)</span></div>")
     slow = ("<div style='font-size:9px;color:#d29922'>緩搓(2分漲&gt;3.5%)</div>"
             if s.get("ret2m") is not None and s["ret2m"] >= SLOW_RISE_BPS else "")
     return f"<td class='{cls}' data-sort='{abs(n) * d}' title='{_TIP1}'>{main}{cum}{flip}{slow}</td>"
@@ -204,6 +202,8 @@ def cell_stats(sid: str, row: dict) -> str:
     if not s or not s["d"]:
         return f"<td class='dim' data-sort='0' title='{_TIP3}'>—</td>"
     bits = []
+    if s.get("rvol30_now") is not None:
+        bits.append(f"RVOL {s['rvol30_now']:.1f}×")
     if s["win_x"] is not None:
         bits.append(f"窗×{s['win_x']:.0f}")
     if s["nb5"]:
@@ -221,6 +221,6 @@ def cell_stats(sid: str, row: dict) -> str:
         tags += ("<div style='font-size:9px;color:#d29922;font-weight:600'>P1成立"
                  "<span class='dim'>(我們的·今仍紅K,與小哥步驟③相反·非訊號)</span></div>")
     if s.get("risk"):
-        tags += "<div style='font-size:9px;color:#d29922'>拉升力竭風險</div>"
+        tags += "<div style='font-size:9px;color:#d29922'>買盤竭盡(v2:轉色·連次≥4·RVOL≥2×)</div>"
     txt = "·".join(bits)
     return f"<td class='dim' data-sort='{s['nb5']}' title='{_TIP3}'><span style='font-size:9px'>{txt}</span>{tags}</td>"

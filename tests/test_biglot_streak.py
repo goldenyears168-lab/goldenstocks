@@ -96,7 +96,7 @@ class StreakTest(unittest.TestCase):
         snap = self.trk.snapshot(sym, now)
         self.assertEqual(snap["status"], "剛中斷")
         self.assertGreaterEqual(snap["nb5"], 0)
-        self.assertTrue(snap["risk"])           # 剛中斷 ∧ 該段連次≥10 ∧ 爆量窗≥3
+        self.assertTrue(snap["risk"])           # 竭盡v2 上側：剛轉色 ∧ 連次≥4 ∧ RVOL≥2×（每窗 10 張，ref=10 張/分 → 30 秒 RVOL 遠大於 2）
         far = self.trk.snapshot(sym, now + 120)                # 60 秒後不再「剛中斷」
         self.assertEqual(far["status"], "")
         self.assertFalse(far["risk"])
@@ -150,21 +150,49 @@ class StreakEventsTest(unittest.TestCase):
         self.assertEqual((f["d"], f["n"]), (1, 10))        # 被打斷的是外攻
         self.assertGreaterEqual(f["nb5"], 3)
 
-    def test_exhaustion_needs_volume_and_stall(self):
-        from biglot.streak import is_exhaustion
+    def test_exhaustion_v2_is_flip_and_streak_and_rvol(self):
+        """竭盡v2＝轉色 ∧ 連次≥4 ∧ 近30秒RVOL≥2×；與漲不動、爆窗數、打斷窗量無關。ref=10 張/分 → 每30秒均量 5 張。"""
+        from biglot.streak import is_exhaustion, EXH_MIN_N, EXH_RVOL
+        self.assertEqual((EXH_MIN_N, EXH_RVOL), (4, 2.0))
+        rising = self._run(px_step=0.5).events("X")[1]                     # 每窗創新高（舊規則『沒漲不動』）→ v2 仍算竭盡
+        self.assertFalse(rising["stall"])
+        self.assertTrue(is_exhaustion(rising))
         flat = self._run(px_step=0.0).events("X")[1]
-        self.assertTrue(flat["stall"] and is_exhaustion(flat))            # 爆量、價格不再創高 → 竭盡
-        rising = self._run(px_step=0.5).events("X")[1]
-        self.assertFalse(rising["stall"])                                  # 每窗都創新高 → 沒漲不動，不算竭盡
-        self.assertFalse(is_exhaustion(rising))
-        thin = self._run(px_step=0.0, outer=2).events("X")[1]              # 每窗 2 張（<5×均量）→ 量不足
-        self.assertLess(thin["nb5"], 3)
+        self.assertTrue(is_exhaustion(flat))
+        self.assertAlmostEqual(flat["vol30"], 5 * 30 + 40)                 # 轉色窗(40 張內盤) + 前 5 個外攻窗各 30 張
+        self.assertAlmostEqual(flat["rvol30"], (5 * 30 + 40) / 5.0)        # ÷ (ref/2 = 5 張)
+        thin = self._run(px_step=0.0, outer=1, flip_lots=1).events("X")[1]  # 近 30 秒只有 6 張 → RVOL 1.2× <2
+        self.assertLess(thin["rvol30"], 2.0)
         self.assertFalse(is_exhaustion(thin))
-        tie1 = self._run(px_step=0.0, flip_lots=1).events("X")[1]          # 打斷窗只有 1 張＝不是『突然轉色』
-        self.assertTrue(tie1["stall"] and tie1["nb5"] >= 3)
-        self.assertFalse(tie1["brk_ok"])
-        self.assertFalse(is_exhaustion(tie1))
-        self.assertTrue(self._run(px_step=0.0, flip_lots=5).events("X")[1]["brk_ok"])   # 5 張＝門檻（max(5, 2.5×均量)）
+        short = self._run(n=3)                                              # 連次 3 <4：不產生 flip 事件
+        self.assertEqual(short.events("X"), [])
+        four = self._run(n=4).events("X")                                   # 連次剛好 4：有 flip、且 RVOL 夠 → 竭盡
+        self.assertEqual([e["kind"] for e in four], ["flip"])
+        self.assertTrue(is_exhaustion(four[0]))
+
+    def test_exhaustion_requires_ref(self):
+        from biglot.streak import is_exhaustion
+        trk = StreakTracker()                                               # 沒有分均量 → 無 RVOL → 不判竭盡
+        for k in range(6):
+            feed_window(trk, "Z", k, outer=30)
+        feed_window(trk, "Z", 6, inner=40)
+        trk.advance("Z", T0 + 5 * 8)
+        f = trk.events("Z")[0]
+        self.assertEqual(f["kind"], "flip")
+        self.assertIsNone(f["rvol30"])
+        self.assertFalse(is_exhaustion(f))
+
+    def test_empty_windows_count_as_zero_in_rvol(self):
+        """30 秒內沒成交的窗算 0：連次期間夾 2 個空窗，近 30 秒只有 4 個有量窗。"""
+        trk = StreakTracker(); trk.set_ref("X", 10.0)
+        for k in (0, 1, 2, 5, 6, 7):                                        # 3、4 為空窗（無成交，跳過不中斷）
+            feed_window(trk, "X", k, outer=30)
+        feed_window(trk, "X", 8, inner=40)
+        trk.advance("X", T0 + 5 * 10)
+        f = trk.events("X")[0]
+        self.assertEqual(f["n"], 6)
+        # 轉色窗 8：窗 3..8 → 窗 5、6、7（30×3）+ 轉色窗 40；窗 3、4 空
+        self.assertAlmostEqual(f["vol30"], 90 + 40)
 
     def test_listener_receives_flip_events(self):
         got = []
@@ -195,30 +223,23 @@ class StreakEventsTest(unittest.TestCase):
         self.assertIsNone(trk.snapshot("X", T0 + 5 * 12)["flip"])
 
     def test_percentile_threshold_overrides_x5_burst(self):
-        from biglot.streak import is_exhaustion
+        """爆量窗（儀表板舊顯示欄位）仍依分位數門檻計數，但不再決定竭盡（v2 看 RVOL）。"""
         px = 100.0
-        trk = StreakTracker(); trk.set_ref("X", 10.0)
-        for k in range(10):
-            feed_window(trk, "X", k, outer=3, px=px)             # 3 張 <5×均量(0.83×5=4.2) → 舊規則不算爆量
-        feed_window(trk, "X", 10, inner=40, px=px)
-        trk.advance("X", T0 + 5 * 12)
-        self.assertFalse(is_exhaustion(trk.events("X")[1]))
         trk2 = StreakTracker(); trk2.set_ref("X", 10.0)
-        trk2.set_thresholds("X", {bk: 2.0 for bk in range(9)})   # 各時段 P90＝2 張 → 3 張都算大量
+        trk2.set_thresholds("X", {bk: 2.0 for bk in range(9)})   # 各時段 P90＝2 張 → 3 張都算大量窗
         for k in range(10):
             feed_window(trk2, "X", k, outer=3, px=px)
         feed_window(trk2, "X", 10, inner=40, px=px)
         trk2.advance("X", T0 + 5 * 12)
         f = trk2.events("X")[1]
         self.assertGreaterEqual(f["nb5"], 3)
-        self.assertTrue(is_exhaustion(f))
         self.assertEqual(trk2.snapshot("X", T0 + 5 * 12)["burst_src"], "p90")
 
     def test_short_streak_has_no_events(self):
         trk = StreakTracker()
         trk.set_ref("X", 10.0)
-        for k in range(5):
+        for k in range(3):                                      # 連次 3 <EXH_MIN_N(4)：被打斷也不產生 flip／lit 事件
             feed_window(trk, "X", k, outer=30)
-        feed_window(trk, "X", 5, inner=40)
-        trk.advance("X", T0 + 5 * 7)
+        feed_window(trk, "X", 3, inner=40)
+        trk.advance("X", T0 + 5 * 5)
         self.assertEqual(trk.events("X"), [])

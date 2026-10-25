@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from biglot.streak import StreakTracker, is_exhaustion
+from biglot.streak import StreakTracker, is_exhaustion, RULES_VERSION
 from stock_db import DEFAULT_DB_PATH
 
 CONT_VOL_RATIO = 0.89
@@ -51,7 +51,7 @@ def _on_flip(sid: str, ev: dict) -> None:
             return
         _EXH_SEEN.add(key)
         EXH_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-        rec = {"date": day, "sid": sid, "t": round(ev["t"], 1), "d": ev["d"], "n": ev["n"], "nb5": ev["nb5"], "avg": round(ev["avg"], 1),
+        rec = {"date": day, "sid": sid, "t": round(ev["t"], 1), "d": ev["d"], "n": ev["n"], "nb5": ev["nb5"], "avg": round(ev["avg"], 1), "rvol30": round(ev["rvol30"], 2) if ev.get("rvol30") is not None else None, "rule": RULES_VERSION,
                "px": ev["px"], "brk_lots": ev.get("brk_lots"), "day_up": ev.get("day_up"),
                "aligned": (ev["d"] > 0) != bool(ev.get("day_up")),     # 順大勢＝新倉方向；否則是平倉／回補提示
                "thr_src": "p90" if TRACKER._s.get(sid) and TRACKER._s[sid].thr else "x5", "source": "live", "logged_at": time.time()}
@@ -155,24 +155,27 @@ def cell_html(sid: str) -> str:
     副字 窗×N（該窗÷每5秒均量）、爆窗×k；狀態字；紅=外盤連攻、綠=內盤連攻（台股慣例）。"""
     s = snapshot(sid)
     tip = ("連次/連量（反向工程「盤中當沖神器」；定義依說明欄 2026-10-18 更正，規格 docs/exhaustion-streak-spec.md）：\n"
-           "每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；連次＝連續同向窗數，達±10亮燈(🔔)；"
-           "連量＝『最近一個5秒窗』主導方向成交張數（官方），『窗×N』＝該窗÷該股每5秒均量；"
-           "爆窗×k＝本段內單窗≥5×均量的窗數（門檻本repo自訂）；『累計』＝整段連攻累計張數。連量單窗/累計尚未定案，兩者並列。\n"
-           "轉折＝連攻段轉色（紅→綠＝買盤竭盡）。「拉升力竭風險」＝剛中斷∧連次≥10∧爆窗≥3。\n"
-           "⚠純描述：歷史上竭盡後放空含價差(~25bps)淨值為負（官方定義版：連次≥10∧爆窗≥3 共515筆，5分鐘毛+8.5/淨−20.6bps，t−4.5），"
-           "不構成放空訊號，不進分數。")
+           "每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；連次＝連續同向窗數，達±10亮燈(🔔，官方)；"
+           "連量＝『最近一個5秒窗』主導方向成交張數（官方），『窗×N』＝該窗÷該股每5秒均量；『累計』＝整段連攻累計張數；連量單窗/累計尚未定案，兩者並列。\n"
+           "RVOL＝最近6個5秒窗(30秒)成交量÷該股過去10日平均每30秒成交量。\n"
+           "竭盡v2（2026-10-25 研究定案參數，非小哥數字）＝轉色∧連次≥4∧RVOL≥2×：紅轉綠＝買盤竭盡、綠轉紅＝賣盤竭盡。\n"
+           "⚠純描述：33日網格含零毛 +5.1／+6.2／+6.6 bps（1／3／5分），進場價差約20bps+ → 不構成下單訊號，不進分數。")
     if not s or not s["d"]:
         return f"<td class='dim' data-sort='0' title='{tip}'>—</td>"
     n, d = s["n"], s["d"]
     cls = "up" if d > 0 else "dn"
     bell = "🔔" if s["lit"] else ""
     sub = f"<span class='dim' style='font-size:9px'> 窗×{s['win_x']:.0f}</span>" if s["win_x"] is not None else ""
+    if s.get("rvol30_now") is not None:
+        sub += f"<span class='dim' style='font-size:9px'> RVOL {s['rvol30_now']:.1f}×</span>"
     extra = ""
     if s["nb5"]:
         extra += f"<span class='dim' style='font-size:9px'> 爆窗×{s['nb5']}</span>"
     if s.get("cum_lots"):
         extra += f"<span class='dim' style='font-size:9px'> 累計{s['cum_lots']:,.0f}</span>"
     st = f"<div style='font-size:9px'>{s['status']}</div>" if s["status"] else ""
-    risk = ("<div style='font-size:9px;color:#d29922' title='剛中斷∧連次≥10∧爆窗≥3：描述性情境標籤，非放空訊號（歷史5分鐘淨−20.6bps）'>拉升力竭風險</div>"
-            if s["risk"] else "")
+    f_ = s.get("flip")
+    risk = (f"<div style='font-size:9px;color:#d29922' title='竭盡v2＝轉色∧連次≥4∧RVOL≥2×；描述性時機提示，非下單訊號（毛利小於價差）'>"
+            f"{'買盤竭盡' if f_['d'] > 0 else '賣盤竭盡'}<span class='dim'>({f_['n']}連·RVOL {f_['rvol30']:.1f}×)</span></div>"
+            if (f_ and f_.get("exh") and f_.get("rvol30") is not None) else "")
     return (f"<td class='{cls}' data-sort='{abs(n) * d}' title='{tip}'>{bell}{abs(n)}/{s['win_lots']:,.0f}{sub}{extra}{st}{risk}</td>")

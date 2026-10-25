@@ -277,7 +277,7 @@ def _svg_mini(st, pc):
     if pc:
         parts.append(f"<line x1='0' y1='{Y(pc):.0f}' x2='{W}' y2='{Y(pc):.0f}' stroke='#8b949e' stroke-dasharray='3 3' opacity='0.7'/>")
     parts.append("<polyline points='" + " ".join(f"{X(k):.0f},{Y(mins[k]['px']):.0f}" for k in order if mins[k]["px"]) + "' fill='none' stroke='#e3b341' stroke-width='1.5'/>")
-    try:                                                     # 買/賣盤竭盡點（小哥三要件：連次≥10 轉色 ∧ 多次爆量 ∧ 漲不動；純標注，不是訊號）
+    try:                                                     # 買/賣盤竭盡點（竭盡v2：轉色 ∧ 連次≥4 ∧ 近30秒RVOL≥2×；純標注，不是訊號）
         from biglot import streak_live as _sl
         from biglot.streak import is_exhaustion as _is_exh
         if (st.get("sid") or "") in _sl.LOWVOL:       # 日均量<3,000 張：作者適用範圍外，不標
@@ -292,7 +292,7 @@ def _svg_mini(st, pc):
             x, y = X(hm_), Y(max(min(ep, hi), lo))
             aligned = (d > 0) != bool(e.get("day_up"))        # 順大勢＝新倉方向（黑K日買盤竭盡、紅K日賣盤竭盡）實心；反向＝平倉/回補提示，畫空心
             side = "買盤竭盡(紅連" if d > 0 else "賣盤竭盡(綠連"
-            tip = (f"{hm_}:{int(tt) % 60:02d} {side}{e['n']}→轉色) 價{ep:g} 爆窗{e['nb5']} 窗均{e['avg']:.0f}張 打斷窗{e.get('brk_lots') or 0:.0f}張"
+            tip = (f"{hm_}:{int(tt) % 60:02d} {side}{e['n']}→轉色) 價{ep:g} RVOL {e.get('rvol30') or 0:.1f}× 窗均{e['avg']:.0f}張 打斷窗{e.get('brk_lots') or 0:.0f}張"
                    f" {'順大勢·新倉方向' if aligned else '平倉/回補提示'}(今日{'紅' if e.get('day_up') else '黑'}K)")
             col = "#f0883e" if d > 0 else "#56d4dd"
             fill, stroke = (col, "#0d1117") if aligned else ("none", col)
