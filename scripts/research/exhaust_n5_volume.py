@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import exhaust_lib as L
 import exhaust_nobreak_vol as N
 
+MINN = int(sys.argv[1]) if len(sys.argv) > 1 else 5
+
 def main():
     days = [Path(f).stem for f in sorted(glob.glob(str(N.P / "*.pkl"))) if Path(f).stat().st_size > 1000]
     hist, rows, nsd = {}, [], 0
@@ -32,7 +34,7 @@ def main():
                 j = k
                 while j + 1 < nb and dr[j + 1] == dr[k]: j += 1
                 n = j - k + 1; dirn = int(dr[k])
-                if n >= 5 and j + 1 < nb and dr[j + 1] == -dirn:
+                if n >= MINN and j + 1 < nb and dr[j + 1] == -dirn:
                     tt = (bn["b"][j + 1] + 1) * 5.0
                     if N.OPEN_OK <= tt <= N.CLOSE_OK - 700:
                         w = min(n, 6); dom = (bn["o"] if dirn > 0 else bn["i"])[k:j + 1]
@@ -60,8 +62,8 @@ def main():
             out.append(f"{y[f'r{h}'].mean():+5.1f}|{dd.mean():+4.1f}(t{dd.mean() / (dd.std(ddof=1) / np.sqrt(len(dd))):+4.1f})")
         return "  ".join(out)
     print("\n格式：每股票日訊號數  |  1分、3分、5分：含零bps|lift(t)    （基準＝同日所有 n≥5 轉色）")
-    print(line(E, "連次≥5 ∧ 轉色（無量條件）"))
-    for Nn in (5, 6, 7, 8, 10):
+    print(line(E, f"連次≥{MINN} ∧ 轉色（無量條件）"))
+    for Nn in sorted({MINN, MINN + 1, 5, 6, 8, 10}):
         b = E[E.n >= Nn]
         print(f"\n--- 連次≥{Nn}")
         for lab, m in (("無量條件", b.index == b.index), ("S2≥1分", b.S2 >= 1), ("S2≥2分", b.S2 >= 2), ("S2≥3分", b.S2 >= 3), ("S1≥2×", b.S1 >= 2), ("S1≥3×", b.S1 >= 3),
@@ -69,7 +71,7 @@ def main():
             print(line(b[m], f"  {lab}"))
     print("\n=== 量標準固定（S1≥2×∧S2≥1分）時，連次是否仍有貢獻？依連次分層")
     v = E[(E.S1 >= 2) & (E.S2 >= 1)]
-    for lab, m in (("n=5～6", v.n.between(5, 6)), ("n=7～9", v.n.between(7, 9)), ("n=10～14", v.n.between(10, 14)), ("n≥15", v.n >= 15)):
+    for lab, m in (("n=3～4", v.n.between(3, 4)), ("n=5～6", v.n.between(5, 6)), ("n=7～9", v.n.between(7, 9)), ("n=10～14", v.n.between(10, 14)), ("n≥15", v.n >= 15)):
         print(line(v[m], f"  {lab}"))
     import statsmodels.formula.api as smf
     P = E.copy(); P["S1p"] = P.S1.rank(pct=True); P["S2p"] = P.S2.rank(pct=True); P["nl"] = np.log(P.n)
