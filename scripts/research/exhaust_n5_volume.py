@@ -43,7 +43,7 @@ def main():
                             v = N.fwd(t, mid, tt, h); r[f"r{h}"] = -dirn * v if v is not None else np.nan
                         rows.append(r)
                 k = j + 1
-    E = pd.DataFrame(rows); E.to_pickle(Path.home() / "goldenstocks-data/research/exhaust_n5_events.pkl")
+    E = pd.DataFrame(rows); E.to_pickle(Path.home() / f"goldenstocks-data/research/exhaust_n{MINN}_events.pkl")
     pd.set_option("display.width", 220); pd.set_option("display.max_rows", 300)
     print(f"{len(days)} 日；股票日 {nsd}；轉色事件(n≥5) {len(E)}")
     base = {h: E.groupby("date")[f"r{h}"].mean() for h in (60, 180, 300)}
