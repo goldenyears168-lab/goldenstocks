@@ -111,7 +111,8 @@ class StreakTest(unittest.TestCase):
         snap = self.trk.snapshot("X", T0 + 5 * (len(vols) + 1) - 0.1)    # 水位在第 11 窗內（尚未收）
         self.assertEqual(snap["d"], 1)
         self.assertEqual(snap["n"], 10)
-        self.assertTrue(snap["lit"])
+        self.assertTrue(snap["lit10"])                      # 官方 |連次|≥10（僅診斷）
+        self.assertFalse(snap["lit"])                       # 🔔＝符合竭盡v2訊號條件；此時還沒轉色 → 不亮
         self.assertEqual(snap["win_lots"], 2.0)             # 最近已收窗（第 10 窗）的外盤張數
         self.assertAlmostEqual(snap["win_x"], 2.0 / (10.0 / 12.0))
         self.assertEqual(snap["nb5"], 3)
@@ -212,6 +213,10 @@ class StreakEventsTest(unittest.TestCase):
         trk = self._run()
         snap = trk.snapshot("X", T0 + 5 * 12)
         self.assertTrue(snap["flip"]["exh"])
+        self.assertTrue(snap["lit"])                                       # 🔔＝剛符合竭盡v2訊號條件
+        self.assertTrue(snap["risk"])
+        far = trk.snapshot("X", T0 + 5 * 12 + 120)                         # 60 秒後熄燈
+        self.assertFalse(far["lit"])
 
     def test_tie_window_is_break_not_color_flip(self):
         trk = StreakTracker(); trk.set_ref("X", 10.0)

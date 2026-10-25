@@ -42,6 +42,9 @@ def _on_flip(sid: str, ev: dict) -> None:
     try:
         if sid in LOWVOL or not is_exhaustion(ev):
             return
+        if ev["d"] > 0:                                                # P1-v2：買盤竭盡側（紅轉綠）→ 前向帳本（放空評估）
+            from biglot import xiaoge_cols
+            xiaoge_cols.record_p1(sid, ev, TRACKER._s.get(sid))
         n = datetime.now()
         if (n.hour * 3600 + n.minute * 60 + n.second) - ev["t"] > 90:
             return
@@ -134,10 +137,6 @@ def on_trade(sid: str, t: datetime, px: float, dv: float, bid, ask) -> None:
         TRACKER.on_trade(sid, ts, px, dv, bid, ask)
         if ts > WM["t"]:
             WM["t"] = ts
-        st = TRACKER._s.get(sid)
-        if st is not None and st.d > 0 and st.n >= 10:                 # P1 前向帳本：只在外攻連次≥10 時才做完整 snapshot
-            from biglot import xiaoge_cols
-            xiaoge_cols.maybe_p1(sid, TRACKER.snapshot(sid, WM["t"]), ts)
     except Exception as e:  # noqa: BLE001
         ERR["n"] += 1; ERR["last"] = repr(e)
 
@@ -155,10 +154,10 @@ def cell_html(sid: str) -> str:
     副字 窗×N（該窗÷每5秒均量）、爆窗×k；狀態字；紅=外盤連攻、綠=內盤連攻（台股慣例）。"""
     s = snapshot(sid)
     tip = ("連次/連量（反向工程「盤中當沖神器」；定義依說明欄 2026-10-18 更正，規格 docs/exhaustion-streak-spec.md）：\n"
-           "每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；連次＝連續同向窗數，達±10亮燈(🔔，官方)；"
+           "每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；連次＝連續同向窗數，（🔔＝符合竭盡v2訊號條件，見下）；"
            "連量＝『最近一個5秒窗』主導方向成交張數（官方），『窗×N』＝該窗÷該股每5秒均量；『累計』＝整段連攻累計張數；連量單窗/累計尚未定案，兩者並列。\n"
            "RVOL＝最近6個5秒窗(30秒)成交量÷該股過去10日平均每30秒成交量。\n"
-           "竭盡v2（2026-10-25 研究定案參數，非小哥數字）＝轉色∧連次≥4∧RVOL≥2×：紅轉綠＝買盤竭盡、綠轉紅＝賣盤竭盡。\n"
+           "竭盡v2（2026-10-25 研究定案參數，非小哥數字）＝轉色∧連次≥4∧RVOL≥2×：紅轉綠＝買盤竭盡、綠轉紅＝賣盤竭盡；🔔＝剛符合此條件（60 秒內）。\n"
            "⚠純描述：33日網格含零毛 +5.1／+6.2／+6.6 bps（1／3／5分），進場價差約20bps+ → 不構成下單訊號，不進分數。")
     if not s or not s["d"]:
         return f"<td class='dim' data-sort='0' title='{tip}'>—</td>"

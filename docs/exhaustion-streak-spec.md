@@ -109,7 +109,13 @@ PYTHONPATH=scripts/research:scripts/research/biglot:src .venv/bin/python scripts
 - **窗長**：維持官方 5 秒（2／3 秒較弱、4／6 秒持平）。官方 ±10 亮燈（🔔）不變，只是顯示，不再決定竭盡。
 - **預期頻率**：每檔每天約 20 個（多空合計，約各一半）；含零毛報酬 +5.1／+6.2／+6.6 bps（1／3／5 分），價差 ~20bps+ → **時機提示，不是下單訊號**，不進分數。
 - **取代**：舊三要件（連次≥10、爆量窗≥3、漲不動、打斷窗有量）。這些欄位仍保留在 flip 事件內供顯示（`nb5`、`stall`、`brk_ok`），不再參與 `is_exhaustion`。`risk` 鍵相容保留＝買盤竭盡側剛出現。
-- **不動**：`xiaoge_cols.p1_conditions`（P1 預登記規則，2026-10-19 起前向驗證，定義固定不得回頭調參）；期貨連次欄（`futures_flow.WindowStreak`，另有預註冊）。
+- **P1 已改為 P1-v2**（見下）；期貨連次欄（`futures_flow.WindowStreak`，另有預註冊）尚未改，見 §12。
 - **一致性驗證**：把 2026-10-20、10-22 兩日逐筆餵進串流狀態機，與離線研究事件比對（連次≥4 轉色事件）：7,929／7,929 完全對上，RVOL 差 0.0000。
 - **前向帳本**：`biglot_forward/exhaustion_events.jsonl` 新增欄位 `rvol30`、`rule: exh-v2-2026-10-25`；舊紀錄（無 `rule`）是舊三要件，分析時需分開。
 - 參數位置：`biglot/streak.py` 的 `EXH_MIN_N`、`EXH_RVOL`、`RVOL_WINS`、`RULES_VERSION`；單測 `tests/test_biglot_streak.py`（19 項）。
+
+## 12. 🔔 與 P1 的更動（2026-10-25 晚，jack 指示）
+- **🔔 亮燈＝符合竭盡v2訊號條件**（轉色 ∧ 連次≥4 ∧ RVOL≥2×，剛轉色 60 秒內），取代官方 |連次|≥10 亮燈。官方 ±10 保留為診斷欄位 `lit10`。快照鍵 `lit` 的語意因此改變。
+- **P1-v2**：買盤竭盡側（紅轉綠）的竭盡v2 剛成立即寫前向帳本 `forward_p1_events.jsonl`（`rule: P1-v2`，欄位含 `rvol30`、`n`、bid／ask）；同股 300 秒 cooldown；評估＝之後 1／3／5 分鐘放空含零毛報酬（賣 bid 進、買 ask 出）；**自 2026-10-26 起計**。
+- **P1-v1 終止**：v1（昨漲>3%∧今日仍紅K∧外攻連次≥10∧已有爆窗）原為 2026-10-19 的預登記規則（『定義固定、不得回頭調參』），於 2026-10-25 依 jack 指示終止，**不是修改**；10/19～10/23 的 v1 帳本列保留（`rule: P1-v1`，樣本小，不下結論）。判讀 v2 時不得與 v1 混算。
+- 檔：`biglot/streak.py`（`lit`、`lit10`）、`biglot/xiaoge_cols.py`（`p1_conditions`、`record_p1`）、`biglot/streak_live.py`（flip 監聽寫 P1-v2）；測試 `tests/test_biglot_streak.py`、`tests/test_biglot_xiaoge.py`（27 項）。

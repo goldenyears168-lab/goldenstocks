@@ -301,6 +301,7 @@ class StreakTracker:
                 "cum_lots": st.s_cum if st.d else 0.0,                 # 連量（累計解讀）：整段連攻主導方向累計張數
                 "win_x": (win_lots / ref5) if (ref5 and win_lots) else None,   # 該窗 ÷ 每 5 秒均量
                 "nb5": st.s_nb5 if st.d else 0, "vmax": st.s_vmax if st.d else 0.0,
-                "lit": abs(st.n) >= LIT_N,
+                "lit": bool(flip and flip.get("exh")),                 # 🔔＝符合竭盡v2訊號條件（轉色∧連次≥EXH_MIN_N∧RVOL≥EXH_RVOL，剛轉色 60 秒內）；2026-10-25 起取代官方±10 亮燈
+                "lit10": abs(st.n) >= LIT_N,                           # 官方 |連次|≥10 亮燈（僅診斷／相容，不再當 🔔）
                 "ret15": ret15, "ret2m": ret2m, "flip": flip, "px0": st.px0, "px": (st.hp[-1] if st.hp else None),
                 "status": status, "risk": risk, "rvol30_now": rvol30_now, "bid_ask": (st.bid, st.ask), "burst_src": "p90" if st.thr else "x5"}

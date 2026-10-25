@@ -5,8 +5,8 @@
    只用小哥公開的定義；小哥沒公開的數字（連量亮燈門檻、大紅 K 幾 %、當日轉弱怎麼算）一律不自創，欄位上寫「小哥未說明」。
 2. 小哥·放空三步驟（忠實）：①周轉率 >30% ②高壓區（連續兩根以上大紅 K／連兩三天漲停）③當日轉弱＝人工判斷。
    只列出客觀可算的項目；清單齊備≠進場訊號（小哥要求再等轉色）。
-3. 統計·竭盡（我們的）：爆窗×k、窗×N（自訂 5×均量）、段累計張數、現價差 bps、預登記規則 P1（附樣本內外證據），
-   P1 觸發事件寫入前向帳本（forward_p1_events.jsonl）供 30 日後驗證——歷史檢定毛 +10~13bps 仍輸價差 ~26bps，故不是放空訊號。
+3. 統計·竭盡（我們的）：RVOL、爆窗×k、窗×N、段累計張數、現價差 bps、P1-v2（買盤竭盡側竭盡v2）；
+   P1-v2 觸發事件寫入前向帳本（forward_p1_events.jsonl，rule=P1-v2）供前向驗證——毛報酬仍小於價差，故不是放空訊號。
 
 SSOT：docs/exhaustion-streak-spec.md §10、docs/warrant-xiaoge/xiaoge-system-book.md §4.5／§5.2。
 """
@@ -80,33 +80,32 @@ def reset_for_day(sids, today: str) -> None:
 
 
 # ---------- P1 前向帳本 ----------
+RULE_P1 = "P1-v2"      # P1-v1（昨漲>3%∧今日紅K∧外攻連次≥10∧已有爆窗，2026-10-19～10-23 前向，帳本列 rule=P1-v1）已於 2026-10-25 依 jack 指示終止；v2 的定義見下，自 2026-10-26 起計
+
+
 def p1_conditions(sid: str, s: dict) -> bool:
-    """預登記規則 P1（2026-10-19 起前向驗證；定義固定、不得回頭調參）：
-    昨漲 >3% ∧ 今日仍為紅K（現價>開盤）∧ 外攻連次 ≥10 ∧ 本段已出現爆窗（單窗≥5×每5秒均量）。
-    進場＝首次同時成立的 5 秒窗；評估＝之後 5 分鐘放空毛報酬（賣 bid 進、買 ask 出，同口徑扣價差）。"""
-    c = CTX.get(sid)
-    if not c or not s or s["d"] <= 0 or not s["lit"] or s["nb5"] < 1:
-        return False
-    px, px0 = s.get("px"), s.get("px0")
-    return bool(c["ret1"] * 100 > P1_PREV_RET_BPS and px and px0 and px > px0)
+    """P1-v2（2026-10-25 起；jack 指示套用研究定案參數，取代 v1）：買盤竭盡側（紅轉綠）的竭盡v2 剛成立＝轉色 ∧ 連次≥EXH_MIN_N(4) ∧ 近30秒 RVOL≥EXH_RVOL(2×)。
+    進場＝轉色窗收盤；評估＝之後 1／3／5 分鐘『放空』含零毛報酬（賣 bid 進、買 ask 出，同口徑扣價差）。v1 的『昨漲>3%、今日紅K』不再是條件。"""
+    f = (s or {}).get("flip")
+    return bool(f and f.get("exh") and f["d"] > 0)
 
 
-def maybe_p1(sid: str, s: dict, ts: float) -> None:
-    """在逐筆接線層呼叫（外攻連次≥10 才進來）：條件成立且距上次記錄 ≥300 秒（同股 cooldown，與檢定一致）→ 寫一行帳本。例外自吞。"""
+def record_p1(sid: str, ev: dict, st) -> None:
+    """由 streak_live 的 flip 監聽呼叫（買盤竭盡側竭盡事件）。同股 300 秒 cooldown；啟動重放的舊事件（距牆上時間 >90 秒）不寫。例外自吞。"""
     try:
-        if not p1_conditions(sid, s):
-            return
+        ts = ev["t"]
         _n = datetime.now()
-        if (_n.hour * 3600 + _n.minute * 60 + _n.second) - ts > 90:      # 啟動時重放舊 raw 檔 → 不是即時事件，不寫帳本（避免重複）
+        if (_n.hour * 3600 + _n.minute * 60 + _n.second) - ts > 90:
             return
         if ts - _SEG.get(sid, -1e9) < 300:
             return
         _SEG[sid] = ts
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
-        bid, ask = s.get("bid_ask") or (None, None)
-        rec = {"date": datetime.now().strftime("%Y-%m-%d"), "t": round(ts, 1), "sid": sid, "px": s.get("px"),
-               "bid": bid, "ask": ask, "n": s["n"], "nb5": s["nb5"], "win_lots": s["win_lots"], "cum_lots": s.get("cum_lots"),
-               "ret1_pct": round(CTX[sid]["ret1"], 2), "rule": "P1-v1", "logged_at": time.time()}
+        c = CTX.get(sid) or {}
+        rec = {"date": _n.strftime("%Y-%m-%d"), "t": round(ts, 1), "sid": sid, "px": ev.get("px"),
+               "bid": getattr(st, "bid", None), "ask": getattr(st, "ask", None), "n": ev["n"], "rvol30": round(ev["rvol30"], 2),
+               "ret1_pct": round(c["ret1"], 2) if c.get("ret1") is not None else None, "day_up": ev.get("day_up"),
+               "rule": RULE_P1, "logged_at": time.time()}
         with open(LEDGER, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception as e:  # noqa: BLE001
@@ -120,7 +119,7 @@ def _snap(sid):
 
 
 _TIP1 = ("日均量<3,000張的標的灰化、不亮燈不標竭盡（作者標的限定）。小哥原版·連次/連量（出處：官方說明欄 2024-11-21／2025-07-09、V10 14:01、V14 11:24）：每5秒窗外盤量>內盤量=紅(+1)、內>外=綠(−1)；"
-         "連次達±10亮燈(🔔，官方)；連量=最近一個5秒窗的主導方向成交張數（副字『累計』為官方畫面「每一連次累積的成交量總和」解讀，兩者並列）；"
+         "🔔＝符合竭盡v2訊號條件（轉色∧連次≥4∧RVOL≥2×，剛轉色60秒內）；連量=最近一個5秒窗的主導方向成交張數（副字『累計』為官方畫面「每一連次累積的成交量總和」解讀，兩者並列）；"
          "『轉色』=連攻段被打斷（平手只算中斷）：紅轉綠=買盤竭盡側、綠轉紅=賣盤竭盡側；『緩搓』=約2分鐘內漲幅超過3.5%。"
          "小哥未公開：連量亮燈門檻、『大量』的數字。本欄『竭盡』採本專案研究定案的參數（2026-10-25 起，規則 exh-v2；不是小哥的數字）："
          "轉色 ∧ 連次≥4 ∧ 近30秒相對成交量(RVOL)≥2倍（RVOL＝近30秒成交量÷該股過去10日整日平均每30秒成交量）。依據：33日·1,170股票日·91.9萬事件的網格（前半選／後半驗）：5秒窗最佳，每檔每天約20個（多空合計），含零毛 +5.1／+6.2／+6.6 bps（1／3／5分），仍小於價差（~20bps+），只是時機提示、不是下單訊號。"
@@ -131,11 +130,10 @@ _TIP2 = ("小哥原版·放空三步驟（出處：說明欄 2025-09-27／2025-0
          "本欄只列客觀可算的①②與今日紅K/黑K；『大紅K幾%』『當日轉弱怎麼算』小哥未說明，故不自設。"
          "①②齊備≠進場訊號，小哥要求最後再等連次連量轉色。②另列昨量÷前5日均量（R27：前日爆量漲停/長紅→今日波動大、隔日沖出貨）。尚未接：③轉弱的客觀定義、布林第一根、盤勢強避免短空（R64b）、夏天不空、隔日沖買超第一名／大股東賣超（分點盤後才有）。純描述，不進分數。")
 _TIP3 = ("我們的統計·竭盡（本repo自訂門檻與檢定；與小哥原版分開）：RVOL=最近6個5秒窗(30秒)成交量÷該股平均每30秒成交量（竭盡v2判準＝轉色∧連次≥4∧RVOL≥2×）；窗×N=該窗÷每5秒均量；爆窗×k=本段內單窗≥5×均量的窗數（5×為自訂）；"
-         "累計=本段累計張；價差=現在 (ask−bid)/價 bps。P1=預登記規則（我們的統計規則，不是小哥的邏輯，且與小哥步驟③『等當日轉弱』方向相反——要求今日仍為紅K；觸發在連次剛到10時，不是等轉色）：昨漲>3%∧今日仍紅K∧外攻連次≥10∧本段已有爆窗；"
-         "歷史（26日×41檔）訓練/測試5分鐘放空毛報酬 +12.8/+10.1bps（t 3.5/2.7），但價差約26bps→淨約−15bps，且是試了十餘個條件之一，"
-         "故【不是放空訊號】，只作前向驗證記錄（事件寫入 forward_p1_events.jsonl，累積≥30日且≥100筆再評估）。"
-         "另：連量越大越回吐是五個獨立角度唯一共同的預測來源；窗均×<1 表示連次由薄量窗堆成，🔔參考價值低，上限毛+10~17bps。")
-
+         "累計=本段累計張；價差=現在 (ask−bid)/價 bps。P1-v2（我們的統計規則，不是小哥的邏輯）＝買盤竭盡側（紅轉綠）的竭盡v2剛成立（轉色∧連次≥4∧RVOL≥2×）；"
+         "只作前向驗證記錄（事件寫入 forward_p1_events.jsonl，rule=P1-v2，自2026-10-26起計；v1〔昨漲>3%∧今日紅K∧外攻連次≥10∧已有爆窗，10/19～10/23〕已於 2026-10-25 依 jack 指示終止）。"
+         "歷史研究（33日·1,170股票日）含零毛 +5.1／+6.2／+6.6 bps（1／3／5分）仍小於價差（~20bps+），【不是放空訊號】。"
+         "另：窗均×<1 表示連次由薄量窗堆成。")
 
 def cell_author_streak(sid: str) -> str:
     from biglot import streak_live
@@ -218,8 +216,8 @@ def cell_stats(sid: str, row: dict) -> str:
         bits.append(f"價差{(ba[1] - ba[0]) / s['px'] * 1e4:.0f}bps")
     tags = ""
     if p1_conditions(sid, s):
-        tags += ("<div style='font-size:9px;color:#d29922;font-weight:600'>P1成立"
-                 "<span class='dim'>(我們的·今仍紅K,與小哥步驟③相反·非訊號)</span></div>")
+        tags += ("<div style='font-size:9px;color:#d29922;font-weight:600'>P1-v2成立"
+                 "<span class='dim'>(買盤竭盡·轉色·連次≥4·RVOL≥2×·前向記錄中·非訊號)</span></div>")
     if s.get("risk"):
         tags += "<div style='font-size:9px;color:#d29922'>買盤竭盡(v2:轉色·連次≥4·RVOL≥2×)</div>"
     txt = "·".join(bits)
