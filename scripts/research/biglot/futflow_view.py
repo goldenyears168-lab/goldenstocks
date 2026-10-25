@@ -52,6 +52,22 @@ STREAK_BOOKS = ("TXF", "CDF", "QFF")      # 有連次標注的品牌：大台（
 CKPT_SCHEMA = 3                                  # 2：加入『補 tick rule』影子連次與無法判定口數統計（3：台積電期貨 CDF／QFF 也跑連次；舊檢查點作廢、完整重建一次）
 CKPT_DIR = CACHE / "futflow_view"            # 檢查點目錄(派生資料,可隨時刪除;刪了只是重啟時完整重建)
 CKPT_EVERY = 30.0                            # 秒
+V2_ROOT = FF.STREAK_ROOT                     # 竭盡 v2（連次≥10∧轉色∧RVOL≥2×；2026-10-25）目前只跑大台
+V2_SCHEMA = 4                                # TXF 的檢查點多了 v2 狀態：舊檢查點作廢、只重建 TXF 一次（其他品牌不受影響）
+REF30_PATH = lambda root: CACHE / f"futflow_ref30_{root}.json"   # noqa: E731  日盤可判定口數日合計（scripts/research/futures_ref30_build.py 產生；頁面隨收盤補寫）
+V2_LEDGER_PATH = DATA_DIR / "biglot_forward" / "futures_exhaust_v2_events.jsonl"
+_V2_SEEN: set = set()
+
+
+def _ckpt_schema(root: str) -> int:
+    return V2_SCHEMA if root == V2_ROOT else CKPT_SCHEMA
+
+
+def _ref30_totals(root: str) -> dict:
+    try:
+        return {k: float(v) for k, v in json.loads(REF30_PATH(root).read_text(encoding="utf-8")).items()}
+    except (OSError, ValueError):
+        return {}
 
 _LOCK = threading.RLock()
 _BOOKS: dict = {}
@@ -103,8 +119,35 @@ class Book:
         self.wstreak_fill = FF.WindowStreak() if root in STREAK_BOOKS else None
         self.merger_fill = FF.BurstMerger(self.pv, self._on_burst_fill, streaming=True) if self.wstreak_fill is not None else None
         self._fill_state: dict = {}             # quote_type → [上一筆價, 上一筆方向]（tick rule 用）
+        # 竭盡 v2（大台；jack 2026-10-25）：另跑一份，不碰凍結的 wstreak。RVOL 基準＝過去 ≤10 日盤『每 30 秒平均口數』
+        self._ref_totals: dict = _ref30_totals(root) if root == V2_ROOT else {}
+        self._ref_saved = len(self._ref_totals)
+        self.wstreak_v2 = FF.WindowStreakV2(self._ref30) if root == V2_ROOT else None
         self.unk: dict = {}                     # (stype, T) → [無法判定口數, 總口數]
         self.last_ts = ""
+
+    def _ref30(self, T):
+        tot = dict(self._ref_totals)
+        if self.wstreak_v2 is not None:
+            for d, v in self.wstreak_v2.day_tot.items():
+                if d < T and d not in tot:
+                    tot[d] = v                   # 檔案還沒補到的前幾個日盤，用頁面自己累積的
+        return FF.ref30_from_totals(tot, T)
+
+    def _maybe_save_ref30(self):
+        """已收盤（比最新日盤更早）的日盤合計寫回基準檔；只在新增時寫。"""
+        if self.wstreak_v2 is None or not self.wstreak_v2.day_tot:
+            return
+        latest = max(self.wstreak_v2.day_tot)
+        new = {d: round(v, 1) for d, v in self.wstreak_v2.day_tot.items() if d < latest and d not in self._ref_totals}
+        if not new:
+            return
+        self._ref_totals.update(new)
+        try:
+            out = REF30_PATH(self.root); tmp = out.with_suffix(".tmp")
+            tmp.write_text(json.dumps(dict(sorted(self._ref_totals.items())), ensure_ascii=False), encoding="utf-8"); tmp.replace(out)
+        except OSError:
+            pass
 
     def _on_burst_fill(self, b):
         self.wstreak_fill.add(b)
@@ -112,6 +155,8 @@ class Book:
     def _on_burst(self, b):
         if self.wstreak is not None:
             self.wstreak.add(b)
+        if self.wstreak_v2 is not None:
+            self.wstreak_v2.add(b)
         if self.tagger is not None:
             self.tagger.add(b)                 # 類別確定後才呼叫 _on_tagged
         else:
@@ -131,6 +176,10 @@ class Book:
             self.tagger.flush_old(self.merger.last_tt)
         if self.wstreak is not None:
             self.wstreak.flush(self.merger.last_tt)
+        if self.wstreak_v2 is not None:
+            self.wstreak_v2.flush(self.merger.last_tt)
+            self._maybe_save_ref30()
+            self._record_v2_events()
         if self.merger_fill is not None:
             self.merger_fill.flush_old()
             self.wstreak_fill.flush(self.merger_fill.last_tt)
@@ -161,6 +210,32 @@ class Book:
                     with open(LEDGER_PATH, "a", encoding="utf-8") as fh:
                         for key, rec in new:
                             _LEDGER_SEEN.add(key)
+                            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 -- 帳本失敗不得影響頁面
+            pass
+
+    def _record_v2_events(self):
+        """竭盡 v2 前向帳本（大台）：只記 RVOL≥V2_RVOL 的轉色（連次≥V2_MIN_N）。同事件不重複；距現在 ≤180 秒的記 live、其餘記 replay。例外自吞。"""
+        try:
+            new = []
+            for (stype, T), v in self.wstreak_v2.snapshot2().items():
+                bars = self.sessions.get((stype, T)) or {}
+                for end, d, n, rv in v["sigs"]:
+                    key = (self.root, stype, T, round(end, 1))
+                    if key in _V2_SEEN:
+                        continue
+                    tm = dt.datetime.fromtimestamp(end, dt.timezone(dt.timedelta(hours=8)))
+                    bar = bars.get(tm.hour * 60 + tm.minute + (1440 if (stype == "night" and tm.hour * 60 + tm.minute < 480) else 0))
+                    new.append((key, {"root": self.root, "rule": "fut-exh-v2-2026-10-25", "stype": stype, "T": T, "end": round(end, 1),
+                                      "time": tm.strftime("%Y-%m-%d %H:%M:%S"), "dir": d, "n": n, "rvol30": round(rv, 2),
+                                      "px": (bar["c"] if bar else None), "source": "live" if abs(time.time() - end) <= 180 else "replay",
+                                      "logged_at": round(time.time(), 1)}))
+            if new:
+                with _LEDGER_LOCK:
+                    V2_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    with open(V2_LEDGER_PATH, "a", encoding="utf-8") as fh:
+                        for key, rec in new:
+                            _V2_SEEN.add(key)
                             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001 -- 帳本失敗不得影響頁面
             pass
@@ -198,11 +273,12 @@ class Book:
     # ---- 檢查點(checkpoint):位移與彙整結果一起原子寫入,重啟後只讀新增的位元組 ----
     def to_state(self, keep_sessions: int = 24) -> dict:
         keys = sorted(self.sessions, key=lambda k: (k[1], 0 if k[0] == "day" else 1))[-keep_sessions:]
-        return {"schema": CKPT_SCHEMA, "rules": FF.RULES_VERSION, "root": self.root, "offsets": self.offsets, "prev": self.stream.prev,
+        return {"schema": _ckpt_schema(self.root), "rules": FF.RULES_VERSION, "root": self.root, "offsets": self.offsets, "prev": self.stream.prev,
                 "last_ts": self.last_ts, "last_tt": self.merger.last_tt,
                 "open": {f"{k[0]}|{k[1]}": v for k, v in self.merger.open.items()},
                 "streak": self.tagger.to_state() if self.tagger is not None else {},
                 "wstreak": self.wstreak.to_state() if self.wstreak is not None else {},
+                "wstreak_v2": self.wstreak_v2.to_state() if self.wstreak_v2 is not None else {},
                 "fill": ({"last_tt": self.merger_fill.last_tt,
                           "open": {f"{k[0]}|{k[1]}": v for k, v in self.merger_fill.open.items()},
                           "wstreak": self.wstreak_fill.to_state(), "state": self._fill_state}
@@ -214,7 +290,7 @@ class Book:
     def from_state(cls, root: str, st: dict):
         """檢查點不合(版本、品牌、結構不符)回傳 None,呼叫端改為完整重建。"""
         try:
-            if st.get("schema") != CKPT_SCHEMA or st.get("rules") != FF.RULES_VERSION or st.get("root") != root:
+            if st.get("schema") != _ckpt_schema(root) or st.get("rules") != FF.RULES_VERSION or st.get("root") != root:
                 return None
             b = cls(root)
             b.offsets = {k: int(v) for k, v in st["offsets"].items()}
@@ -228,6 +304,8 @@ class Book:
                 b.tagger.load_state(st.get("streak"))
             if b.wstreak is not None:
                 b.wstreak.load_state(st.get("wstreak"))
+            if b.wstreak_v2 is not None:
+                b.wstreak_v2.load_state(st.get("wstreak_v2"))
             fl = st.get("fill") or {}
             if b.merger_fill is not None and fl:
                 b.merger_fill.last_tt = dict(fl.get("last_tt") or {})
@@ -535,8 +613,14 @@ def _overlay_svg(S, title, w=640, h=230, adj=None, marks=None):
         if mk_ not in pmap:
             continue
         mx_, my_ = sx(mk_), py(pmap[mk_])
-        vtag = "凍結版" if ver == "A" else "補tick rule版"
+        vtag = "凍結版" if ver == "A" else ("竭盡v2" if ver == "V" else "補tick rule版")
         dash = "" if ver == "A" else " stroke-dasharray='2,2'"
+        if kind == "sig":                                  # 竭盡 v2：連次≥10∧轉色∧RVOL≥2×（描述／探索，不是進出場訊號）；轉綠＝紅連攻被打斷＝買盤竭盡
+            col_ = "#f0883e" if d_ < 0 else "#56d4dd"
+            side_ = "買盤竭盡(紅連" if d_ < 0 else "賣盤竭盡(綠連"
+            o.append(f"<text x='{mx_:.1f}' y='{(my_ - 18) if d_ < 0 else (my_ + 24):.1f}' font-size='14' text-anchor='middle' fill='{col_}' stroke='#0d1117' stroke-width='0.6'>"
+                     f"★<title>[竭盡v2·期貨探索] {tstr} {side_}{n_}→轉色) 連次≥10∧RVOL≥2×；大台37日含零毛 3/5/15分 +1.4/+1.6/+3.9bps(t 1.1~1.4)·未達顯著·非進出場訊號</title></text>")
+            continue
         if kind == "lit":
             r_ = 3.2 if ver == "A" else 5.0
             o.append(f"<circle cx='{mx_:.1f}' cy='{my_:.1f}' r='{r_}' fill='none' stroke='{'#ff7b72' if d_ > 0 else '#3fb950'}' stroke-width='1.6'{dash}><title>[{vtag}] {tstr} 亮燈 {'紅' if d_ > 0 else '綠'}連{n_}</title></circle>")
@@ -641,6 +725,20 @@ def _lines_svg(series, x0, x1, title, w=640, h=230, unit="", dec=1, pad_r=190):
     return head + "".join(o)
 
 
+def _v2_marks(v2, cur):
+    """竭盡 v2（大台）→ 圖上 ★ 標注 [('sig', 分鐘鍵, 新顏色方向, 被打斷連次, 'HH:MM:SS RVOL x.x×', 'V')]。"""
+    st = (v2 or {}).get(cur)
+    if not st:
+        return []
+    out = []
+    tz = dt.timezone(dt.timedelta(hours=8))
+    for t_, d_, n_, rv_ in st["sigs"]:
+        tm = dt.datetime.fromtimestamp(t_, tz)
+        mk = tm.hour * 60 + tm.minute
+        out.append(("sig", mk, d_, n_, f"{tm.strftime('%H:%M:%S')} RVOL {rv_:.1f}×", "V"))
+    return out
+
+
 def _streak_marks(ws, cur, ver="A"):
     """把 WindowStreak 的 lits/turns（epoch 秒）轉成圖上標注 [(kind, 分鐘鍵, 方向, 連次, 'HH:MM:SS')]。夜盤午夜後分鐘鍵 +1440（與 Trade.mk 一致）。"""
     st = (ws or {}).get(cur)
@@ -680,7 +778,7 @@ _STREAK_NOTE = {
 
 def _streak_legend(root, cur, wsr):
     """連次標注說明列：符號、版本（凍結／補 tick rule）、兩版亮燈比對、被排除的無法判定口數比例、品牌狀態。"""
-    a, b, unk = wsr
+    a, b, unk = wsr[:3]
     sa, sb = (a or {}).get(cur), (b or {}).get(cur)
     o = ("<div class='meta'>◯紅/◯綠＝連次達 10 亮燈 · ▽△＝連次被反向窗打斷 · 實線＝凍結版、虛線＝補 tick rule 版(描述用,不是進出場訊號)")
     if sa and sb:
@@ -690,6 +788,10 @@ def _streak_legend(root, cur, wsr):
     u = (unk or {}).get(cur)
     if u and u[1]:
         o += f"<br>⚠ 凍結版排除買賣價之間、無法判定方向的成交——本盤約 {u[0] / u[1] * 100:.1f}% 口數；補版納入"
+    if len(wsr) > 3 and wsr[3] is not None:
+        v2 = (wsr[3] or {}).get(cur) or {"turns": [], "sigs": []}
+        o += (f"<br>★＝竭盡 v2（連次≥10 ∧ 轉色 ∧ 近30秒 RVOL≥2×；jack 2026-10-25）本盤 {len(v2['sigs'])} 次（連次≥10 的轉色共 {len(v2['turns'])} 次）。"
+              f"RVOL＝最近6個5秒窗口數 ÷ 過去≤10日盤每30秒平均口數；探索性、不屬凍結的 S1 登記；事件寫入 biglot_forward/futures_exhaust_v2_events.jsonl")
     o += f"<br>{_STREAK_NOTE.get(root, '')}；事件寫入 biglot_forward/futures_streak_events.jsonl</div>"
     return o
 
@@ -703,7 +805,8 @@ def _snapshot():
         for r in STREAK_BOOKS:
             b = _BOOKS.get(r)
             if b is not None and b.wstreak is not None:
-                ws[r] = (b.wstreak.snapshot(), b.wstreak_fill.snapshot() if b.wstreak_fill is not None else None, dict(b.unk))
+                ws[r] = (b.wstreak.snapshot(), b.wstreak_fill.snapshot() if b.wstreak_fill is not None else None, dict(b.unk),
+                         b.wstreak_v2.snapshot2() if b.wstreak_v2 is not None else None)
     return per, last_ts, ws
 
 
@@ -762,7 +865,7 @@ def _section(cur, per, last_ts, ws, now):
         sess_r = per[r]
         order_r = [k for k in sorted(sess_r, key=lambda k: (k[1], 0 if k[0] == "day" else 1)) if len(sess_r[k]) >= 20 or k == cur]
         wsr = ws.get(r) if r in STREAK_BOOKS else None
-        marks = (_streak_marks(wsr[0], cur, "A") + _streak_marks(wsr[1], cur, "B")) if wsr else []
+        marks = (_streak_marks(wsr[0], cur, "A") + _streak_marks(wsr[1], cur, "B") + (_v2_marks(wsr[3], cur) if len(wsr) > 3 else [])) if wsr else []
         raw = _overlay_svg(S, f"{FUT_NAME[r]} · 累計內外盤差(外盤−內盤,億元)疊在價格上", marks=marks)
         if wsr:
             raw += _streak_legend(r, cur, wsr)

@@ -302,3 +302,43 @@ class WindowStreakTests(unittest.TestCase):
     def test_night_and_day_states_are_separate(self):
         s = self._run([self._b(1, stype="day"), self._b(1, stype="night", T="2026-10-19")]).snapshot()
         self.assertEqual(set(s), {("day", "2026-10-19"), ("night", "2026-10-19")})
+
+
+class WindowStreakV2Tests(unittest.TestCase):
+    """期貨竭盡 v2：連次≥10 ∧ 轉色 ∧ 近30秒 RVOL≥2×；凍結版行為不變。"""
+
+    @staticmethod
+    def _bs():
+        b = WindowStreakTests._b
+        return [b(100 + i * 5 + 1) for i in range(12)] + [b(100 + 12 * 5 + 1, side=-1)]
+
+    def _run(self, ref):
+        w = FF.WindowStreakV2(lambda T: ref)
+        for b in self._bs():
+            w.add(b)
+        w.flush_all()
+        return w
+
+    def test_signal_when_rvol_enough(self):
+        w = self._run(6.0)                                               # 近6窗=5×3+3=18 口 ÷ 6 = 3.0×
+        k = ("day", "2026-10-19")
+        self.assertEqual(len(w.sigs(k)), 1)
+        t, d, n, rv = w.sigs(k)[0]
+        self.assertEqual((t, d, n), (165, -1, 12))
+        self.assertAlmostEqual(rv, 3.0)
+        self.assertEqual(w.snapshot()[k]["turns"], [[165, -1, 12]])      # 凍結版的轉色事件照舊
+
+    def test_no_signal_when_rvol_low_or_no_ref(self):
+        k = ("day", "2026-10-19")
+        self.assertEqual(self._run(18.0).sigs(k), [])                    # 1.0×
+        self.assertEqual(self._run(None).sigs(k), [])                    # 無基準 → 不判
+
+    def test_state_roundtrip_and_ref30_pit(self):
+        w = self._run(6.0)
+        w2 = FF.WindowStreakV2(lambda T: 6.0)
+        w2.load_state(__import__("json").loads(__import__("json").dumps(w.to_state())))
+        self.assertEqual(w2.snapshot2(), w.snapshot2())
+        self.assertEqual(w2.day_tot, w.day_tot)
+        tot = {"2026-10-14": 600.0, "2026-10-15": 1200.0, "2026-10-16": 600.0, "2026-10-19": 9e9}
+        self.assertAlmostEqual(FF.ref30_from_totals(tot, "2026-10-19"), (600 + 1200 + 600) / 3 / FF.V2_SESSION_30S)   # 只用 T 之前
+        self.assertIsNone(FF.ref30_from_totals({"2026-10-16": 600.0}, "2026-10-19"))                                  # 不足 3 日

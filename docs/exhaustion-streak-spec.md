@@ -119,3 +119,6 @@ PYTHONPATH=scripts/research:scripts/research/biglot:src .venv/bin/python scripts
 - **P1-v2**：買盤竭盡側（紅轉綠）的竭盡v2 剛成立即寫前向帳本 `forward_p1_events.jsonl`（`rule: P1-v2`，欄位含 `rvol30`、`n`、bid／ask）；同股 300 秒 cooldown；評估＝之後 1／3／5 分鐘放空含零毛報酬（賣 bid 進、買 ask 出）；**自 2026-10-26 起計**。
 - **P1-v1 終止**：v1（昨漲>3%∧今日仍紅K∧外攻連次≥10∧已有爆窗）原為 2026-10-19 的預登記規則（『定義固定、不得回頭調參』），於 2026-10-25 依 jack 指示終止，**不是修改**；10/19～10/23 的 v1 帳本列保留（`rule: P1-v1`，樣本小，不下結論）。判讀 v2 時不得與 v1 混算。
 - 檔：`biglot/streak.py`（`lit`、`lit10`）、`biglot/xiaoge_cols.py`（`p1_conditions`、`record_p1`）、`biglot/streak_live.py`（flip 監聽寫 P1-v2）；測試 `tests/test_biglot_streak.py`、`tests/test_biglot_xiaoge.py`（27 項）。
+
+### 12.x 期貨大台（2026-10-25）
+大台另加探索規則「連次≥10 ∧ 轉色 ∧ RVOL≥2×」（★），細節見 `docs/futures-exhaust-v2-20261025.md`；凍結的 S1 預登記不動。

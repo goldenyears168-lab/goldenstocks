@@ -331,6 +331,16 @@ LIGHT_COOLDOWN = 300.0       # 同一盤別內,兩次亮燈(或兩次轉色)至�
 WINDOW_SETTLE = 3.0          # 窗結束後再等 3 秒才結算:買、賣兩側爆發的輸出時間可差約 2 秒,避免窗未收齊就結算
 STREAK_ROOT = "TXF"          # 目前只在大台顯示(見上)
 
+# ── 竭盡 v2(期貨,2026-10-25,jack 指示『連次≥10 ∧ RVOL≥2 倍』;探索性,不屬 futures-streak-prereg-20261019 的凍結檢定,凍結的 WindowStreak 不動)──
+# 訊號 = 轉色(連攻段被反向窗打斷,平手不算)∧ 連次≥V2_MIN_N ∧ 近 30 秒 RVOL≥V2_RVOL;RVOL = 最近 V2_WINS 個 5 秒窗(含轉色窗)可判定方向的買賣口數
+# ÷ 該商品過去 ≤10 個日盤『每 30 秒平均口數』(日盤 300 分 = 600 個 30 秒;分子分母同口徑:只計可判定方向的主動成交口數)。
+# 研究(scripts/research/futures_exhaust_v2_eval.py,37 個大台日盤):連次≥10∧RVOL≥2×,每日 2.6 個,反轉方向含零毛 3/5/15 分 +1.4/+1.6/+3.9 bps(t 1.1~1.4,未達顯著)。
+# 同樣參數(連次≥4)在期貨上沒有反轉優勢(−0.4~−1.2 bps),故門檻採 10。僅日盤。
+V2_MIN_N = 10
+V2_RVOL = 2.0
+V2_WINS = 6
+V2_SESSION_30S = 600.0       # 日盤 08:45~13:45 共 300 分鐘 = 600 個 30 秒
+
 
 class WindowStreak:
     """5 秒窗連次狀態機。`add(burst)` 把爆發單累進所屬窗;`flush(last_tt)` 結算已確定收齊的窗並更新連次。
@@ -414,3 +424,62 @@ class WindowStreak:
         for k, v in ((state or {}).get("win") or {}).items():
             stype, T = k.split("|")
             self.win[(stype, T)] = {int(w): list(x) for w, x in v.items()}
+
+
+class WindowStreakV2(WindowStreak):
+    """期貨竭盡 v2:在凍結的 WindowStreak 之外另跑一份(不改它的任何行為)。每個轉色(連次≥V2_MIN_N 的連攻段被反向窗打斷)記一筆
+    [窗末 epoch 秒, 新顏色方向, 被打斷的連次, 近 30 秒 RVOL 或 None];`sigs()` 只回 RVOL≥V2_RVOL 者。無冷卻(與研究一致)。
+    `ref30_for(T)` 回傳日盤 T 的『每 30 秒平均口數』(PIT:T 之前 ≤10 個日盤),無資料回 None → RVOL=None、不判訊號。只對日盤判定。"""
+
+    def __init__(self, ref30_for=None):
+        super().__init__()
+        self.ref30_for = ref30_for
+        self.recent: dict = {}     # (stype,T) → [(窗編號, 買+賣口數)] 最近 12 窗
+        self.turns2: dict = {}     # (stype,T) → [[窗末, 新顏色, 連次, rvol]]
+        self.day_tot: dict = {}    # T → 日盤可判定口數合計(算次日起的基準)
+
+    def _settle(self, key, wid, w):
+        st0 = self.st.get(key)
+        d_new = (w[0] > w[1]) - (w[0] < w[1])
+        prev_d, prev_n = (st0["d"], st0["n"]) if st0 else (0, 0)
+        tot = float(w[0] + w[1])
+        rec = self.recent.setdefault(key, [])
+        rec.append((wid, tot))
+        if len(rec) > 12:
+            del rec[:-12]
+        if key[0] == "day":
+            self.day_tot[key[1]] = self.day_tot.get(key[1], 0.0) + tot
+        if key[0] == "day" and d_new != 0 and prev_d != 0 and d_new == -prev_d and prev_n >= V2_MIN_N:
+            ref = self.ref30_for(key[1]) if self.ref30_for else None
+            v30 = sum(v for w_, v in rec if w_ > wid - V2_WINS)
+            self.turns2.setdefault(key, []).append([(wid + 1) * WINDOW_SEC, d_new, prev_n, (v30 / ref) if ref else None])
+        super()._settle(key, wid, w)
+
+    def sigs(self, key) -> list:
+        return [x for x in self.turns2.get(key, []) if x[3] is not None and x[3] >= V2_RVOL]
+
+    def snapshot2(self) -> dict:
+        return {k: {"turns": [list(x) for x in v], "sigs": [list(x) for x in v if x[3] is not None and x[3] >= V2_RVOL]} for k, v in self.turns2.items()}
+
+    def to_state(self, keep: int = 24) -> dict:
+        base = super().to_state(keep)
+        ks = sorted(set(self.turns2) | set(self.recent), key=lambda k: (k[1], 0 if k[0] == "day" else 1))[-keep:]
+        base["v2"] = {"turns2": {f"{k[0]}|{k[1]}": self.turns2[k] for k in ks if k in self.turns2},
+                      "recent": {f"{k[0]}|{k[1]}": [list(x) for x in self.recent[k]] for k in ks if k in self.recent},
+                      "day_tot": dict(sorted(self.day_tot.items())[-keep:])}
+        return base
+
+    def load_state(self, state: dict) -> None:
+        super().load_state(state)
+        v2 = (state or {}).get("v2") or {}
+        for k, v in (v2.get("turns2") or {}).items():
+            stype, T = k.split("|"); self.turns2[(stype, T)] = [list(x) for x in v]
+        for k, v in (v2.get("recent") or {}).items():
+            stype, T = k.split("|"); self.recent[(stype, T)] = [(int(a), float(b)) for a, b in v]
+        self.day_tot.update({k: float(v) for k, v in (v2.get("day_tot") or {}).items()})
+
+
+def ref30_from_totals(totals: dict, T: str, days: int = 10, min_days: int = 3):
+    """日盤 T 的『每 30 秒平均口數』:T 之前 ≤days 個日盤合計的平均 ÷ 600。不足 min_days 回 None。"""
+    prev = [v for d, v in sorted(totals.items()) if d < T and v > 0][-days:]
+    return (sum(prev) / len(prev) / V2_SESSION_30S) if len(prev) >= min_days else None

@@ -183,6 +183,32 @@ class FutFlowCheckpointTests(unittest.TestCase):
         self.assertIsNone(F.Book.from_state("MXF", {"schema": F.CKPT_SCHEMA}))   # 結構殘缺
 
 
+class FutFlowV2Tests(unittest.TestCase):
+    """竭盡 v2（大台，2026-10-25）：只掛在 TXF；檢查點 schema 與其他品牌分開；標注函式。"""
+
+    def test_only_txf_has_v2(self):
+        self.assertIsNotNone(F.Book("TXF").wstreak_v2)
+        self.assertIsNone(F.Book("MXF").wstreak_v2)
+
+    def test_txf_checkpoint_schema_and_roundtrip(self):
+        import json as _j
+        b = F.Book("TXF")
+        st = _j.loads(_j.dumps(b.to_state()))
+        self.assertEqual(st["schema"], F.V2_SCHEMA)
+        self.assertIn("wstreak_v2", st)
+        self.assertIsNotNone(F.Book.from_state("TXF", st))
+        self.assertIsNone(F.Book.from_state("TXF", dict(st, schema=F.CKPT_SCHEMA)))   # 舊檢查點作廢重建
+        self.assertEqual(F._ckpt_schema("MXF"), F.CKPT_SCHEMA)
+
+    def test_v2_marks(self):
+        v2 = {("day", "2026-10-14"): {"turns": [], "sigs": [[1_760_400_000.0, -1, 12, 2.4]]}}
+        m = F._v2_marks(v2, ("day", "2026-10-14"))
+        self.assertEqual(len(m), 1)
+        self.assertEqual((m[0][0], m[0][2], m[0][3], m[0][5]), ("sig", -1, 12, "V"))
+        self.assertIn("RVOL 2.4×", m[0][4])
+        self.assertEqual(F._v2_marks(None, ("day", "x")), [])
+
+
 class FutFlowFreshnessTests(unittest.TestCase):
     def test_freshness_levels(self):
         now = dt.datetime(2026, 10, 14, 10, 0, 0)
