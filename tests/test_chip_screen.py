@@ -72,6 +72,19 @@ class EvaluateTest(unittest.TestCase):
         self.assertIn("W14", ids)
 
 
+class LiquidityGateTest(unittest.TestCase):
+    def test_gate_blocks_direction(self):
+        bull = _inst(f_streak=9)
+        disp = {"asof": "b", "base": "a", "b1000": 50, "d_b1000": 1.0, "d_b400": 1.0, "d_b400_800": 0.0, "d_r100": -1.0, "d_tot": -10}
+        thin = {"ratio": 1.0, "vm20_lots": 120, "am20_yi": 0.02, "close": 80}
+        ok = {"ratio": 1.0, "vm20_lots": 5000, "am20_yi": 3.0, "close": 80}
+        cheap = {"ratio": 1.0, "vm20_lots": 5000, "am20_yi": 3.0, "close": 8}
+        self.assertEqual(cs.evaluate({"px": thin, "tier": "大", "inst": bull, "disp": disp})["label"], "流動性不足")
+        self.assertEqual(cs.evaluate({"px": cheap, "tier": "大", "inst": bull, "disp": disp})["label"], "流動性不足")
+        self.assertEqual(cs.evaluate({"px": ok, "tier": "大", "inst": bull, "disp": disp})["label"], "偏多")
+        self.assertIn("W16", {h["id"] for h in cs.evaluate({"px": thin, "tier": "大", "inst": bull, "disp": disp})["hits"]})
+
+
 class ExpertRulesTest(unittest.TestCase):
     PX = {"chg": 0.0, "ratio": 1.0, "vm20_lots": 5000, "r10": 3.0, "min_vol5_lots": 900}
 

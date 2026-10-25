@@ -46,6 +46,9 @@ TH = {
     "vol_burst": 2.0,                # 量比 ≥2＝爆量（小哥地板股第一道條件）
     "vol_shrink": 0.5,               # 量比 <0.5＝量縮
     "thin_lots": 3000,               # 20 日均量 <3000 張＝量小（小哥當沖門檻）
+    "gate_lots": 1000,               # 流動性閘門：前 20 日均量 ≥ 此張（操作化；2026-10-22 全市場約 27% 通過）
+    "gate_amt_100m": 0.5,            # 且前 20 日均成交值 ≥ 此億元（先例：/inventory 3000 萬、xiaoge_chip_daily 5000 萬）
+    "gate_price": 10,                # 且收盤 ≥ 此元
     "limit_pct": 9.5,                # 漲跌停近似（未用官方漲跌停價）
     "bias_year_hi_pct": 40.0,        # 乖離年線 >40%（小哥）
     "disp_pp": 0.5,                  # 集保 4 週變化 ≥ ±此 pp（操作化）
@@ -96,17 +99,19 @@ def load_features(conn: sqlite3.Connection, sid: str, asof: str, branch_row: dic
     q = lambda sql, *a: conn.execute(sql, a).fetchall()  # noqa: E731
     f: dict = {"sid": sid, "asof": asof, "warn": []}
 
-    bars = q("SELECT trade_date,open,high,low,close,volume FROM stock_daily_bars WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 70", sid, asof)[::-1]
+    bars = q("SELECT trade_date,open,high,low,close,volume,amount FROM stock_daily_bars WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 70", sid, asof)[::-1]
     if not bars or bars[-1][0] != asof:
         f["no_bar"] = True
         return f
     close = [b[4] for b in bars]
     vol = [b[5] for b in bars]
     vm20 = sum(vol[-21:-1]) / 20 if len(vol) >= 21 else None
+    amts = [b[6] for b in bars]
     chg = (close[-1] / close[-2] - 1) * 100 if len(close) >= 2 else None
     f["px"] = {
         "close": close[-1], "chg": chg, "vol_lots": vol[-1] / 1000, "vm20_lots": None if vm20 is None else vm20 / 1000,
         "ratio": None if not vm20 else vol[-1] / vm20,
+        "am20_yi": (sum(a or 0 for a in amts[-21:-1]) / 20 / 1e8) if len(amts) >= 21 else None,
         "r5": (close[-1] / close[-6] - 1) * 100 if len(close) > 5 else None,
         "r20": (close[-1] / close[-21] - 1) * 100 if len(close) > 20 else None,
         "r10": (close[-1] / close[-11] - 1) * 100 if len(close) > 10 else None,
@@ -381,7 +386,14 @@ def evaluate(f: dict) -> dict:
     avail = [g for g in GROUPS if cov[g]]
     signs = {g: (1 if gnet[g] > 0 else -1 if gnet[g] < 0 else 0) for g in avail}
     pos_n, neg_n = sum(v > 0 for v in signs.values()), sum(v < 0 for v in signs.values())
-    if len(avail) < 2:
+    am20 = px.get("am20_yi")
+    gate_ok = (px.get("vm20_lots") is not None and am20 is not None and px["vm20_lots"] >= TH["gate_lots"]
+               and am20 >= TH["gate_amt_100m"] and (px.get("close") or 0) >= TH["gate_price"])
+    if px.get("vm20_lots") is not None and am20 is not None and not gate_ok:
+        label, strength = "流動性不足", ""
+        hits.append(_hit("W16", "watch", "watch", "流動性閘門未通過", "—",
+                         f"前20日均量 {px['vm20_lots']:,.0f} 張、均成交值 {am20:.2f} 億、收盤 {px.get('close') or 0:g}（閘門：≥{TH['gate_lots']:,} 張且≥{TH['gate_amt_100m']} 億且≥{TH['gate_price']} 元）；不下方向結論"))
+    elif len(avail) < 2:
         label, strength = "資料不足", ""
     elif pos_n and neg_n:
         label, strength = "分歧", ""
@@ -435,7 +447,7 @@ def render(rows: list[dict], asof: str) -> str:
     for r in rows:
         key = r["label"] + (r.get("strength") or "")
         by.setdefault(key, []).append(r)
-    order = ["偏多強", "偏多弱", "偏空強", "偏空弱", "分歧", "中性", "資料不足", "無當日行情"]
+    order = ["偏多強", "偏多弱", "偏空強", "偏空弱", "分歧", "中性", "資料不足", "流動性不足", "無當日行情"]
     L.append("## 一、結論分組\n")
     L.append("| 結論 | 標的 |\n|---|---|")
     for k in order:

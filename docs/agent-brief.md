@@ -44,6 +44,7 @@
 | **RRG Improving lifecycle** | `docs/rrg-improving-lifecycle-research.md`, `scripts/run_rrg_improving_lifecycle_backtest.py`, `scripts/run_rrg_improving_lifecycle_monthly_sweep.py`, `scripts/run_rrg_improving_watch_daily.py` | `src/research/backtest/rrg_improving_lifecycle_*.py`, `src/rrg_improving_watch.py`, `config/buy_observation.yaml` |
 | **VCP funnel** | `src/vcp_funnel_specs_daily.py`, `src/vcp_funnel_screen.py` | `scripts/run_vcp_funnel_*.py` |
 | **buy / sell signal radar** | `src/strategy_signal_radar.py`, `config/strategy.yaml` · `buy-signal-radar` / `sell-signal-radar` | `scripts/launchd/*-signal-radar.command` |
+| **XQ 全球贏家 · XS 選股腳本 · 籌碼選股判斷** | `scripts/xs/README.md`, `docs/chip-screen-spec.md`, `docs/dashboard-selection-inventory-20261026.md` | `scripts/xs/*.xs`, `scripts/research/chip_screen.py`, `scripts/research/xq_reconcile.py`；XQ 官網教學存檔在 `docs/xq-*/` |
 | **launchd 排錯** | `config/pipeline_scripts.yaml`, `docs/daily-operations.md` | 對應 `scripts/launchd/*.command` |
 | **下單 · Fubon** | [order-layer-prd.md](./order-layer-prd.md), `src/order/`, `config/order.yaml`, `scripts/order/` | `reports/order/`（runtime） |
 | **TMF cell 參數 · recipe** | `src/order/tmf_channel_pv16_book.py`, [tmf-micro-channel-final-v1-1-prd.md](./tmf-micro-channel-final-v1-1-prd.md) | `src/order/tmf_channel_pv16_book.py`, `tests/test_tmf_channel_pv16_book.py` |
