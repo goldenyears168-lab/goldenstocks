@@ -44,7 +44,7 @@
 
 | Layer · 層 | SSOT | VFP · 可驗證交付物 |
 |------------|------|-------------------|
-| **Facts layer · 事實層** | `etf-daily` · `layer: facts` | `reports/daily/etf-daily/daily_brief.md` after 16:30; universe denominator = `ETF_CODES_LISTED` (6 listed ETFs; `00407A` optional pre-listing) |
+| **Facts layer · 事實層** | `etf-daily` · `layer: facts` | `reports/daily/etf-daily/daily_brief.md` after 18:00 (`etf-holdings-sync`); universe denominator = `ETF_CODES_LISTED` (6 listed ETFs); holdings collected = `ETF_CODES_HOLDINGS` (adds `00407A` / `00988A` / `00990A`) |
 | **Regime layer · 環境層** | `regime-daily` · `config/regime.yaml` | `reports/daily/regime/daily_brief.md` — Regime four-axis diagnostic; **not** a live gate |
 | **Research layer · 研究層** | `config/research.yaml` | Artifacts under `reports/research/`; **not** written to strategy SSOT until graduation |
 | **Strategy layer · 策略層** | `config/strategy.yaml` | Frozen `strategies.*.backtest` spec + evidence JSON; optional launchd screen; **no** ensemble weighting |
@@ -331,6 +331,10 @@
 **Function · 函式:** `flow_tape_regime()` · **Module:** `flow_returns`  
 **Do not use · 勿用:** `market_regime()` (deprecated alias).
 
+### 6.2 Dashboard date wording · 儀表板頁面日期用語
+
+8771 儀表板（`scripts/research/biglot/`）的頁面文字：**可選日期的快照頁**（`/chips?date=`）不得用相對詞（今日／今天／昨日／前日／明日／隔日／隔天／次日）指稱某一天，一律寫 `MM-DD(週)` 或「下一交易日」「前一個交易日」並由快照日曆（`calendar`）帶入日期；**即時頁**（`/disposal`）可用「今日／今天」指當下，但不得用「明日／隔天」（週五與連假前會指錯天），改寫「下一交易日」。專有名詞「隔日沖」不在此限。以 `tests/test_dashboard_date_wording.py` 掃描字串常數把關。
+
 ---
 
 ## 7. Deprecated terms · 廢止術語
@@ -373,6 +377,10 @@ Before adding new strings, grep this section and [terminology-audit.md](./termin
 | 關鍵一條線 | **起漲防守價**（需附計算式） |
 | 隱形大戶守價位 | **冰山委託（iceberg order）偵測價位** |
 | 波動分 · 淨分 | **隔日振幅預測分數** · **綜合評分** |
+| 最後 30 秒速度 · 成交速度倍數 · 速度≥N 倍（量的倍數） | **近 30 秒相對成交量（RVOL）≥N 倍**（§11.6；基準須註明） |
+| lift（報酬較基準的差） | **較基準高出（bps）** · **超額（bps）** |
+| 雙峰 · 雙頂（指前高再攻不過） | **雙重頂（double top）** |
+| 爆量窗數（儀表板舊稱） | **單窗爆量次數**（單一 5 秒窗主導方向成交量達該股標準的次數） |
 | 連3買 · ⚠同賣 · ↓弱開 | **大戶連三日淨買** · **大戶與散戶同向賣出** · **開盤走弱** |
 | 新鮮 · 段落末（RRG 對外） | **fresh** · **依軌跡排序** |
 | 篩選檔 | **篩選條件** |
@@ -684,3 +692,26 @@ spot** price—single-stock futures carry a basis, so spot-based distance is wro
 相關工具：`scripts/research/trader_mae_mfe_engine.py`。
 
 **Do not use · 勿用:** 掛價距離用 % 單獨表示 · 以現股價計算期貨掛價距離。
+
+### 11.6 Relative volume & streak volume · 相對成交量與連次連量用語
+
+**Definition (EN):** *Relative volume* (RVOL) = volume in a recent window ÷ the
+average volume of the same-length window over a stated baseline. The **baseline must
+always be named** (e.g. previous N one-minute bars; same time-of-day slot over the
+past N sessions; previous-day total). *Streak* terms follow the 「盤中當沖神器」
+field notes: **連次** counts consecutive 5-second windows won by the same side;
+**連量** is the traded lots in a window (single window vs. cumulative is reported
+side by side).
+
+**定義（中文）：**
+- **相對成交量（RVOL）**＝近一段時間的成交量 ÷ 基準期間同樣長度的平均成交量；**基準一定要寫**
+  （例：前 N 根 1 分 K 平均量／過去 N 日同時段平均量／昨日成交量）。
+- **量比**（XQ 欄位 `VolumeRatio`）＝**當日估計量 ÷ 昨量**，是整天的量，**不等於**短視窗的 RVOL。
+- **爆量倍數／量增比例**（XQ 警示腳本用語，如「分鐘暴量n%」「爆量長紅」）＝本根量 ÷ 最近 N 根均量。
+- **連次／連量**（小哥當沖神器）：連次＝每 5 秒外盤量>內盤量記 +1（反之 −1），連續累計，|連次|≥10 亮燈；
+  連量＝該 5 秒窗外盤（紅）或內盤（綠）成交張數；本專案並列顯示**當窗連量**與**累計連量**（連攻期間同方向各窗成交張數加總）。
+- **轉色**＝連攻後下一個有成交的窗由另一方主導（平手不算）；訊號時間＝轉色窗收盤。
+- **漲不動**（小哥口訣「空在爆量漲不動」）＝量大但價格未創連攻段新高（低）。
+- 研究報告的報酬欄位：**較基準高出（bps）**（不寫 lift）、**含零平均**（價格未變動者計 0）。
+
+**Do not use · 勿用:** 「速度倍數」「最後 30 秒速度」當量的名稱 · 不註明基準的「爆量」 · 把 XQ 量比當短視窗相對量。

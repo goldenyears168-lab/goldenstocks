@@ -76,7 +76,7 @@ def main():
     print(f"{len(days)} 日；轉色 {len(F)}；亮燈觀察 {len(Lt)}；cum_x 分位 25/50/75/90：{np.percentile(F.cum_x, [25, 50, 75, 90]).round(2)}")
     g1 = {"轉色·全部": F.index == F.index, "轉色·cum<1分": F.cum_x < 1, "轉色·cum≥1分": F.cum_x >= 1, "轉色·cum≥2分": F.cum_x >= 2, "轉色·cum≥3分": F.cum_x >= 3, "轉色·cum≥5分": F.cum_x >= 5}
     E1 = pd.concat([F[m].assign(W=0, grp=k) for k, m in g1.items()], ignore_index=True)
-    R1 = N.summarize(E1, B); print("\n(1) 轉色依累計連量標準分組"); print(R1[["grp", "h_min", "n", "days", "P_rev", "P_base", "lift_pp", "t_lift", "ret_bps", "t_ret"]].round(3).to_string(index=False))
+    R1 = N.summarize(E1, B); print("\n(1) 轉色依累計連量標準分組"); print(R1[["grp", "h_min", "n", "days", "P_rev", "P_base", "較基準高出_pp", "t_較基準高出", "ret_bps", "t_ret"]].round(3).to_string(index=False))
     g2 = {}
     for nm, big in (("cum≥3分", Lt.cum_x >= 3), ("cum<3分", Lt.cum_x < 3)):
         g2[f"沒破∧量縮·{nm}"] = big & Lt.nobrk & Lt.shrink
@@ -85,7 +85,7 @@ def main():
     E2 = pd.concat([Lt[m].assign(grp=k) for k, m in g2.items()], ignore_index=True)
     R2 = N.summarize(E2, B); R2.to_csv(Path.home() / "goldenstocks-data/research/exhaust_cum_volume.csv", index=False)
     print("\n(2) 亮燈後 W 分鐘（沒破前高低 / 量縮）× 累計連量標準；只列後續 3、5 分")
-    print(R2[R2.h_min.isin([3, 5])][["W_min", "grp", "h_min", "n", "days", "P_rev", "lift_pp", "t_lift", "ret_bps", "t_ret"]].sort_values(["h_min", "W_min", "grp"]).round(3).to_string(index=False))
+    print(R2[R2.h_min.isin([3, 5])][["W_min", "grp", "h_min", "n", "days", "P_rev", "較基準高出_pp", "t_較基準高出", "ret_bps", "t_ret"]].sort_values(["h_min", "W_min", "grp"]).round(3).to_string(index=False))
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """『第二次沒過前高』（使用者 2026-10-25）：以轉色為扳機（連次≥10 後反向主導窗收盤，PIT）。
 前高 H_prev ＝ 本段連攻『開始前』、回看 L 分鐘（L=5/15/30，或當日開盤以來）的最高成交價（賣盤竭盡＝最低價）。段頂 P_top ＝ 連攻期間最高（低）價。
-分組：DT 雙頂＝P_top 沒超過 H_prev 且離 H_prev 在 x bps 內（x=30/50/100）；BRK 突破＝P_top > H_prev；FAR 離前高很遠＝P_top 低於 H_prev 超過 x bps；NA 回看範圍內沒有資料。
-報酬一律『含零』（反轉方向、買賣中價）；另報反轉機率（條件於有變動）。lift（bps）＝組平均 − 同日所有轉色平均，日期叢集 t。再與 爆量(最後6窗≥3×均速)、累計連量≥2 分 交叉。
+分組：DT 雙重頂＝P_top 沒超過 H_prev 且離 H_prev 在 x bps 內（x=30/50/100）；BRK 突破＝P_top > H_prev；FAR 離前高很遠＝P_top 低於 H_prev 超過 x bps；NA 回看範圍內沒有資料。
+報酬一律『含零』（反轉方向、買賣中價）；另報反轉機率（條件於有變動）。較基準高出（bps）＝組平均 − 同日所有轉色平均，日期叢集 t。再與 爆量(最後6窗≥3×均速)、累計連量≥2 分 交叉。
 """
 import glob, sys
 from bisect import bisect_left, bisect_right
@@ -74,21 +74,21 @@ def main():
             gcol = f"gap{Lm}"; sub = E.dropna(subset=[gcol])
             name = "當日" if Lm == 0 else f"{Lm}分"
             print(f"\n=== 回看 {name}（近前高門檻 {xbps}bps）：可判斷 {len(sub)}/{len(E)} 筆")
-            groups = {"DT 雙頂(沒過前高且≤%dbps)" % xbps: (sub[gcol] >= 0) & (sub[gcol] <= xbps), "BRK 已突破前高": sub[gcol] < 0, "FAR 離前高很遠": sub[gcol] > xbps}
+            groups = {"DT 雙重頂(沒過前高且≤%dbps)" % xbps: (sub[gcol] >= 0) & (sub[gcol] <= xbps), "BRK 已突破前高": sub[gcol] < 0, "FAR 離前高很遠": sub[gcol] > xbps}
             out = []
             for gn, m in groups.items():
                 for ext, mm in (("", m), ("∧爆量", m & (sub.heavy6 == 1)), ("∧累計≥2分", m & (sub.cum_x >= 2)), ("∧爆量∧累計≥2分", m & (sub.heavy6 == 1) & (sub.cum_x >= 2))):
                     for h in HS:
                         base = E.groupby("date")[f"r{h}"].mean()
                         r = stat(sub[mm], f"r{h}", base)
-                        if r: out.append({"組": gn + ext, "持有": f"{h//60}分", "n": r[0], "日": r[1], "含零平均bps": r[2], "對全轉色lift": r[3], "t": r[4], "P_rev|有變動": r[5]})
+                        if r: out.append({"組": gn + ext, "持有": f"{h//60}分", "n": r[0], "日": r[1], "含零平均bps": r[2], "較全轉色高出": r[3], "t": r[4], "P_rev|有變動": r[5]})
             print(pd.DataFrame(out).round(3).to_string(index=False))
     # 近前高門檻敏感度（回看 15 分，DT，持有 1 分）
     print("\n=== 近前高門檻敏感度（回看15分、持有1分、含零）")
     sub = E.dropna(subset=["gap15"]); base = E.groupby("date")["r60"].mean()
     for xb in (30, 50, 100, 200):
         r = stat(sub[(sub.gap15 >= 0) & (sub.gap15 <= xb)], "r60", base)
-        if r: print(f"  ≤{xb}bps：n={r[0]} 含零平均 {r[2]:+.2f}bps lift {r[3]:+.2f} (t {r[4]:+.1f}) P_rev {r[5]:.3f}")
+        if r: print(f"  ≤{xb}bps：n={r[0]} 含零平均 {r[2]:+.2f}bps 較基準高出 {r[3]:+.2f} (t {r[4]:+.1f}) P_rev {r[5]:.3f}")
 
 if __name__ == "__main__":
     main()

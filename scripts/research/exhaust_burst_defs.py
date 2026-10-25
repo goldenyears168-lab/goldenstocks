@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """『爆量』三種定義並排比較（同一批轉色事件：連次≥10 後反向主導窗收盤，PIT；中價、含零）。
 分數（每個事件一個連續值，越大越「量大」）：
-  S1 最後30秒速度倍數  ＝ 轉色前最後 6 窗 (外盤+內盤) 總量 ÷30 秒 ÷ 該股平均成交速度
+  S1 近30秒相對成交量(RVOL)  ＝ 轉色前最後 6 窗 (外盤+內盤) 總量 ÷30 秒 ÷ 該股平均相對成交量
   S2 累計連量(分鐘)   ＝ 連攻期間各窗主導方向量加總 ÷ 該股每分鐘均量
-  S3 爆量窗數(x5)     ＝ 連攻期間 單窗主導量 ≥ 5× 該股每5秒均量 的窗數（儀表板爆量窗邏輯的 PIT 版；p90 門檻檔含未來資料故不用）
+  S3 單窗爆量次數(x5)     ＝ 連攻期間 單窗主導量 ≥ 5× 該股每5秒均量 的窗數（儀表板爆量窗邏輯的 PIT 版；p90 門檻檔含未來資料故不用）
   S4 單窗最大倍數     ＝ 連攻期間 最大單窗主導量 ÷ 該股每5秒均量
-比較方式：A) 日期內 Spearman（分數 vs 反轉方向報酬）的日均與 t；B) 各分數取前 15%／30% 事件的含零平均與 lift；C) 四分數的百分位同時放進日期叢集 OLS 看獨立貢獻。
+比較方式：A) 日期內 Spearman（分數 vs 反轉方向報酬）的日均與 t；B) 各分數取前 15%／30% 事件的含零平均與 較基準高出；C) 四分數的百分位同時放進日期叢集 OLS 看獨立貢獻。
 """
 import glob, sys
 from pathlib import Path
@@ -49,7 +49,7 @@ def main():
                 k = j + 1
     E = pd.DataFrame(rows); E.to_pickle(Path.home() / "goldenstocks-data/research/exhaust_burst_defs_events.pkl")
     pd.set_option("display.width", 200)
-    names = {"S1": "S1 最後30秒速度倍數", "S2": "S2 累計連量(分鐘)", "S3": "S3 爆量窗數(≥5×)", "S4": "S4 單窗最大倍數"}
+    names = {"S1": "S1 近30秒相對成交量(RVOL)", "S2": "S2 累計連量(分鐘)", "S3": "S3 單窗爆量次數(≥5×)", "S4": "S4 單窗最大倍數"}
     print(f"{len(days)} 日；事件 {len(E)}；分數分位(25/50/75/90)：")
     for k in names: print(f"  {names[k]}: {np.percentile(E[k], [25, 50, 75, 90]).round(2).tolist()}")
     print("\nA) 日內 Spearman IC（分數 vs 反轉方向含零報酬；日均IC｜t）")
@@ -61,7 +61,7 @@ def main():
                 if len(g) >= 15 and g[k].nunique() > 2: ics.append(g[[k, f"r{h}"]].rank().corr().iloc[0, 1])
             ics = np.array(ics); out.append(f"{names[k]} {ics.mean():+.3f}｜t{ics.mean() / (ics.std(ddof=1) / np.sqrt(len(ics))):+.1f}")
         print(f"  持有{h // 60}分：" + "；".join(out))
-    print("\nB) 取前 15%／30% 的事件（含零bps｜對全轉色lift(t)）")
+    print("\nB) 取前 15%／30% 的事件（含零bps｜較全轉色高出(t)）")
     for h in (60, 180, 300):
         base = E.groupby("date")[f"r{h}"].mean(); print(f"  持有{h // 60}分（全轉色 {E[f'r{h}'].mean():+.2f}）")
         for q in (0.85, 0.70):

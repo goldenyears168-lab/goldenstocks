@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """小哥口訣『空在爆量漲不動』：以『轉色』為扳機（連次≥10 後反向主導窗收盤，PIT），單獨檢驗『漲不動』（價格停滯）的增量。
 漲不動 stall_S：連攻段『最後 S 個窗』的最高價（賣盤竭盡看最低價）沒有超過『段內更早窗』的最高（低）價（S=3/6/12 窗＝15/30/60 秒）。
-爆量 heavy_S：最後 S 個窗的總成交速度 ≥ 3 × 該股平均速度（前≤10 日連續盤日量 ÷265 分鐘；PIT）。
+爆量 heavy_S：最後 S 個窗的總相對成交量 ≥ 3 × 該股平均速度（前≤10 日連續盤日量 ÷265 分鐘；PIT）。
 交叉：爆量∧漲不動 / 爆量∧在漲 / 量平∧漲不動 / 量平∧在漲。另做日期叢集 OLS：反轉報酬 ~ stall + heavy + stall×heavy + cum≥2分。
 後續報酬用買賣中價；基準＝同股同日每 60 秒時點；反轉＝買盤竭盡後下跌／賣盤竭盡後上漲。
 """
@@ -66,7 +66,7 @@ def main():
         X = pd.concat([Ea[m].assign(W=0, grp=k) for k, m in g.items()], ignore_index=True)
         R = N.summarize(X, B)
         print(f"\n=== S={S} 窗（{S * 5} 秒）")
-        print(R[R.h_min.isin([1, 3, 5])][["grp", "h_min", "n", "days", "P_rev", "P_base", "lift_pp", "t_lift", "ret_bps", "t_ret"]].sort_values(["h_min", "grp"]).round(3).to_string(index=False))
+        print(R[R.h_min.isin([1, 3, 5])][["grp", "h_min", "n", "days", "P_rev", "P_base", "較基準高出_pp", "t_較基準高出", "ret_bps", "t_ret"]].sort_values(["h_min", "grp"]).round(3).to_string(index=False))
     # 日期叢集 OLS：反轉報酬(bps) ~ stall + heavy + stall×heavy + cum≥2
     import statsmodels.formula.api as smf
     for S in SS:
