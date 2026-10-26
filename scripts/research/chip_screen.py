@@ -93,13 +93,35 @@ def pct(a: float | None, b: float | None) -> float | None:
     return None if a is None or not b else a / b * 100
 
 
+def dedup_by_date(rows: list[tuple], n: int) -> list[tuple]:
+    """rows＝(日期, …, source)，已依日期新→舊、同日官方來源在前排序。同一天可能有 finmind 與官方各一列（表的 PK 含 source），
+    直接取「最近 N 列」會讓窗口只涵蓋約一半的天數；這裡每個日期只留第一列，取最近 N 個日期，回傳舊→新，並去掉 source 欄。"""
+    seen: set = set()
+    out: list[tuple] = []
+    for r in rows:
+        if r[0] in seen:
+            continue
+        seen.add(r[0])
+        out.append(tuple(r[:-1]))
+        if len(out) >= n:
+            break
+    return out[::-1]
+
+
 # ── 資料載入（唯讀）─────────────────────────────────────────────────────────────
 def load_features(conn: sqlite3.Connection, sid: str, asof: str, branch_row: dict | None, disposal: dict) -> dict:
     """逐檔特徵。缺資料的欄位為 None／缺 key；不補值。單位：法人／成交量庫內為股，這裡換成張。"""
     q = lambda sql, *a: conn.execute(sql, a).fetchall()  # noqa: E731
+
+    def qd(cols: str, table: str, n: int):
+        """每個日期只取一列（官方來源優先於 finmind），最近 n 個日期，舊→新。"""
+        rows = conn.execute(
+            f"SELECT {cols},source FROM {table} WHERE stock_id=? AND trade_date<=? AND trade_date>=date(?, '-200 day') "
+            "ORDER BY trade_date DESC, CASE WHEN source='finmind' THEN 1 ELSE 0 END", (sid, asof, asof)).fetchall()
+        return dedup_by_date(rows, n)
     f: dict = {"sid": sid, "asof": asof, "warn": []}
 
-    bars = q("SELECT trade_date,open,high,low,close,volume,amount FROM stock_daily_bars WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 70", sid, asof)[::-1]
+    bars = qd("trade_date,open,high,low,close,volume,amount", "stock_daily_bars", 70)
     if not bars or bars[-1][0] != asof:
         f["no_bar"] = True
         return f
@@ -120,8 +142,8 @@ def load_features(conn: sqlite3.Connection, sid: str, asof: str, branch_row: dic
     vols = {b[0]: b[5] for b in bars}
 
     # 法人
-    inst = q("SELECT trade_date,foreign_net,investment_trust_net,dealer_self_net,three_institution_net FROM stock_institutional_daily WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 25", sid, asof)[::-1]
-    sh = q("SELECT trade_date,foreign_remaining_ratio,shares_issued FROM stock_shareholding_daily WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 25", sid, asof)[::-1]
+    inst = qd("trade_date,foreign_net,investment_trust_net,dealer_self_net,three_institution_net", "stock_institutional_daily", 25)
+    sh = qd("trade_date,foreign_remaining_ratio,shares_issued", "stock_shareholding_daily", 25)
     si = sh[-1][2] if sh and sh[-1][2] else None
     mcap = si * close[-1] / 1e8 if si else None
     f["mcap_100m"] = mcap
@@ -154,7 +176,7 @@ def load_features(conn: sqlite3.Connection, sid: str, asof: str, branch_row: dic
         f["fh_d20"] = -(sh[-1][1] - sh[-21][1])
 
     # 融資融券（餘額單位＝張）
-    mg = q("SELECT trade_date,margin_balance,short_balance FROM stock_margin_daily WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 25", sid, asof)[::-1]
+    mg = qd("trade_date,margin_balance,short_balance", "stock_margin_daily", 25)
     if len(mg) > 5 and mg[-1][0] == asof:
         mb, sb = mg[-1][1], mg[-1][2]
         m: dict = {"mb": mb, "sb": sb, "ratio": pct(sb, mb), "mb_d5": mb - mg[-6][1], "sb_d5": sb - mg[-6][2],
@@ -163,11 +185,11 @@ def load_features(conn: sqlite3.Connection, sid: str, asof: str, branch_row: dic
                    "mb_d20_pct": pct(mb - mg[-21][1], mg[-21][1]) if len(mg) > 20 else None}
         f["margin"] = m
     # 借券賣出餘額（股）
-    sbl = q("SELECT trade_date,sbl_balance FROM stock_short_interest_daily WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 25", sid, asof)[::-1]
+    sbl = qd("trade_date,sbl_balance", "stock_short_interest_daily", 25)
     if len(sbl) > 5 and sbl[-1][0] == asof and sbl[-6][1] is not None and sbl[-1][1] is not None:
         f["sbl"] = {"bal_lots": sbl[-1][1] / 1000, "d5_lots": (sbl[-1][1] - sbl[-6][1]) / 1000, "d5_pct": pct(sbl[-1][1] - sbl[-6][1], sbl[-6][1])}
     # 當沖率
-    dt = q("SELECT trade_date,daytrade_ratio_pct FROM stock_daytrade_daily WHERE stock_id=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 21", sid, asof)[::-1]
+    dt = qd("trade_date,daytrade_ratio_pct", "stock_daytrade_daily", 21)
     if dt and dt[-1][0] == asof and dt[-1][1] is not None:
         prev = [x[1] for x in dt[:-1] if x[1] is not None]
         d: dict = {"t": dt[-1][1]}

@@ -72,6 +72,15 @@ class EvaluateTest(unittest.TestCase):
         self.assertIn("W14", ids)
 
 
+class DedupTest(unittest.TestCase):
+    def test_one_row_per_date_prefers_first_and_windows_by_dates(self):
+        rows = [("d5", 5, "twse"), ("d5", 50, "finmind"), ("d4", 4, "twse"), ("d4", 40, "finmind"),
+                ("d3", 3, "twse"), ("d2", 2, "finmind"), ("d2", 20, "x"), ("d1", 1, "twse")]
+        out = cs.dedup_by_date(rows, 4)
+        self.assertEqual([r[0] for r in out], ["d2", "d3", "d4", "d5"])   # 舊→新、4 個「日期」而不是 4 列
+        self.assertEqual([r[1] for r in out], [2, 3, 4, 5])               # 同日取第一列
+
+
 class LiquidityGateTest(unittest.TestCase):
     def test_gate_blocks_direction(self):
         bull = _inst(f_streak=9)

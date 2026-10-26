@@ -113,10 +113,10 @@ def parse(rows: list[list[str]]) -> tuple[dict[str, dict], dict[str, str]]:
 def db_side(conn: sqlite3.Connection, sids: list[str], asof: str) -> dict[str, dict]:
     q = ",".join("?" * len(sids))
     out: dict[str, dict] = {s: {} for s in sids}
-    for sid, f, t in conn.execute(f"SELECT stock_id,foreign_net,investment_trust_net FROM stock_institutional_daily WHERE trade_date=? AND stock_id IN ({q})", [asof, *sids]):
+    for sid, f, t in conn.execute(f"SELECT stock_id,foreign_net,investment_trust_net FROM stock_institutional_daily WHERE trade_date=? AND stock_id IN ({q}) ORDER BY CASE WHEN source='finmind' THEN 0 ELSE 1 END", [asof, *sids]):  # 官方來源排後面，覆蓋 finmind
         out[sid]["foreign"] = None if f is None else f / 1000
         out[sid]["trust"] = None if t is None else t / 1000
-    for sid, sb in conn.execute(f"SELECT stock_id,short_balance FROM stock_margin_daily WHERE trade_date=? AND stock_id IN ({q})", [asof, *sids]):
+    for sid, sb in conn.execute(f"SELECT stock_id,short_balance FROM stock_margin_daily WHERE trade_date=? AND stock_id IN ({q}) ORDER BY CASE WHEN source='finmind' THEN 0 ELSE 1 END", [asof, *sids]):
         out[sid]["short"] = sb
     for sid, sb in conn.execute(f"SELECT stock_id,sbl_balance FROM stock_short_interest_daily WHERE trade_date=? AND stock_id IN ({q})", [asof, *sids]):
         out[sid]["sbl"] = None if sb is None else sb / 1000
