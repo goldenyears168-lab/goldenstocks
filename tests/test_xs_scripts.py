@@ -31,7 +31,10 @@ class XsScriptsTest(unittest.TestCase):
                 idx = [int(o[0]) for o in outs]
                 self.assertEqual(idx, list(range(1, len(idx) + 1)), "outputfield 編號需連續")
                 self.assertEqual([o[2] for o in outs[:8]], STD, "標準欄 1-8 順序與名稱不可改")
-                self.assertIn("minLots(", t, "需有流動性閘門輸入")
+                self.assertIn("pMinLots(", t, "需有流動性閘門輸入")
+                for bad in ("vr(0)", "pos(0)", " vr ", " pos "):
+                    self.assertNotIn(bad, t.split("variable:", 1)[0] + "".join(l for l in t.splitlines() if l.startswith("variable:")), f"不可宣告 XS 保留字：{bad}")
+                t.encode("cp950")
                 self.assertRegex(t, r"證據分級：(T0|T2|T3|TX|E)", "需標證據分級")
                 self.assertEqual(len({o[2] for o in outs}), len(outs), "欄名不可重複")
                 self.assertIn("ret = 1", t)
